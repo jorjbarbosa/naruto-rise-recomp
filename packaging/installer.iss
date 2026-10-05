@@ -66,6 +66,9 @@ Source: "{#PackageDir}\narutorise_ai2c.dll"; DestDir: "{app}"; Flags: ignorevers
 Source: "{#PackageDir}\narutorise_ai2c2.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PackageDir}\rexgpu-xenos.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PackageDir}\rexruntime.dll"; DestDir: "{app}"; Flags: ignoreversion
+; AMD FidelityFX runtime DLL - optional (only present when the build enabled
+; FidelityFX). rexruntime.dll imports it, so installed copies need it to launch.
+Source: "{#PackageDir}\amd_fidelityfx_dx12.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PackageDir}\README.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PackageDir}\shader_cache\555307E5.*"; DestDir: "{app}\shader_cache"; Flags: ignoreversion
 Source: "..\launcher\assets\cover.jpg"; DestDir: "{app}\assets"; Flags: ignoreversion

@@ -22,6 +22,7 @@ class InnoSetupTests(unittest.TestCase):
         cls.root = Path(cls.temp.name)
         compiler = Path(os.environ["LOCALAPPDATA"]) / "Programs/Inno Setup 6/ISCC.exe"
         package = Path(os.environ.get("NARUTORISE_TEST_PACKAGE", ROOT / "dist/naruto-rise-recomp-win-amd64"))
+        cls.package = package
         cls.app_id = "NarutoRisePC-Test-" + uuid.uuid4().hex
         cls.legacy_key = 'Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\' + cls.app_id + '-Legacy'
         subprocess.run([str(compiler), f"/O{cls.root}", f"/DPackageDir={package}",
@@ -77,6 +78,10 @@ class InnoSetupTests(unittest.TestCase):
         self.assertEqual(self.install(), 0)
         self.assertTrue((self.dest / "narutorise_launcher.exe").exists())
         self.assertTrue((self.dest / "assets/narutorise.ico").exists())
+        # Every runtime DLL staged in the package must be installed: missing
+        # DLLs break loading (e.g. rexruntime.dll imports amd_fidelityfx_dx12).
+        for dll in self.package.glob("*.dll"):
+            self.assertTrue((self.dest / dll.name).exists(), dll.name)
         self.assertFalse((self.dest / "narutorise_installer.exe").exists())
         self.assertFalse((self.dest / "extract-xiso.exe").exists())
         self.assertFalse((self.dest / "narutorise_setup_helper.exe").exists())
