@@ -20,8 +20,8 @@ Write-Host "Prerequisites OK." -ForegroundColor Green
 # -----------------------------------------------------------------------------
 # 2. Initialize SDK submodule
 # -----------------------------------------------------------------------------
-# The SDK is tracked as a Git submodule at sdk/ (currently a fork with local
-# patches). This ensures the correct commit is checked out.
+# The official ReXGlue SDK is tracked as a Git submodule at sdk/.
+# This checks out the pinned upstream commit; project patches are applied below.
 Write-Host "Initializing SDK submodule ..." -ForegroundColor Cyan
 git -C $root submodule update --init --recursive
 if ($LASTEXITCODE -ne 0) { throw "SDK submodule init failed" }
