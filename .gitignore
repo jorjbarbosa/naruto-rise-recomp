@@ -1,0 +1,77 @@
+# --- Build output ---
+build/
+build-*/
+out/
+cmake-build-*/
+
+# --- IDE / editors ---
+.vs/
+.vscode/
+.idea/
+*.user
+CMakeUserPresets.json
+*.suo
+*.sln.docstates
+
+# --- Game content: never commit anything from the game disc (copyrighted) ---
+*.iso
+*.xex
+*.xcp
+*.god
+*.pirs
+game_root/
+game/
+game_files/
+dump/
+
+# --- Codegen output: derivative of the game's code, must not be committed ---
+app/generated/default/
+app/generated/ai2c/
+app/generated/ai2c2/
+generated/default/
+generated/*/sources.cmake
+generated/*/dll_targets.cmake
+generated/*/codegen.d
+generated/*/codegen.build.stamp
+generated/*/*.cpp
+generated/*/*.h
+generated/*/*.hpp
+
+# --- Releases / packaging output ---
+dist/
+*.AppImage
+archive/
+
+# --- Logs / runtime artifacts ---
+*.log
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.exe
+*.dll
+*.so
+
+# --- Python tooling ---
+__pycache__/
+*.pyc
+
+# --- OS junk ---
+Thumbs.db
+Desktop.ini
+.DS_Store
+$RECYCLE.BIN/
+
+# --- extract-xiso binary (downloaded by setup.ps1) ---
+tools/extract-xiso/*
+!tools/extract-xiso/README.md
+!tools/extract-xiso/LICENSE.TXT
+
+# --- Launcher C# build output (if used later) ---
+launcher/**/bin/
+launcher/**/obj/
+launcher/**/*.user
+launcher/**/*.suo
+
+# --- Shader cache (seeded at packaging time, copied by CMake) ---
+app/shader_cache/

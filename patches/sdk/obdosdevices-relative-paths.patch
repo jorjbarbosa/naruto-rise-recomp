@@ -1,0 +1,23 @@
+diff --git a/src/kernel/xboxkrnl/xboxkrnl_io.cpp b/src/kernel/xboxkrnl/xboxkrnl_io.cpp
+index 3f1a852..fff40f6 100644
+--- a/src/kernel/xboxkrnl/xboxkrnl_io.cpp
++++ b/src/kernel/xboxkrnl/xboxkrnl_io.cpp
+@@ -133,6 +133,18 @@ u32 NtCreateFile_entry(mapped_u32 handle_out, u32 desired_access,
+     return X_STATUS_OBJECT_NAME_INVALID;
+   }
+ 
++  // ObDosDevices pseudo-handle carries no directory object, so bare relative
++  // paths would reach the VFS without a device prefix and fail with noisy
++  // device-not-found errors. On hardware these resolve against the game
++  // drive; route them to the same mount so they get a clean NO_SUCH_FILE.
++  if (object_attrs->root_directory == 0xFFFFFFFD && !target_path.empty() &&
++      target_path.front() != '\\' && target_path.find(':') == std::string::npos) {
++    if (target_path.back() == '\\') {
++      target_path.pop_back();
++    }
++    target_path = "game:\\" + target_path;
++  }
++
+   if (object_attrs->root_directory != 0xFFFFFFFD &&  // ObDosDevices
+       object_attrs->root_directory != 0) {
+     auto root_file = REX_KERNEL_OBJECTS()->LookupObject<XFile>(object_attrs->root_directory);

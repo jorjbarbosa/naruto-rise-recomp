@@ -1,0 +1,33 @@
+# Discovery seeds from the first strict analysis of this XEX (SHA-256 recorded in logs).
+# These are unresolved unconditional branch destinations, not native replacements.
+# Bounds are inferred by ReXGlue; runtime behavior remains unverified.
+[functions]
+"0x82156420" = {} # branch at 0x821592EC
+"0x8254EBA8" = {} # branch at 0x825CD508
+# Conditional destinations omitted by initial analysis but reported by the emitter.
+"0x825AF644" = {} # conditional branch at 0x825AF654
+"0x826AF954" = {} # conditional branches at 0x826AF970 and 0x826AF97C
+"0x82185BB0" = {} # indirect call observed in first runtime smoke test
+"0x821A1700" = {} # indirect call observed in second runtime smoke test
+"0x8215BD88" = {} # indirect call observed in third runtime smoke test
+"0x82604C70" = {} # indirect call observed after loading AI2C
+"0x821D6358" = {} # indirect call observed in fifth runtime smoke test
+"0x82209E40" = {} # chamada observada no sexto teste
+"0x821D6428" = {} # 7
+"0x821D6410" = {}
+"0x825AC290" = {} # revisao manual: regiao de stubs de 8 bytes; chamada indireta em runtime 14:37
+"0x825BC230" = {} # revisao manual: slot de vtable; absorve entrada espuria 0x825BC24C
+
+"0x825E1918" = {} # runtime: 20261001-150215-974bacac/001-runtime.log
+"0x821B2128" = {} # revisao manual: slot vtable +88 no meio da lacuna 0x821B2118-0x821B2130
+"0x825A5678" = {} # revisao manual: crash ao iniciar gameplay; lacuna 0x825A55D8+, tabela de propriedades
+"0x821A5808" = {} # runtime: inicio de gameplay apos 0x825A5678 (naruto_rise_007.log)
+"0x82531378" = {} # revisao manual: pos-cutscene, transicao para gameplay (naruto_rise_008.log)
+"0x825AC440" = {} # revisao manual: ~60s de gameplay controlavel, regiao de stubs 0x825AB000+ (naruto_rise_009.log)
+"0x821FB788" = {} # runtime: ~17s de gameplay (naruto_rise_010.log)
+"0x826906A8" = {} # runtime: ~52s de gameplay (naruto_rise_011.log)
+"0x820FBED8" = {} # runtime: inicio de missao, ~2,5min de sessao (naruto_rise_012.log)
+"0x821E9A90" = {} # runtime: ~1,5min de gameplay em missao (naruto_rise_013.log)
+"0x826AF940" = {} # runtime: ~8min de gameplay (log 014); segunda entrada do gap de 0x826AF954
+"0x822B3718" = {} # revisao manual: ~4min de gameplay (log 015); mid-gap apos getter de 2 instrucoes
+"0x825AC450" = {} # runtime: ~3,5min de gameplay (log 016); proxima entrada da tabela de 0x825AC440

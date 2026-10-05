@@ -1,0 +1,55 @@
+diff --git a/src/codegen/project_recompiler.cpp b/src/codegen/project_recompiler.cpp
+index 240bcb0..903c842 100644
+--- a/src/codegen/project_recompiler.cpp
++++ b/src/codegen/project_recompiler.cpp
+@@ -262,6 +262,12 @@ Result<void> ProjectRecompiler::Run(const ProjectRecompilerOptions& opts) {
+                    *runtime->kernel_state()->GetExecutableModule()->xex_module());
+ 
+   std::vector<rex::system::object_ref<rex::system::UserModule>> dllModules;
++  // Snapshot each DLL's in-memory image right after it is loaded: a later
++  // DLL may share the same load address (an alternative-version module
++  // pair, e.g. ai2c.dll and the ai2c@2.dll shipped inside a DLC), and that
++  // later load would clobber this module's bytes before BinaryView gets a
++  // chance to copy them in the context-creation loop below.
++  std::vector<BinaryView> dllBinaryViews;
+   for (size_t i = 1; i < targeted.size(); ++i) {
+     const auto& dllConfig = targeted[i].config;
+     fs::path dllXexPath = configDir / dllConfig.filePath;
+@@ -290,6 +296,7 @@ Result<void> ProjectRecompiler::Run(const ProjectRecompilerOptions& opts) {
+     auto dll_display_name = std::filesystem::path(targeted[i].config.filePath).filename().string();
+     ReportBinaryInfo(opts.reporter, dll_display_name, *userMod->xex_module());
+     dllModules.push_back(std::move(userMod));
++    dllBinaryViews.push_back(BinaryView::fromModule(*dllModules.back()->xex_module()));
+   }
+ 
+   struct ContextEntry {
+@@ -329,8 +336,7 @@ Result<void> ProjectRecompiler::Run(const ProjectRecompilerOptions& opts) {
+   }
+ 
+   for (size_t i = 0; i < dllModules.size(); ++i) {
+-    auto& userMod = dllModules[i];
+-    auto bv = BinaryView::fromModule(*userMod->xex_module());
++    auto bv = std::move(dllBinaryViews[i]);
+ 
+     auto dll_display = make_display_name(targeted[i + 1].config.filePath);
+     RecompilerConfig cfg = std::move(targeted[i + 1].config);
+@@ -403,6 +409,19 @@ Result<void> ProjectRecompiler::Run(const ProjectRecompilerOptions& opts) {
+       uint32_t b_base = contexts[j].ctx.binary().baseAddress();
+       uint32_t b_end = b_base + contexts[j].ctx.binary().imageSize();
+       if (a_base < b_end && b_base < a_end) {
++        // Alternative-version DLL pairs (e.g. ai2c.dll and the ai2c@2.dll
++        // shipped inside a DLC) share the same load address. The game only
++        // ever loads one of them per session, and the runtime keys
++        // recompiled module libraries by guest path, so overlap between two
++        // DLL modules is expected and safe.
++        if (contexts[i].module->isDll && contexts[j].module->isDll) {
++          REXCODEGEN_WARN(
++              "DLL modules '{}' [{:08X}, {:08X}) and '{}' [{:08X}, {:08X}) overlap; "
++              "treating them as alternative versions of the same module",
++              contexts[i].module->targetName, a_base, a_end,
++              contexts[j].module->targetName, b_base, b_end);
++          continue;
++        }
+         return Err<void>(ErrorCategory::Validation,
+                          fmt::format("Module '{}' [{:08X}, {:08X}) overlaps '{}' [{:08X}, {:08X})",
+                                      contexts[i].module->targetName, a_base, a_end,

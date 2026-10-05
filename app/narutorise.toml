@@ -1,0 +1,56 @@
+# narutorise - runtime configuration (auto-read on startup)
+
+gpu_plugin = "xenos"
+d3d12_readback_resolve = true
+skip_intro_videos = true
+
+# Fix da piscada preta nas lutas: draws fullscreen sem clipping fazem o
+# estimador de EDRAM alegar o EDRAM inteiro e corromper o buffer de cena via
+# transferencias de ownership (default do SDK agora tambem e true).
+execute_unclipped_draw_vs_on_cpu = true
+
+log_verbose = false
+log_level = "info"
+
+protect_zero = false
+
+input_backend = "sdl"
+mnk_mode = false
+
+fullscreen = true
+vsync = true
+d3d12_host_vsync = true
+video_mode_refresh_rate = 60.0
+resolution_scale = 2
+draw_resolution_scale_x = 2
+draw_resolution_scale_y = 2
+d3d12_allow_variable_refresh_rate_and_tearing = true
+
+anisotropic_override = 5
+
+swap_post_effect = "fxaa"
+present_effect = "cas"
+present_dither = false
+
+show_fps_overlay = false
+
+# Anamorphic Ultrawide (Hells Gate / Xenia Canary style patch).
+# 0.0 = native 16:9; 2.3889 = 21:9 (3440x1440); 3.5556 = 32:9.
+ultrawide_target_aspect = 2.3889
+
+# Launcher language: "en" (English, default) or "pt_BR" (Portuguese)
+launcher_language = "en"
+
+# -----------------------------------------------------------------------------
+# Optional: Title Update (TU) folder.
+# The SDK mounts this path as "update:\". Some games use it to patch the
+# default.xex or game files. Place the extracted Title Update files in a
+# "title_update" folder next to your game data, or set the path below.
+# -----------------------------------------------------------------------------
+# update_data_root = "C:/Games/Naruto - Rise of a Ninja/title_update"
+
+# -----------------------------------------------------------------------------
+# Optional: Custom game data folder (used by the launcher).
+# If empty, the executable auto-detects "game/" or "game_root/" next to it.
+# -----------------------------------------------------------------------------
+# custom_game_root = "C:/Games/Naruto - Rise of a Ninja/game"

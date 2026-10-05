@@ -1,0 +1,17 @@
+diff --git a/src/graphics/util/draw_extent_estimator.cpp b/src/graphics/util/draw_extent_estimator.cpp
+index 3027dc8..5728d6a 100644
+--- a/src/graphics/util/draw_extent_estimator.cpp
++++ b/src/graphics/util/draw_extent_estimator.cpp
+@@ -24,7 +24,11 @@
+ #include <rex/memory.h>
+ #include <rex/ui/graphics_util.h>
+ 
+-REXCVAR_DEFINE_BOOL(execute_unclipped_draw_vs_on_cpu, false, "GPU",
++// Piscada preta nas lutas: sem isso, draws fullscreen com clipping
++// desligado fazem o estimador de extensao alegar o EDRAM inteiro, e as
++// transferencias de ownership espurias entre render targets do host
++// corrompem o buffer de cena. Tambem e o default do Xenia upstream.
++REXCVAR_DEFINE_BOOL(execute_unclipped_draw_vs_on_cpu, true, "GPU",
+                     "Execute unclipped draw vertex shader on CPU");
+ 
+ REXCVAR_DEFINE_BOOL(execute_unclipped_draw_vs_on_cpu_with_scissor, false, "GPU",

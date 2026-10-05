@@ -1,0 +1,181 @@
+diff --git a/src/kernel/xboxkrnl/xboxkrnl_io.cpp b/src/kernel/xboxkrnl/xboxkrnl_io.cpp
+index 3f1a852..c64ebf7 100644
+--- a/src/kernel/xboxkrnl/xboxkrnl_io.cpp
++++ b/src/kernel/xboxkrnl/xboxkrnl_io.cpp
+@@ -169,8 +169,22 @@ u32 NtCreateFile_entry(mapped_u32 handle_out, u32 desired_access,
+ 
+   *handle_out = handle;
+   if (XFAILED(result)) {
+-    REXKRNL_IMPORT_FAIL("NtCreateFile", "path='{}' -> {:#x}", target_path, result);
++    auto* thread = XThread::GetCurrentThread();
++    auto* context = thread ? thread->thread_state()->context() : nullptr;
++    REXKRNL_IMPORT_FAIL(
++        "NtCreateFile",
++        "path='{}' root_handle={:#x} root_path='{}' access={:#x} attrs={:#x} "
++        "share={:#x} disposition={:#x} options={:#x} guest_lr={:08X} guest_sp={:08X} -> {:#x}",
++            target_path, uint32_t(object_attrs->root_directory),
++            root_entry ? root_entry->absolute_path() : "<none>", uint32_t(desired_access),
++            uint32_t(file_attributes), uint32_t(share_access), uint32_t(creation_disposition),
++            uint32_t(create_options), context ? uint32_t(context->lr) : 0,
++            context ? context->r1.u32 : 0, result);
+   } else {
++    auto* thread = XThread::GetCurrentThread();
++    auto* context = thread ? thread->thread_state()->context() : nullptr;
++    REXKRNL_IMPORT_TRACE("NtCreateFile", "path='{}' handle={:#x} guest_lr={:08X}",
++                         target_path, handle, context ? uint32_t(context->lr) : 0);
+     REXKRNL_IMPORT_RESULT("NtCreateFile", "{:#x} handle={:#x}", result, handle);
+   }
+   return result;
+diff --git a/src/kernel/xboxkrnl/xboxkrnl_memory.cpp b/src/kernel/xboxkrnl/xboxkrnl_memory.cpp
+index 8684eda..30c5fdf 100644
+--- a/src/kernel/xboxkrnl/xboxkrnl_memory.cpp
++++ b/src/kernel/xboxkrnl/xboxkrnl_memory.cpp
+@@ -12,9 +12,11 @@
+ // Disable warnings about unused parameters for kernel functions
+ #pragma GCC diagnostic ignored "-Wunused-parameter"
+ 
++#include <atomic>
+ #include <cstring>
+ 
+ #include <rex/assert.h>
++#include <rex/cvar.h>
+ #include <rex/kernel/xboxkrnl/private.h>
+ #include <rex/logging.h>
+ #include <rex/math.h>
+@@ -22,10 +24,31 @@
+ #include <rex/types.h>
+ #include <rex/system/kernel_state.h>
+ #include <rex/system/xtypes.h>
++#include <rex/system/xthread.h>
++
++REXCVAR_DEFINE_BOOL(trace_physical_memory, false, "Memory",
++                    "Log physical allocations, address conversions and frees with guest callers");
+ 
+ namespace rex::kernel::xboxkrnl {
+ using namespace rex::system;
+ 
++namespace {
++// Sequence numbers correlate events across threads; they do not serialize heap operations.
++std::atomic<uint64_t> physical_memory_event{0};
++
++void TracePhysicalMemory(const char* operation, uint32_t address, uint32_t physical_address,
++                         uint32_t size, uint32_t heap_base, bool success) {
++  auto* thread = XThread::GetCurrentThread();
++  auto* context = thread ? thread->thread_state()->context() : nullptr;
++  REXKRNL_INFO(
++      "[PhysicalMemory] event={} op={} addr={:08X} physical={:08X} size={:X} "
++      "heap={:08X} success={} guest_thread={:X} guest_lr={:08X} guest_sp={:08X}",
++      physical_memory_event.fetch_add(1, std::memory_order_relaxed), operation, address,
++      physical_address, size, heap_base, success, thread ? thread->thread_id() : 0,
++      context ? uint32_t(context->lr) : 0, context ? context->r1.u32 : 0);
++}
++}  // namespace
++
+ uint32_t ToXdkProtectFlags(uint32_t protect) {
+   uint32_t result = 0;
+   if (!(protect & memory::kMemoryProtectRead) && !(protect & memory::kMemoryProtectWrite)) {
+@@ -282,6 +305,9 @@ u32 NtFreeVirtualMemory_entry(mapped_u32 base_addr_ptr, mapped_u32 region_size_p
+     result = heap->Release(base_addr_value, &region_size_value);
+   }
+   if (!result) {
++    REXKRNL_IMPORT_FAIL("NtFreeVirtualMemory", "base={:#x} size={:#x} type={:#x} debug={}",
++                        base_addr_value, region_size_value, uint32_t(free_type),
++                        uint32_t(debug_memory));
+     return X_STATUS_UNSUCCESSFUL;
+   }
+ 
+@@ -400,8 +426,22 @@ u32 MmAllocatePhysicalMemoryEx_entry(u32 flags, u32 region_size, u32 protect_bit
+   if (!heap->AllocRange(heap_min_addr, heap_max_addr, adjusted_size, adjusted_alignment,
+                         allocation_type, protect, top_down, &base_address)) {
+     // Failed - assume no memory available.
++    if (REXCVAR_GET(trace_physical_memory)) {
++      TracePhysicalMemory("allocate-failed", 0, UINT32_MAX, adjusted_size, heap_base, false);
++    }
+     return 0;
+   }
++  if (REXCVAR_GET(trace_physical_memory)) {
++    TracePhysicalMemory("allocate", base_address, heap->GetPhysicalAddress(base_address),
++                        adjusted_size, heap_base, true);
++    REXKRNL_INFO(
++        "[PhysicalMemory] allocation addr={:08X} requested_size={:X} flags={:X} "
++        "protect={:X} page_size={:X} alignment={:X} adjusted_alignment={:X} "
++        "min={:08X} max={:08X} heap_min={:08X} heap_max={:08X} physical_offset={:X}",
++        base_address, uint32_t(region_size), uint32_t(flags), uint32_t(protect_bits),
++        page_size, uint32_t(alignment), adjusted_alignment, uint32_t(min_addr_range),
++        uint32_t(max_addr_range), heap_min_addr, heap_max_addr, heap_physical_address_offset);
++  }
+   REXKRNL_IMPORT_RESULT("MmAllocatePhysicalMemoryEx", "addr={:#x}", base_address);
+ 
+   return base_address;
+@@ -418,7 +458,33 @@ void MmFreePhysicalMemory_entry(u32 type, u32 base_address) {
+   assert_true((base_address & 0x1F) == 0);
+ 
+   auto heap = REX_KERNEL_MEMORY()->LookupHeap(base_address);
+-  heap->Release(base_address);
++  const bool trace = REXCVAR_GET(trace_physical_memory);
++  if (trace) {
++    memory::HeapAllocationInfo info{};
++    const bool queried = heap->QueryRegionInfo(base_address, &info);
++    TracePhysicalMemory("free-request", base_address,
++                        REX_KERNEL_MEMORY()->GetPhysicalAddress(base_address),
++                        queried ? info.region_size : 0, heap->heap_base(), queried);
++    REXKRNL_INFO(
++        "[PhysicalMemory] free addr={:08X} type={:X} query_success={} "
++        "region_base={:08X} allocation_base={:08X} region_size={:X} state={:X}",
++        uint32_t(base_address), uint32_t(type), queried, info.base_address,
++        info.allocation_base, info.region_size, info.state);
++  }
++  const bool released = heap->Release(base_address);
++  if (trace) {
++    TracePhysicalMemory("free-result", base_address,
++                        REX_KERNEL_MEMORY()->GetPhysicalAddress(base_address), 0,
++                        heap->heap_base(), released);
++  }
++  if (!released) {
++    auto* thread = XThread::GetCurrentThread();
++    auto* context = thread ? thread->thread_state()->context() : nullptr;
++    REXKRNL_IMPORT_FAIL("MmFreePhysicalMemory",
++                        "type={:#x} addr={:#x} guest_lr={:08X} guest_sp={:08X}",
++                        uint32_t(type), uint32_t(base_address),
++                        context ? uint32_t(context->lr) : 0, context ? context->r1.u32 : 0);
++  }
+ }
+ 
+ u32 MmQueryAddressProtect_entry(u32 base_address) {
+@@ -560,10 +626,16 @@ u32 MmQueryStatistics_entry(ppc_ptr_t<X_MM_QUERY_STATISTICS_RESULT> stats_ptr) {
+ u32 MmGetPhysicalAddress_entry(u32 base_address) {
+   // base_address = result of MmAllocatePhysicalMemory.
+   uint32_t physical_address = REX_KERNEL_MEMORY()->GetPhysicalAddress(base_address);
++  const bool valid_physical_address = physical_address != UINT32_MAX;
+   assert_true(physical_address != UINT32_MAX);
+   if (physical_address == UINT32_MAX) {
+     physical_address = 0;
+   }
++  if (REXCVAR_GET(trace_physical_memory)) {
++    auto* heap = REX_KERNEL_MEMORY()->LookupHeap(base_address);
++    TracePhysicalMemory("get-physical-address", base_address, physical_address, 0,
++                        heap ? heap->heap_base() : 0, valid_physical_address);
++  }
+   REXKRNL_IMPORT_RESULT("MmGetPhysicalAddress", "addr={:#x} -> {:#x}", (uint32_t)base_address,
+                         physical_address);
+   return physical_address;
+diff --git a/src/system/xmemory.cpp b/src/system/xmemory.cpp
+index 76cc877..e588d4e 100644
+--- a/src/system/xmemory.cpp
++++ b/src/system/xmemory.cpp
+@@ -1592,7 +1592,14 @@ bool BaseHeap::Release(uint32_t base_address, uint32_t* out_region_size) {
+   uint32_t base_page_number = (base_address - heap_base_) >> page_size_shift_;
+   auto base_page_entry = page_table_[base_page_number];
+   if (base_page_entry.base_address != base_page_number) {
+-    REXSYS_ERROR("BaseHeap::Release failed because address is not a region start");
++    REXSYS_ERROR(
++            "BaseHeap::Release failed because address is not a region start: "
++            "address={:08X} heap_base={:08X} page_size={:X} page={:X} "
++            "region_base={:08X} region_size={:X} state={:X}",
++            base_address, heap_base_, uint32_t(1) << page_size_shift_, base_page_number,
++            heap_base_ + (uint32_t(base_page_entry.base_address) << page_size_shift_),
++            uint32_t(base_page_entry.region_page_count) << page_size_shift_,
++            uint32_t(base_page_entry.state));
+     return false;
+   }
+ 

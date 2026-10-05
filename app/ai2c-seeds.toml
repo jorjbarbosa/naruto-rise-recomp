@@ -1,0 +1,4 @@
+# Discovery seed reported by strict analysis of AI2C.dll.
+# Bounds inferred by ReXGlue; not a native replacement or a runtime correctness claim.
+[functions]
+"0x88398CFC" = {} # branch at 0x88398D4C

@@ -1,0 +1,26 @@
+# Auto-normalize line endings for text files.
+* text=auto
+
+# Ensure shell scripts keep LF even on Windows.
+*.sh text eol=lf
+
+# Ensure batch/PowerShell scripts use CRLF on checkout (Windows native).
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.iss text eol=crlf
+
+# Patches must stay LF so git apply works on Windows.
+*.patch text eol=lf
+
+# Treat binary files as binary (do not normalize).
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.ttf binary
+*.zip binary
+*.exe binary
+*.dll binary
+*.xsh binary
+*.xpso binary
+*.spv binary
