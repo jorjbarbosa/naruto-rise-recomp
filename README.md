@@ -29,7 +29,7 @@ The current build and distribution workflow targets **Windows x64**. The project
 - **Native launcher**, built with SDL3 and Dear ImGui, available in English and Brazilian Portuguese.
 - **1× to 4× resolution scaling**, up to 16× anisotropic filtering, fullscreen, and VSync.
 - **Post-processing**, including FXAA and optional SDK FidelityFX integration.
-- **FPS and frametime overlay**, toggled with `F1`, and an option to skip intro videos.
+- **FPS and frametime overlay**, toggled with `F1`, showing the guest (game) and host frame rates, and an option to skip intro videos.
 - **Bundled shader cache**, copied into the user cache when available.
 - **Portable distribution and Windows installer**, with optional ISO import through the installer.
 

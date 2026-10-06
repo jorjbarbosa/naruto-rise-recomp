@@ -8,17 +8,20 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <optional>
 #include <toml++/toml.hpp>
 
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
 #include <rex/logging.h>
+#include <rex/perf/counter.h>
 #include <rex/rex_app.h>
 #include <rex/system/xam/content_manager.h>
 #include <rex/system/xcontent.h>
 #include <rex/ui/imgui_dialog.h>
 #include <rex/ui/keybinds.h>
+#include <rex/ui/overlay/debug_overlay.h>
 #include <rex/ui/window.h>
 
 #include "ultrawide.h"
@@ -30,22 +33,57 @@ REXCVAR_DEFINE_STRING(dlc_source_path, "dlc", "Content",
                       "Folder scanned for DLC packages to auto-install on launch. "
                       "If empty or missing, the game runs without DLC.");
 
+// Guest frame stats source for the F1/F3 overlays. The command processor
+// measures the frame time on every guest swap (XE_SWAP) and snapshots it in
+// the perf counter registry; game speed follows this rate, not the host
+// window present rate. Returns frame_count == 0 when the SDK was built
+// without REXGLUE_ENABLE_PERF_COUNTERS (guest rate unavailable).
+inline rex::ui::FrameStats ReadGuestFrameStats() {
+  const int64_t fps = rex::perf::GetSnapshotCounter(rex::perf::CounterId::kFps);
+  const int64_t ft_us =
+      rex::perf::GetSnapshotCounter(rex::perf::CounterId::kFrameTimeUs);
+  rex::ui::FrameStats stats;
+  if (fps > 0) {
+    stats.fps = static_cast<double>(fps);
+    stats.frame_time_ms = static_cast<double>(ft_us) / 1000.0;
+    stats.frame_count = 1;  // valid data this frame
+  }
+  return stats;
+}
+
 class FpsOverlayDialog : public rex::ui::ImGuiDialog {
  public:
-  explicit FpsOverlayDialog(rex::ui::ImGuiDrawer* drawer)
-      : rex::ui::ImGuiDialog(drawer) {}
+  using GuestStatsProvider = std::function<rex::ui::FrameStats()>;
+
+  explicit FpsOverlayDialog(rex::ui::ImGuiDrawer* drawer,
+                            GuestStatsProvider guest_stats = {})
+      : rex::ui::ImGuiDialog(drawer), guest_stats_(std::move(guest_stats)) {}
 
  protected:
   void OnDraw(ImGuiIO& io) override {
-    double fps = io.Framerate;
-    double ft_ms = io.DeltaTime * 1000.0;
+    // The host rate counts window presents (io.Framerate), which can run far
+    // above the game's own frame rate when presentation is independent
+    // (high-refresh display, tearing allowed). Game speed follows the guest
+    // rate, so the overlay leads with it and keeps the host rate as context.
+    rex::ui::FrameStats guest{};
+    if (guest_stats_) {
+      guest = guest_stats_();
+    }
+    const bool have_guest = guest.frame_count > 0;
+
+    const double host_fps = io.Framerate;
+    const double fps = have_guest ? guest.fps : host_fps;
+    const double ft_ms =
+        have_guest ? guest.frame_time_ms : io.DeltaTime * 1000.0;
 
     if (smoothed_fps_ == 0.0) {
       smoothed_fps_ = fps;
       smoothed_ft_ = ft_ms;
+      smoothed_host_fps_ = host_fps;
     } else {
       smoothed_fps_ = smoothed_fps_ * 0.85 + fps * 0.15;
       smoothed_ft_ = smoothed_ft_ * 0.85 + ft_ms * 0.15;
+      smoothed_host_fps_ = smoothed_host_fps_ * 0.85 + host_fps * 0.15;
     }
 
     frame_history_[history_idx_] = static_cast<float>(smoothed_ft_);
@@ -69,13 +107,19 @@ class FpsOverlayDialog : public rex::ui::ImGuiDialog {
                        smoothed_fps_ >= 30.0f ? IM_COL32(255, 220, 60, 255) :
                                                 IM_COL32(255, 80, 80, 255);
       ImGui::PushStyleColor(ImGuiCol_Text, fps_color);
-      ImGui::Text("%.0f FPS", smoothed_fps_);
+      ImGui::Text("%s: %.0f FPS", have_guest ? "Guest" : "Host", smoothed_fps_);
       ImGui::PopStyleColor();
       ImGui::SetWindowFontScale(1.0f);
 
       ImGui::SetWindowFontScale(1.3f);
       ImGui::Text("%.1f ms", smoothed_ft_);
       ImGui::SetWindowFontScale(1.0f);
+
+      if (have_guest) {
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(160, 160, 160, 255));
+        ImGui::Text("Host: %.0f FPS", smoothed_host_fps_);
+        ImGui::PopStyleColor();
+      }
 
       ImGui::Spacing();
       ImGui::PlotLines("##frametime", frame_history_.data(),
@@ -93,6 +137,8 @@ class FpsOverlayDialog : public rex::ui::ImGuiDialog {
   size_t history_idx_ = 0;
   double smoothed_fps_ = 0.0;
   double smoothed_ft_ = 0.0;
+  double smoothed_host_fps_ = 0.0;
+  GuestStatsProvider guest_stats_;
 };
 
 class NarutoriseApp : public rex::ReXApp {
@@ -215,6 +261,10 @@ class NarutoriseApp : public rex::ReXApp {
     SeedShaderStorage();
     AutoInstallDlc();
 
+    // Guest frame rate (measured per guest swap by the command processor) for
+    // the SDK debug overlay (F3).
+    SetGuestFrameStats(&ReadGuestFrameStats);
+
     // Encerramento limpo via Alt+F4
     rex::ui::RegisterBind("bind_exit_game", "Alt+F4", "Exit Game", [this]() {
       if (window()) {
@@ -224,7 +274,8 @@ class NarutoriseApp : public rex::ReXApp {
 
     // Overlay de FPS (F1 para alternar)
     if (REXCVAR_GET(show_fps_overlay) && imgui_drawer()) {
-      fps_overlay_ = std::make_unique<FpsOverlayDialog>(imgui_drawer());
+      fps_overlay_ =
+          std::make_unique<FpsOverlayDialog>(imgui_drawer(), &ReadGuestFrameStats);
     }
     rex::ui::RegisterBind("bind_fps_overlay", "F1",
                           "Toggle FPS overlay", [this]() {
@@ -232,7 +283,8 @@ class NarutoriseApp : public rex::ReXApp {
         fps_overlay_.reset();
         rex::cvar::SetFlagByName("show_fps_overlay", "false");
       } else if (imgui_drawer()) {
-        fps_overlay_ = std::make_unique<FpsOverlayDialog>(imgui_drawer());
+        fps_overlay_ =
+            std::make_unique<FpsOverlayDialog>(imgui_drawer(), &ReadGuestFrameStats);
         rex::cvar::SetFlagByName("show_fps_overlay", "true");
       }
     });

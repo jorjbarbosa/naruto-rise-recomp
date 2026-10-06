@@ -7,6 +7,7 @@
 | Symptom | What to check |
 | --- | --- |
 | `clang`, `ninja`, or Windows libraries not found | Use the VS 2022 x64 development environment with LLVM and the Windows SDK available |
+| `UTF-16 (LE) byte order mark detected` in `ffx_api_dll.rc` when building the SDK | The build ran in a shell without the Windows SDK on `PATH`, so CMake fell back to `llvm-rc`-based preprocessing, which cannot read FidelityFX's UTF-16 resource script. Run the configure/build from the VS x64 environment (`vcvars64.bat`) so `rc.exe` is found, then rebuild |
 | Preset parsing error | Use CMake 3.26+; presets use schema version 6 |
 | `ReXGlue SDK not found` | Build and install the SDK, then pass its prefix through `CMAKE_PREFIX_PATH` |
 | A patch does not apply | Compare the SDK commit and local changes with the patch; do not discard modifications to force application |
@@ -49,7 +50,7 @@ Run the game after importing content to finish installation. Check content and `
 
 ## Collecting diagnostics
 
-Default logs are written to `logs/` next to `narutorise.exe`. For additional details, temporarily set:
+Default logs are written to `logs/` next to `narutorise.exe`. The FPS overlay (`F1`) shows the **guest** frame rate (the game's own frame production, which is what game speed follows) alongside the **host** rate; slow motion with a high host rate means the guest rate is below target. For additional details, temporarily set:
 
 ```toml
 log_level = "debug"
@@ -58,6 +59,7 @@ log_level = "debug"
 When reporting a problem, include:
 
 - build/commit, Windows version, CPU, GPU, and driver version;
+- guest and host FPS from the `F1` overlay (the guest rate drives game speed; the host rate is context);
 - reproduction steps and expected result;
 - game revision and DLC or Title Update usage;
 - resolution, aspect ratio, and internal scale;

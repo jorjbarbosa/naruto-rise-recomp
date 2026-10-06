@@ -55,10 +55,13 @@ The launcher provides anisotropic filtering up to 16×. The internal `anisotropi
 
 | Key | Action |
 | --- | --- |
-| `F1` | Toggle the FPS and frametime overlay |
+| `F1` | Toggle the FPS and frametime overlay (shows the guest and host frame rates) |
+| `F3` | Toggle the SDK debug overlay (guest frame stats, build stamp, and per-frame counters when built with perf counters) |
 | `Alt+F4` | Request game shutdown |
 
 The launcher language does not automatically change the languages available in the game.
+
+The FPS overlay (`F1`) shows two rates: **Guest** — the game's own frame rate, measured on every guest swap, which is what game speed follows — and **Host** — the window present rate, which can be much higher on high-refresh displays. Slow motion with a high host rate means the guest rate is below the game's target.
 
 ## Folders and user data
 
