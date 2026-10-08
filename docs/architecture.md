@@ -59,6 +59,7 @@ PowerPC code is translated ahead of time into C++. The ReXGlue runtime provides 
 | Patch | Purpose |
 | --- | --- |
 | `codegen-alt-version-dll-modules.patch` | Code generation for alternative module versions, required by the DLC workflow |
+| `guest-frame-stats.patch` | Enables the guest frame rate measurement in Release builds, feeding the F1/F3 overlays |
 | `obdosdevices-relative-paths.patch` | Relative device path handling |
 | `physical-memory-trace.patch` | Physical memory diagnostics |
 | `ultrawide-presenter.patch` | Anamorphic presentation in the graphics backend |

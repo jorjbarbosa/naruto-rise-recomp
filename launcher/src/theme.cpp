@@ -9,13 +9,14 @@ void LoadFonts(const std::filesystem::path& base_dir) {
   const auto fonts = base_dir / "assets" / "fonts";
   const auto regular = fonts / "Lato-Regular.ttf";
   const auto bold = fonts / "Lato-Bold.ttf";
+  const auto* glyph_ranges = io.Fonts->GetGlyphRangesCyrillic();
   // Bundle the same typeface on every machine; never rely on a Windows font.
   if (std::filesystem::exists(regular)) {
-    io.FontDefault = io.Fonts->AddFontFromFileTTF(regular.string().c_str(), 17.0f);
+    io.FontDefault = io.Fonts->AddFontFromFileTTF(regular.string().c_str(), 17.0f, nullptr, glyph_ranges);
   }
   if (!io.FontDefault) io.FontDefault = io.Fonts->AddFontDefault();
   if (std::filesystem::exists(bold)) {
-    io.Fonts->AddFontFromFileTTF(bold.string().c_str(), 17.0f);
+    io.Fonts->AddFontFromFileTTF(bold.string().c_str(), 17.0f, nullptr, glyph_ranges);
   }
 }
 

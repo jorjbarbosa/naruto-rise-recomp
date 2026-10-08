@@ -80,7 +80,9 @@ bool PrimaryButton(const char* label, ImVec2 size) {
 
 void BeginCard(const char* id, float height) {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18, 16));
-  ImGui::BeginChild(id, ImVec2(0, height), ImGuiChildFlags_Borders,
+  ImGuiChildFlags flags = ImGuiChildFlags_Borders;
+  if (height == 0) flags |= ImGuiChildFlags_AutoResizeY;
+  ImGui::BeginChild(id, ImVec2(0, height), flags,
                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 }
 
@@ -264,24 +266,37 @@ bool LauncherUI::Render(SDL_Window* window, const std::filesystem::path& base_di
                     ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
   const float available_w = ImGui::GetContentRegionAvail().x;
   const TextId tabs[] = {TextId::TabPlay, TextId::TabSettings, TextId::TabGameFiles, TextId::TabDlc};
-  const float lang_w = 114;
-  const float tab_w = (available_w - lang_w - 24) / 4;
+  const float lang_w = 130;
+  float tab_widths[4];
+  float remaining_tab_space = available_w - lang_w - 28;
+  for (int i = 0; i < 4; ++i) {
+    tab_widths[i] = ImGui::CalcTextSize(Tr(tabs[i])).x + ImGui::GetStyle().FramePadding.x * 2;
+    remaining_tab_space -= tab_widths[i];
+  }
   for (int i = 0; i < 4; ++i) {
     if (i) ImGui::SameLine(0, 4);
     ImGui::PushID(i);
     ImGui::PushStyleColor(ImGuiCol_Button, g_active_tab == i ? ImVec4(0.91f, 0.36f, 0.07f, 1) : ImVec4(0.13f, 0.13f, 0.16f, 1));
+    const float tab_w = tab_widths[i] + std::max(0.0f, remaining_tab_space / 4);
     if (ImGui::Button(Tr(tabs[i]), ImVec2(tab_w, 38))) g_active_tab = i;
     ImGui::PopStyleColor();
     ImGui::PopID();
   }
   ImGui::SameLine(0, 16);
   ImGui::SetNextItemWidth(lang_w);
-  int language = Localization::GetLanguage() == Localization::Language::Portuguese ? 1 : 0;
-  const char* languages[] = {"English", "Português"};
-  if (ImGui::Combo("##Language", &language, languages, 2)) {
-    config.launcher_language = language ? "pt_BR" : "en";
-    Localization::SetLanguageCode(config.launcher_language);
+  const auto& languages = Localization::GetLanguages();
+  if (ImGui::BeginCombo("##Language", languages[static_cast<size_t>(Localization::GetLanguage())].name)) {
+    for (const auto& option : languages) {
+      const bool selected = Localization::GetLanguage() == option.language;
+      if (ImGui::Selectable(option.name, selected)) {
+        config.launcher_language = option.code;
+        Localization::SetLanguage(option.language);
+      }
+      if (selected) ImGui::SetItemDefaultFocus();
+    }
+    ImGui::EndCombo();
   }
+  if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", Tr(TextId::LauncherLanguageTooltip));
   ImGui::Spacing();
   ImGui::Separator();
   ImGui::Spacing();
@@ -330,6 +345,46 @@ bool LauncherUI::Render(SDL_Window* window, const std::filesystem::path& base_di
     Heading(Tr(TextId::TabSettings));
     Muted(Tr(TextId::SettingsIntro));
     ImGui::Dummy(ImVec2(0, 8));
+    BeginCard("Game", 0);
+    ImGui::TextColored(kAccent, "%s", Tr(TextId::GroupGame));
+    ImGui::Spacing();
+    if (ImGui::BeginTable("GameFields", 2, ImGuiTableFlags_SizingStretchProp)) {
+      ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 160);
+      ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+      SettingLabel(TextId::GameLanguageLabel);
+      const struct {
+        std::uint32_t code;
+        TextId label;
+      } game_languages[] = {
+          {1, TextId::GameLanguageEnglish},
+          {4, TextId::GameLanguageFrench},
+          {3, TextId::GameLanguageGerman},
+          {5, TextId::GameLanguageSpanish},
+          {6, TextId::GameLanguageItalian},
+      };
+      // Preserve manually configured SDK languages until the user selects one.
+      char custom_language[64];
+      std::snprintf(custom_language, sizeof(custom_language), Tr(TextId::GameLanguageCustom),
+                    static_cast<unsigned int>(config.user_language));
+      const char* preview = custom_language;
+      for (const auto& option : game_languages) {
+        if (config.user_language == option.code) preview = Tr(option.label);
+      }
+      if (ImGui::BeginCombo("##GameLanguage", preview)) {
+        for (const auto& option : game_languages) {
+          const bool selected = config.user_language == option.code;
+          if (ImGui::Selectable(Tr(option.label), selected)) config.user_language = option.code;
+          if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+      ImGui::EndTable();
+    }
+    Muted(Tr(TextId::GameLanguageHint));
+    ImGui::Spacing();
+    ImGui::Checkbox(Tr(TextId::SkipIntroLabel), &config.skip_intro_videos);
+    EndCard();
+    ImGui::Dummy(ImVec2(0, 4));
     BeginCard("Graphics", 438);
     ImGui::TextColored(kAccent, "%s", Tr(TextId::GroupGraphics));
     ImGui::Spacing();
@@ -388,13 +443,12 @@ bool LauncherUI::Render(SDL_Window* window, const std::filesystem::path& base_di
     ImGui::Checkbox(Tr(TextId::FpsOverlayLabel), &config.show_fps_overlay);
     EndCard();
     ImGui::Dummy(ImVec2(0, 4));
-    BeginCard("Controls", 158);
+    BeginCard("Controls", 126);
     ImGui::TextColored(kAccent, "%s", Tr(TextId::GroupControls));
     ImGui::Spacing();
     bool sdl = config.input_backend != "xinput";
     if (ImGui::Checkbox(Tr(TextId::SdlInputLabel), &sdl)) config.input_backend = sdl ? "sdl" : "xinput";
     Muted(ControllerName().c_str());
-    ImGui::Checkbox(Tr(TextId::SkipIntroLabel), &config.skip_intro_videos);
     EndCard();
   } else if (g_active_tab == 2) {
     Heading(Tr(TextId::TabGameFiles));

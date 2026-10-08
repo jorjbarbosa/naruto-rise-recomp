@@ -1,0 +1,17 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9b3cdf5..24927fe 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -28,7 +28,11 @@ if(REXGLUE_ENABLE_TRACY)
+     add_compile_definitions($<$<NOT:$<CONFIG:Release>>:REXGLUE_ENABLE_PROFILING>)
+ endif()
+ if(REXGLUE_ENABLE_PERF_COUNTERS)
+-    add_compile_definitions($<$<NOT:$<CONFIG:Release>>:REXGLUE_ENABLE_PERF_COUNTERS>)
++    # Unconditional (including Release): the command processor measures the
++    # guest frame rate on every swap (XE_SWAP) and the FPS/debug overlays
++    # depend on it. The cost is a couple of relaxed atomics per guest frame;
++    # the CSV log stays opt-in via the perf_log_csv cvar.
++    add_compile_definitions(REXGLUE_ENABLE_PERF_COUNTERS)
+ endif()
+ 
+ # Graphics backend selection

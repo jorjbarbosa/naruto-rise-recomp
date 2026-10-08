@@ -46,6 +46,9 @@ target_include_directories(narutorise_launcher PRIVATE
 target_link_libraries(narutorise_launcher PRIVATE
     SDL3::SDL3-static
 )
+if(MSVC)
+    target_compile_options(narutorise_launcher PRIVATE /utf-8)
+endif()
 
 if(WIN32)
     target_link_libraries(narutorise_launcher PRIVATE
@@ -71,6 +74,26 @@ add_custom_target(narutorise_launcher_assets ALL
             ${CMAKE_BINARY_DIR}/assets)
 add_dependencies(narutorise_launcher narutorise_launcher_assets)
 
+# Configuration regression tests can run without game files or the SDL UI.
+add_executable(narutorise_config_manager_test EXCLUDE_FROM_ALL
+    tests/test_config_manager.cpp
+    src/config_manager.cpp)
+target_include_directories(narutorise_config_manager_test PRIVATE
+    src
+    ${REXSDK_INSTALL_DIR}/include)
+set_target_properties(narutorise_config_manager_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+
+add_executable(narutorise_localization_test EXCLUDE_FROM_ALL
+    tests/test_localization.cpp
+    src/localization.cpp)
+target_include_directories(narutorise_localization_test PRIVATE src)
+set_target_properties(narutorise_localization_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+if(MSVC)
+    target_compile_options(narutorise_localization_test PRIVATE /utf-8)
+endif()
+
 # ---------------------------------------------------------------------------
 # Legacy wizard is opt-in; releases use packaging/installer.iss.
 # ---------------------------------------------------------------------------
@@ -94,6 +117,9 @@ if(WIN32 AND NARUTORISE_BUILD_LEGACY_INSTALLER)
     )
 
     add_executable(narutorise_installer WIN32 ${INSTALLER_SOURCES})
+    if(MSVC)
+        target_compile_options(narutorise_installer PRIVATE /utf-8)
+    endif()
 
     target_include_directories(narutorise_installer PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src

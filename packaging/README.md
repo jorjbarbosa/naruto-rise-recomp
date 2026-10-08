@@ -47,12 +47,19 @@ also rebuilds the game. Review backups before removing them manually.
 4. The output installer will be saved to `dist/NarutoRiseInstaller.exe`.
 
 The setup installs per-user into `%LOCALAPPDATA%\NarutoRisePC`, without elevation.
-Its flow is destination, optional game ISO, shortcuts, ready summary, installation,
-and completion with an optional launcher start. ISO extraction is staged in the
+Its first page offers **Update an existing installation** or **Install a new copy
+or import an ISO**. The installation flow is destination, optional game ISO,
+shortcuts, ready summary, installation, and completion with an optional launcher
+start. Updates skip ISO import. ISO extraction is staged in the
 setup's private temporary folder; populated `game` folders and reparse
 points are never replaced. Empty folders can receive an ISO import.
 Game data and `narutorise.toml` are preserved on uninstall and configuration is
-not overwritten on reinstall. A fresh configuration inherits the setup language.
+not overwritten on reinstall. A fresh configuration inherits the setup language
+for the launcher interface. Both interfaces offer English, Brazilian Portuguese,
+French, German, Spanish, Italian, and Russian, in that order. Setup defaults to
+English regardless of Windows or a previous installation; numbered choices keep
+this order in Inno Setup's language dialog. Portuguese and Russian affect the
+interfaces only, while the game's language setting remains independent.
 The native `narutorise_setup_helper.exe` validates the root XEX Title ID
 (`555307E5`) before extraction, lists files using `extract-xiso -l -s`, and
 reports file-count progress. This identifies the title, not dump authenticity
@@ -106,6 +113,54 @@ Use `-IsccPath 'C:\path\ISCC.exe'` for a custom compiler location or `-NoSetup`
 to generate only the portable package. The old ImGui installer is not shipped;
 its source remains available behind `NARUTORISE_BUILD_LEGACY_INSTALLER=ON`.
 
+### Manual updates (first update: 1.0.1)
+
+Distribute the new `NarutoRiseInstaller.exe` to existing users. They do not need
+an updater in the launcher or the original ISO to update the PC port:
+
+1. Close the game and launcher, then run the new installer.
+2. Choose **Update an existing installation** (preselected when the initial
+   destination contains both executables).
+3. Confirm the folder containing `narutorise.exe` and `narutorise_launcher.exe`.
+4. Review the destination and version, then apply the update.
+
+Setup detects its own previous installation and also the old native installer's
+registered `InstallLocation`, including custom destinations. For an unregistered
+portable copy, select its folder manually; updating it registers the copy with
+Inno Setup and creates an uninstaller. The folder picker uses the selected folder
+directly, without appending a new application subfolder.
+
+Updates replace only the packaged port binaries, DLLs, assets, bundled shader
+cache and README. Existing `narutorise.toml`, `game/`, legacy `game_root/`, pending
+`dlc/` packages, personal files, and saves/installed DLCs in the configured user
+data directory are preserved. No configuration defaults are forcibly migrated.
+The previous native uninstaller is never executed. Its obsolete registration is
+removed only after a successful update at the same destination, as described above.
+
+An update requires both port executables in the selected folder and refuses an
+ISO import. Installed versions are read from `narutorise.version`, or from the
+matching Inno/legacy registration for older releases. Installations without
+version metadata can still be updated. A newer numeric release version prevents
+replacement by an older installer; reinstalling the same version is allowed.
+The version marker is also included in portable packages and is removed by the
+Inno uninstaller. Keep the same production AppId for every release.
+
+Build the first update with:
+
+```powershell
+pwsh -File packaging/package-release.ps1 -Build -Version 1.0.1
+```
+
+For automation, the installer accepts `/MODE=update` or `/MODE=install`; when
+omitted, it chooses based on the initial destination. Update example:
+
+```powershell
+.\NarutoRiseInstaller.exe /MODE=update /DIR="D:\Games\NarutoRisePC"
+```
+
+To import an ISO into an existing empty `game/` folder, select **Install a new copy
+or import an ISO**, or pass `/MODE=install /GAMEISO="D:\Original.iso"`.
+
 ### Tests
 
 ```powershell
@@ -117,7 +172,10 @@ python packaging/tests/test_setup_inno.py -v
 Integration tests compile with a unique test AppId and install into private
 temporary directories with shortcuts and launcher execution disabled. Fixtures
 are synthetic and contain no original game data. The test compiler path defaults
-to `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe`.
+to `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe`; override with
+`NARUTORISE_TEST_ISCC`. Use `NARUTORISE_TEST_BUILD` for a custom helper build
+directory. Tests compile two releases and exercise updates, legacy detection,
+portable conversion, numeric version checks, and user data preservation.
 See [installer verification](../docs/installer-status.md) for available checks and the manual validation checklist; record results for each release.
 
 ---
@@ -125,7 +183,8 @@ See [installer verification](../docs/installer-status.md) for available checks a
 ## 3. Launcher Features
 
 The native C++ launcher (`narutorise_launcher.exe`):
-- **Multi-language support:** English (default) and Brazilian Portuguese, selectable via header or options tab.
+- **Multi-language support:** English (default), Brazilian Portuguese, French, German, Spanish, Italian, and Russian, selectable in the header.
+- **Game preferences:** Native game language selection (English, French, German, Spanish, Italian) and skipping intro videos in Settings → Game.
 - **Graphic configuration:** Internal resolution scale (1x to 4x), Ultrawide (16:9, 21:9, 32:9), 60 Hz VSync, Anisotropic Filtering (up to 16x), Fullscreen.
 - **Game file discovery:** Auto-detects `game/` or opens a native extracted-folder picker.
 - **Clean launch:** Automatically persists choices to `narutorise.toml` and launches `narutorise.exe`.

@@ -4,6 +4,7 @@
 #include <SDL3/SDL_dialog.h>
 #include <imgui.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -323,10 +324,14 @@ void DrawLanguageCombo(float content_w) {
   const float combo_w = 160.0f;
   ImGui::SetNextItemWidth(combo_w);
   ImGui::SameLine(content_w - combo_w);
-  const char* lang_options[] = {"English", "Português"};
-  int current = (Localization::GetLanguage() == Localization::Language::Portuguese) ? 1 : 0;
-  if (ImGui::Combo("##LangSelect", &current, lang_options, 2)) {
-    Localization::SetLanguageCode(current == 1 ? "pt_BR" : "en");
+  const auto& languages = Localization::GetLanguages();
+  if (ImGui::BeginCombo("##LangSelect", languages[static_cast<size_t>(Localization::GetLanguage())].name)) {
+    for (const auto& option : languages) {
+      const bool selected = Localization::GetLanguage() == option.language;
+      if (ImGui::Selectable(option.name, selected)) Localization::SetLanguage(option.language);
+      if (selected) ImGui::SetItemDefaultFocus();
+    }
+    ImGui::EndCombo();
   }
 }
 
@@ -339,7 +344,9 @@ void DrawStepTitle(const char* text) {
 
 void DrawHint(const char* text) {
   ImGui::SetWindowFontScale(0.85f);
+  ImGui::PushTextWrapPos();
   ImGui::TextDisabled("%s", text);
+  ImGui::PopTextWrapPos();
   ImGui::SetWindowFontScale(1.0f);
 }
 
@@ -372,10 +379,11 @@ const char* NextLabel() {
 
 void DrawDestinationStep() {
   DrawStepTitle(Tr(InstDestTitle));
-  ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90.0f);
+  const float browse_w = ImGui::CalcTextSize(Tr(InstBrowse)).x + ImGui::GetStyle().FramePadding.x * 2;
+  ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - browse_w - ImGui::GetStyle().ItemSpacing.x);
   ImGui::InputText("##DestPath", g_dest_buf, kPathBufSize);
   ImGui::SameLine();
-  if (ImGui::Button(Tr(InstBrowse), ImVec2(80, 0))) {
+  if (ImGui::Button(Tr(InstBrowse), ImVec2(browse_w, 0))) {
     g_dialog_is_iso = false;
     SDL_ShowOpenFolderDialog(DialogCallback, &g_dialog_selected_path, nullptr,
                              nullptr, false);
@@ -386,12 +394,13 @@ void DrawDestinationStep() {
 
 void DrawIsoStep() {
   DrawStepTitle(Tr(InstIsoTitle));
-  ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90.0f);
+  const float browse_w = ImGui::CalcTextSize(Tr(InstBrowse)).x + ImGui::GetStyle().FramePadding.x * 2;
+  ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - browse_w - ImGui::GetStyle().ItemSpacing.x);
   ImGui::InputText("##IsoPath", g_iso_buf, kPathBufSize);
   ImGui::SameLine();
-  if (ImGui::Button(Tr(InstBrowse), ImVec2(80, 0))) {
+  if (ImGui::Button(Tr(InstBrowse), ImVec2(browse_w, 0))) {
     g_dialog_is_iso = true;
-    SDL_DialogFileFilter filters[] = {{"Xbox 360 ISO Images", "iso"}};
+    SDL_DialogFileFilter filters[] = {{Tr(InstIsoTitle), "iso"}};
     SDL_ShowOpenFileDialog(DialogCallback, &g_dialog_selected_path, nullptr, filters,
                             1, nullptr, false);
   }
@@ -535,16 +544,18 @@ void DrawUninstallPane(float w, float h, bool& request_exit) {
     ImGui::Spacing();
     ImGui::Spacing();
 
-    const float btn_w = 200.0f;
-    if (ImGui::Button(Tr(UnRemoveAll), ImVec2(btn_w, 32))) {
+    const float remove_w = std::max(200.0f, ImGui::CalcTextSize(Tr(UnRemoveAll)).x + ImGui::GetStyle().FramePadding.x * 2);
+    const float keep_w = std::max(200.0f, ImGui::CalcTextSize(Tr(UnKeepFiles)).x + ImGui::GetStyle().FramePadding.x * 2);
+    const float cancel_w = std::max(90.0f, ImGui::CalcTextSize(Tr(UnCancel)).x + ImGui::GetStyle().FramePadding.x * 2);
+    if (ImGui::Button(Tr(UnRemoveAll), ImVec2(remove_w, 32))) {
       RunUninstall(false, request_exit);
     }
     ImGui::SameLine(0, 10.0f);
-    if (ImGui::Button(Tr(UnKeepFiles), ImVec2(btn_w, 32))) {
+    if (ImGui::Button(Tr(UnKeepFiles), ImVec2(keep_w, 32))) {
       RunUninstall(true, request_exit);
     }
     ImGui::SameLine(0, 10.0f);
-    if (ImGui::Button(Tr(UnCancel), ImVec2(90, 32))) {
+    if (ImGui::Button(Tr(UnCancel), ImVec2(cancel_w, 32))) {
       request_exit = true;
     }
   } else {
@@ -679,8 +690,11 @@ bool InstallerUI::Render(SDL_Window* window, bool& request_exit) {
   }
   ImGui::EndChild();
 
-  // Row 2: footer — Back / Next (90px each), bottom-right.
-  const float btn_w = 90.0f;
+  // Row 2: footer buttons size to translated labels, bottom-right.
+  float btn_w = 90.0f;
+  for (const char* label : {Tr(InstBack), NextLabel(), Tr(UnCancel)}) {
+    btn_w = std::max(btn_w, ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2);
+  }
   const float btn_h = 30.0f;
   const float footer_y = fh - pad - btn_h;
 

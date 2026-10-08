@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-BUILD = ROOT / "app/out/build/win-amd64-release"
+BUILD = Path(os.environ.get("NARUTORISE_TEST_BUILD", ROOT / "app/out/build/win-amd64-release"))
 HELPER = BUILD / "narutorise_setup_helper.exe"
 EXTRACTOR = BUILD / "extract-xiso.exe"
 
