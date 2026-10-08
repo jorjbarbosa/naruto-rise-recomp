@@ -20,6 +20,9 @@
 #ifndef LegacyUninstallKey
   #define LegacyUninstallKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\NarutoRiseRecomp"
 #endif
+#ifndef DefaultInstallDir
+  #define DefaultInstallDir "{localappdata}\NarutoRisePC"
+#endif
 #define MyAppPublisher "naruto-rise-recomp"
 #define MyAppExeName "narutorise_launcher.exe"
 #define MyAppGameExe "narutorise.exe"
@@ -29,9 +32,13 @@ AppId={#SetupAppId}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={localappdata}\NarutoRisePC
+DefaultDirName={code:GetDefaultInstallDir}
 UsePreviousAppDir=yes
+LanguageDetectionMethod=none
+UsePreviousLanguage=no
+ShowLanguageDialog=yes
 DisableDirPage=no
+AppendDefaultDirName=no
 DisableWelcomePage=yes
 PrivilegesRequired=lowest
 SetupIconFile=..\launcher\assets\narutorise.ico
@@ -50,8 +57,23 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
 [Languages]
-Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
+Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
+Name: "french"; MessagesFile: "compiler:Languages\French.isl"
+Name: "german"; MessagesFile: "compiler:Languages\German.isl"
+Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
+Name: "italian"; MessagesFile: "compiler:Languages\Italian.isl"
+Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
+
+[LangOptions]
+; Inno Setup alphabetizes this dialog; visible numbers preserve the requested order.
+english.LanguageName=1. English
+brazilianportuguese.LanguageName=2. Português (Brasil)
+french.LanguageName=3. Français
+german.LanguageName=4. Deutsch
+spanish.LanguageName=5. Español
+italian.LanguageName=6. Italiano
+russian.LanguageName=7. Русский
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -91,11 +113,24 @@ Name: "{autodesktop}\Naruto - Rise of a Ninja"; Filename: "{app}\{#MyAppExeName}
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
+[UninstallDelete]
+Type: files; Name: "{app}\narutorise.version"
+
 [Messages]
 brazilianportuguese.BeveledLabel=Naruto: Rise of a Ninja PC Port
 english.BeveledLabel=Naruto: Rise of a Ninja PC Port
 english.ConfirmUninstall=Remove %1?%n%nGame files, runtime configuration and unrelated personal files will be preserved.
 brazilianportuguese.ConfirmUninstall=Remover %1?%n%nOs arquivos do jogo, a configuração e os arquivos pessoais não relacionados serão preservados.
+french.BeveledLabel=Naruto: Rise of a Ninja PC Port
+german.BeveledLabel=Naruto: Rise of a Ninja PC Port
+spanish.BeveledLabel=Naruto: Rise of a Ninja PC Port
+italian.BeveledLabel=Naruto: Rise of a Ninja PC Port
+russian.BeveledLabel=Naruto: Rise of a Ninja PC Port
+french.ConfirmUninstall=Supprimer %1 ?%n%nLes fichiers du jeu, la configuration et les fichiers personnels sans rapport seront conservés.
+german.ConfirmUninstall=%1 entfernen?%n%nSpieldateien, Konfiguration und andere persönliche Dateien bleiben erhalten.
+spanish.ConfirmUninstall=¿Eliminar %1?%n%nSe conservarán los archivos del juego, la configuración y los archivos personales no relacionados.
+italian.ConfirmUninstall=Rimuovere %1?%n%nI file di gioco, la configurazione e i file personali non correlati verranno conservati.
+russian.ConfirmUninstall=Удалить %1?%n%nФайлы игры, настройки и другие личные файлы будут сохранены.
 
 [CustomMessages]
 english.IsoTitle=Select Game ISO
@@ -144,9 +179,59 @@ brazilianportuguese.Preserved=Os arquivos do jogo e a configuração serão pres
 brazilianportuguese.ExistingXex=Foi encontrado default.xex no destino. Os arquivos existentes do jogo não serão substituídos.
 brazilianportuguese.ExistingOther=O destino contém arquivos em game, mas não default.xex. Eles não serão apagados automaticamente.
 brazilianportuguese.EmptyFolder=Existe uma pasta game vazia. Você pode importar sua ISO aqui.
+english.StageExists=Import staging destination already exists: %1
+english.StageCreateFailed=Cannot create import staging destination: %1
+english.ConfigReadFailed=Cannot read runtime configuration: %1
+english.ConfigWriteFailed=Cannot write runtime configuration: %1
+english.ActionTitle=Install or update
+english.ActionDescription=Choose how to install version {#MyAppVersion}.
+english.ActionHint=Updates preserve your game files, configuration, saves and DLCs. Close the game and launcher before continuing.
+english.UpdateOption=Update an existing installation
+english.InstallOption=Install a new copy or import an ISO
+english.UpdateFolderTitle=Select the existing installation
+english.UpdateFolderDescription=Select the folder containing narutorise.exe and narutorise_launcher.exe.
+english.UpdateFolderHint=The files of the PC port will be updated in this folder. You do not need to import your ISO again.
+english.UpdateMissing=No existing installation was found in this folder. Select the folder containing narutorise.exe and narutorise_launcher.exe, or choose a new installation.
+english.UpdateNoIso=Updating does not import an ISO. Remove /GAMEISO or choose a new installation to import game files.
+english.UpdateSummary=Update existing installation: %1 -> %2
+english.VersionUnknown=unknown version
+english.VersionNewer=This folder contains version %1, which is newer than %2. Use a newer installer to update it.
+english.VersionWriteFailed=Cannot write the installed version: %1
+english.InvalidMode=Invalid setup mode. Use /MODE=update or /MODE=install.
+english.UpdateFinishedTitle=Update complete
+english.UpdateFinished=Version %1 has been installed. Your game files, configuration, saves and DLCs have been preserved.
+brazilianportuguese.StageExists=A pasta temporária de importação já existe: %1
+brazilianportuguese.StageCreateFailed=Não foi possível criar a pasta temporária de importação: %1
+brazilianportuguese.ConfigReadFailed=Não foi possível ler a configuração: %1
+brazilianportuguese.ConfigWriteFailed=Não foi possível gravar a configuração: %1
+brazilianportuguese.ActionTitle=Instalar ou atualizar
+brazilianportuguese.ActionDescription=Escolha como instalar a versão {#MyAppVersion}.
+brazilianportuguese.ActionHint=A atualização preserva os arquivos do jogo, configurações, saves e DLCs. Feche o jogo e o launcher antes de continuar.
+brazilianportuguese.UpdateOption=Atualizar instalação existente
+brazilianportuguese.InstallOption=Instalar uma nova cópia ou importar uma ISO
+brazilianportuguese.UpdateFolderTitle=Selecionar a instalação existente
+brazilianportuguese.UpdateFolderDescription=Selecione a pasta que contém narutorise.exe e narutorise_launcher.exe.
+brazilianportuguese.UpdateFolderHint=Os arquivos do port para PC serão atualizados nesta pasta. Você não precisa importar sua ISO novamente.
+brazilianportuguese.UpdateMissing=Nenhuma instalação existente foi encontrada nesta pasta. Selecione a pasta que contém narutorise.exe e narutorise_launcher.exe ou escolha uma nova instalação.
+brazilianportuguese.UpdateNoIso=A atualização não importa uma ISO. Remova /GAMEISO ou escolha uma nova instalação para importar os arquivos do jogo.
+brazilianportuguese.UpdateSummary=Atualizar instalação existente: %1 -> %2
+brazilianportuguese.VersionUnknown=versão desconhecida
+brazilianportuguese.VersionNewer=Esta pasta contém a versão %1, mais recente que %2. Use um instalador mais recente para atualizá-la.
+brazilianportuguese.VersionWriteFailed=Não foi possível gravar a versão instalada: %1
+brazilianportuguese.InvalidMode=Modo de instalação inválido. Use /MODE=update ou /MODE=install.
+brazilianportuguese.UpdateFinishedTitle=Atualização concluída
+brazilianportuguese.UpdateFinished=A versão %1 foi instalada. Os arquivos do jogo, configurações, saves e DLCs foram preservados.
+#include "locales\fr.iss"
+#include "locales\de.iss"
+#include "locales\es.iss"
+#include "locales\it.iss"
+#include "locales\ru.iss"
 
 [Code]
 var
+  ActionPage: TInputOptionWizardPage;
+  RequestedMode: String;
+  DefaultDirHint: String;
   IsoPage: TInputFileWizardPage;
   ExtractPage: TOutputProgressWizardPage;
   Extracted: Boolean;
@@ -162,6 +247,104 @@ var
   ImportStageName: String;
   ImportStageOwned: Boolean;
   ImportPublished: Boolean;
+
+function IsExistingInstallation(const Folder: String): Boolean;
+begin
+  Result := FileExists(AddBackslash(Folder) + '{#MyAppGameExe}') and
+    FileExists(AddBackslash(Folder) + '{#MyAppExeName}');
+end;
+
+function SameFolder(const Left, Right: String): Boolean;
+begin
+  Result := (Left <> '') and (Right <> '') and
+    (CompareText(ExpandFileName(RemoveBackslashUnlessRoot(Left)),
+      ExpandFileName(RemoveBackslashUnlessRoot(Right))) = 0);
+end;
+
+function GetDefaultInstallDir(Param: String): String;
+var
+  Folder: String;
+begin
+  Result := ExpandConstant('{#DefaultInstallDir}');
+  if RegQueryStringValue(HKCU,
+    ExpandConstant('Software\Microsoft\Windows\CurrentVersion\Uninstall\{#SetupAppId}_is1'),
+    'Inno Setup: App Path', Folder) then
+    if IsExistingInstallation(Folder) then
+    begin
+      Result := Folder;
+      Exit;
+    end;
+  if RegQueryStringValue(HKCU, '{#LegacyUninstallKey}', 'InstallLocation', Folder) then
+    if IsExistingInstallation(Folder) then Result := Folder;
+end;
+
+function IsUpdate: Boolean;
+begin
+  Result := ActionPage.SelectedValueIndex = 0;
+end;
+
+function InstalledVersion(const Folder: String): String;
+var
+  VersionText: AnsiString;
+  RegisteredFolder: String;
+  Key: String;
+begin
+  Result := '';
+  if LoadStringFromFile(AddBackslash(Folder) + 'narutorise.version', VersionText) then
+    Result := Trim(String(VersionText));
+  if Result <> '' then Exit;
+  Key := ExpandConstant('Software\Microsoft\Windows\CurrentVersion\Uninstall\{#SetupAppId}_is1');
+  if RegQueryStringValue(HKCU, Key, 'Inno Setup: App Path', RegisteredFolder) then
+    if SameFolder(RegisteredFolder, Folder) then
+      RegQueryStringValue(HKCU, Key, 'DisplayVersion', Result);
+  if Result <> '' then Exit;
+  if RegQueryStringValue(HKCU, '{#LegacyUninstallKey}', 'InstallLocation', RegisteredFolder) then
+    if SameFolder(RegisteredFolder, Folder) then
+      RegQueryStringValue(HKCU, '{#LegacyUninstallKey}', 'DisplayVersion', Result);
+end;
+
+function NumericVersion(Version: String): String;
+var
+  I: Integer;
+begin
+  Result := Version;
+  for I := 1 to Length(Version) do
+    if (Version[I] = '-') or (Version[I] = '+') then
+    begin
+      Result := Copy(Version, 1, I - 1);
+      Exit;
+    end;
+end;
+
+function DestinationError: String;
+var
+  PreviousVersion: String;
+  PreviousNumber, NewNumber: Int64;
+begin
+  Result := '';
+  if (RequestedMode <> 'auto') and (RequestedMode <> 'update') and
+    (RequestedMode <> 'install') then
+  begin
+    Result := CustomMessage('InvalidMode');
+    Exit;
+  end;
+  if IsUpdate and not IsExistingInstallation(WizardDirValue) then
+  begin
+    Result := CustomMessage('UpdateMissing');
+    Exit;
+  end;
+  if not IsExistingInstallation(WizardDirValue) then Exit;
+  PreviousVersion := InstalledVersion(WizardDirValue);
+  if StrToVersion(NumericVersion(PreviousVersion), PreviousNumber) and
+    StrToVersion(NumericVersion('{#MyAppVersion}'), NewNumber) then
+    if ComparePackedVersion(PreviousNumber, NewNumber) > 0 then
+      Result := FmtMessage(CustomMessage('VersionNewer'), [PreviousVersion, '{#MyAppVersion}']);
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := (PageID = IsoPage.ID) and IsUpdate;
+end;
 
 function IsoExtracted: Boolean;
 begin
@@ -212,6 +395,16 @@ end;
 
 procedure InitializeWizard;
 begin
+  RequestedMode := Lowercase(ExpandConstant('{param:MODE|auto}'));
+  DefaultDirHint := WizardForm.SelectDirLabel.Caption;
+  ActionPage := CreateInputOptionPage(wpWelcome, CustomMessage('ActionTitle'),
+    CustomMessage('ActionDescription'), CustomMessage('ActionHint'), True, False);
+  ActionPage.Add(CustomMessage('UpdateOption'));
+  ActionPage.Add(CustomMessage('InstallOption'));
+  if (RequestedMode = 'update') or
+    ((RequestedMode = 'auto') and IsExistingInstallation(WizardDirValue)) then
+    ActionPage.SelectedValueIndex := 0
+  else ActionPage.SelectedValueIndex := 1;
   ImportStageName := '.narutorise-import-' + ExtractFileName(ExpandConstant('{tmp}'));
   IsoPage := CreateInputFilePage(wpSelectDir, CustomMessage('IsoTitle'),
     CustomMessage('IsoDescription'), CustomMessage('IsoHint'));
@@ -236,6 +429,21 @@ end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
+  if CurPageID = wpSelectDir then
+  begin
+    WizardForm.SelectDirLabel.Caption := DefaultDirHint;
+    if IsUpdate then
+    begin
+      WizardForm.PageNameLabel.Caption := CustomMessage('UpdateFolderTitle');
+      WizardForm.PageDescriptionLabel.Caption := CustomMessage('UpdateFolderDescription');
+      WizardForm.SelectDirLabel.Caption := CustomMessage('UpdateFolderHint');
+    end;
+  end;
+  if (CurPageID = wpFinished) and IsUpdate then
+  begin
+    WizardForm.FinishedHeadingLabel.Caption := CustomMessage('UpdateFinishedTitle');
+    WizardForm.FinishedLabel.Caption := FmtMessage(CustomMessage('UpdateFinished'), ['{#MyAppVersion}']);
+  end;
   if CurPageID = IsoPage.ID then
   begin
     ExistingDataLabel.Caption := '';
@@ -300,9 +508,9 @@ begin
   begin
     StagePath := ExpandConstant('{app}\') + ImportStageName;
     if DirExists(StagePath) or FileExists(StagePath) then
-      RaiseException('Import staging destination already exists: ' + StagePath);
+      RaiseException(FmtMessage(CustomMessage('StageExists'), [StagePath]));
     if not ForceDirectories(StagePath) then
-      RaiseException('Cannot create import staging destination: ' + StagePath);
+      RaiseException(FmtMessage(CustomMessage('StageCreateFailed'), [StagePath]));
     ImportStageOwned := True;
   end;
   if CurStep = ssPostInstall then
@@ -326,9 +534,14 @@ begin
     begin
       ConfigPath := ExpandConstant('{app}\narutorise.toml');
       if ActiveLanguage = 'brazilianportuguese' then LanguageValue := 'pt_BR'
+      else if ActiveLanguage = 'french' then LanguageValue := 'fr'
+      else if ActiveLanguage = 'german' then LanguageValue := 'de'
+      else if ActiveLanguage = 'spanish' then LanguageValue := 'es'
+      else if ActiveLanguage = 'italian' then LanguageValue := 'it'
+      else if ActiveLanguage = 'russian' then LanguageValue := 'ru'
       else LanguageValue := 'en';
       if not LoadStringsFromFile(ConfigPath, Lines) then
-        RaiseException('Cannot read runtime configuration: ' + ConfigPath);
+        RaiseException(FmtMessage(CustomMessage('ConfigReadFailed'), [ConfigPath]));
       FoundLanguage := False;
       for I := 0 to GetArrayLength(Lines) - 1 do
         if Pos('launcher_language', Trim(Lines[I])) = 1 then
@@ -342,8 +555,11 @@ begin
         Lines[GetArrayLength(Lines) - 1] := 'launcher_language = "' + LanguageValue + '"';
       end;
       if not SaveStringsToUTF8File(ConfigPath, Lines, False) then
-        RaiseException('Cannot write runtime configuration: ' + ConfigPath);
+        RaiseException(FmtMessage(CustomMessage('ConfigWriteFailed'), [ConfigPath]));
     end;
+    ConfigPath := ExpandConstant('{app}\narutorise.version');
+    if not SaveStringToFile(ConfigPath, '{#MyAppVersion}' + #13#10, False) then
+      RaiseException(FmtMessage(CustomMessage('VersionWriteFailed'), [ConfigPath]));
     { Replace only the obsolete ARP registration for THIS destination.
       Never run the old uninstaller: it could recursively delete user files. }
     if RegQueryStringValue(HKCU,
@@ -426,11 +642,24 @@ begin
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  Error: String;
 begin
   Result := True;
   { Silent installs validate in PrepareToInstall, which returns an error
     without leaving automation waiting at an interactive wizard page. }
   if WizardSilent then Exit;
+  if (CurPageID = ActionPage.ID) and IsUpdate then IsoPage.Values[0] := '';
+  if CurPageID = wpSelectDir then
+  begin
+    Error := DestinationError;
+    if Error <> '' then
+    begin
+      MsgBox(Error, mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+  end;
   if (CurPageID = IsoPage.ID) and (IsoPage.Values[0] <> '') then
   begin
     if not FileExists(IsoPage.Values[0]) then
@@ -460,7 +689,17 @@ function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo,
   MemoTypeInfo, MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
 var
   IsoSummary: String;
+  PreviousVersion: String;
 begin
+  if IsUpdate then
+  begin
+    PreviousVersion := InstalledVersion(WizardDirValue);
+    if PreviousVersion = '' then PreviousVersion := CustomMessage('VersionUnknown');
+    Result := FmtMessage(CustomMessage('UpdateSummary'), [PreviousVersion, '{#MyAppVersion}']) +
+      NewLine + NewLine + MemoDirInfo + NewLine + NewLine + CustomMessage('ActionHint');
+    if MemoTasksInfo <> '' then Result := Result + NewLine + NewLine + MemoTasksInfo;
+    Exit;
+  end;
   IsoSummary := IsoPage.Values[0];
   if IsoSummary = '' then IsoSummary := CustomMessage('IsoSkipped');
   Result := MemoDirInfo + NewLine + NewLine + CustomMessage('IsoLabel') +
@@ -477,9 +716,15 @@ var
   DestPath: String;
   TempFree, TempTotal, DestFree, DestTotal, Required: Int64;
 begin
-  Result := '';
+  Result := DestinationError;
   Extracted := False;
+  if Result <> '' then Exit;
   HadConfig := FileExists(ExpandConstant('{app}\narutorise.toml'));
+  if IsUpdate then
+  begin
+    if IsoPage.Values[0] <> '' then Result := CustomMessage('UpdateNoIso');
+    Exit;
+  end;
   if IsoPage.Values[0] = '' then Exit;
   if GameRootIsOccupied then
   begin

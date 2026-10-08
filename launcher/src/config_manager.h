@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 
@@ -7,6 +8,9 @@ struct GameConfig {
   std::string gpu_plugin = "xenos";
   bool d3d12_readback_resolve = true;
   bool skip_intro_videos = true;
+
+  // Game language: 1 = English, 4 = French, 3 = German, 5 = Spanish, 6 = Italian.
+  std::uint32_t user_language = 1;
 
   bool log_verbose = false;
   std::string log_level = "info";
@@ -37,7 +41,7 @@ struct GameConfig {
 
   std::string custom_game_root = "";
 
-  // Launcher preferences ("en" by default, or "pt_BR")
+  // Launcher interface: en (default), pt_BR, fr, de, es, it, ru.
   std::string launcher_language = "en";
 };
 

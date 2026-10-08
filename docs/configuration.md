@@ -8,6 +8,38 @@ Use the launcher whenever possible. It reads and saves `narutorise.toml` **next 
 
 During development, `app/narutorise.toml` is the template copied by CMake into the build output. Rebuilding can overwrite preferences saved there; make persistent development changes in the template or keep a backup of your configuration.
 
+## Game language
+
+Open **Settings → Game → Game language** in the launcher. The selection is saved with the other settings and applied on the next game launch. Text and voice availability depends on the language assets included in your game files.
+
+| Language | `user_language` |
+| --- | --- |
+| English (default) | `1` |
+| French | `4` |
+| German | `3` |
+| Spanish | `5` |
+| Italian | `6` |
+
+For example, set `user_language = 5` in `narutorise.toml` to select Spanish. This preference is independent of `launcher_language`. The launcher preserves manually configured SDK language codes outside this list, displaying them as **Custom (code)** until you select a listed language.
+
+## Launcher and installer languages
+
+Both interfaces offer languages in this order:
+
+| Interface language | `launcher_language` |
+| --- | --- |
+| English (default) | `"en"` |
+| Brazilian Portuguese | `"pt_BR"` |
+| French | `"fr"` |
+| German | `"de"` |
+| Spanish | `"es"` |
+| Italian | `"it"` |
+| Russian | `"ru"` |
+
+Use the selector in the launcher's header to change its interface. Portuguese and Russian apply to the launcher and installer interfaces only; the game selector still offers the five native languages listed above.
+
+The installer always starts with English selected, independently of the Windows language or a previous installation's language. Numbered installer options preserve the order above. On a fresh installation, the selected installer language becomes the launcher language. Reinstallation preserves existing configuration, including language preferences.
+
 ## Ultrawide
 
 The launcher offers 16:9, 21:9, and 32:9. The patch changes the game's projection constant and passes the target aspect ratio to the SDK presenter, preserving the resolution seen by the original game code.
@@ -33,7 +65,8 @@ The values below match `app/narutorise.toml` at the time of the project analysis
 
 | Key | Value | Effect |
 | --- | --- | --- |
-| `launcher_language` | `"en"` | Launcher interface; use `"pt_BR"` for Brazilian Portuguese |
+| `launcher_language` | `"en"` | Launcher interface; see the seven language codes above |
+| `user_language` | `1` | Game language; see the language codes above |
 | `resolution_scale` | `2` | Internal scale; the launcher offers 1 through 4 |
 | `draw_resolution_scale_x`, `draw_resolution_scale_y` | `2`, `2` | Draw scales, synchronized by the launcher |
 | `fullscreen` | `true` | Fullscreen mode |
@@ -58,8 +91,6 @@ The launcher provides anisotropic filtering up to 16×. The internal `anisotropi
 | `F1` | Toggle the FPS and frametime overlay (shows the guest and host frame rates) |
 | `F3` | Toggle the SDK debug overlay (guest frame stats, build stamp, and per-frame counters when built with perf counters) |
 | `Alt+F4` | Request game shutdown |
-
-The launcher language does not automatically change the languages available in the game.
 
 The FPS overlay (`F1`) shows two rates: **Guest** — the game's own frame rate, measured on every guest swap, which is what game speed follows — and **Host** — the window present rate, which can be much higher on high-refresh displays. Slow motion with a high host rate means the guest rate is below the game's target.
 

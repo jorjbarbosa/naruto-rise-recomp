@@ -152,6 +152,17 @@ pwsh -File .\packaging\package-release.ps1 -Build
 
 Outputs in `dist/`: `naruto-rise-recomp-win-amd64/`, a ZIP with the same name, and, when requested, `NarutoRiseInstaller.exe`. Packaging requires the Naruto shader cache and `llvm-readobj.exe` to inspect binary dependencies. See the [packaging guide](../packaging/README.md).
 
+## Configuration and localization regression tests
+
+After configuring the application, verify language persistence, translation coverage, language order, and formatting placeholders without game files or opening the UI:
+
+```powershell
+cmake --build app/out/build/win-amd64-release --target narutorise_config_manager_test narutorise_localization_test
+$testData = Join-Path $env:TEMP ("narutorise-config-" + [guid]::NewGuid())
+.\app\out\build\win-amd64-release\narutorise_config_manager_test.exe $testData
+.\app\out\build\win-amd64-release\narutorise_localization_test.exe
+```
+
 ## Other platforms
 
 Linux, macOS, and ARM64 presets are inherited from the SDK structure. The launcher, preparation scripts, and installer still have Windows-specific dependencies; the launcher's graphics path uses D3D11. These presets alone do not guarantee a working build on other platforms.

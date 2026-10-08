@@ -120,6 +120,7 @@ foreach ($dir in @('assets', 'shader_cache', 'game', 'licenses')) {
 }
 try {
     foreach ($name in $binaries) { Copy-Item -LiteralPath (Join-Path $AppBuildDir $name) -Destination $Portable }
+    Set-Content (Join-Path $Portable 'narutorise.version') -Encoding ASCII -Value $Version
     foreach ($asset in @('cover.jpg', 'narutorise.ico')) {
         Copy-Item -LiteralPath (Join-Path $RootDir "launcher\assets\$asset") -Destination (Join-Path $Portable 'assets')
     }
@@ -141,6 +142,13 @@ Choose your original Xbox 360 ISO, or skip it to use already extracted files.
 ISO extraction is available only in Setup; run Setup again to import later.
 The setup preserves game and narutorise.toml on reinstall/uninstall.
 
+MANUAL UPDATE:
+Run the new NarutoRiseInstaller.exe and choose Update an existing installation.
+Select the folder containing narutorise.exe and narutorise_launcher.exe.
+Close the game and launcher first. No ISO import or uninstall is needed.
+Game files, configuration, saves and DLCs are preserved. Portable installations
+can also be updated this way; Setup registers them as installed applications.
+
 PORTABLE PACKAGE:
 Extract this folder to a writable location and run narutorise_launcher.exe.
 Select an extracted game folder in GAME FILES, or put your original extracted
@@ -148,7 +156,9 @@ files into game (default.xex must be at its root). The launcher does not import 
 Optional: run install.ps1 to create shortcuts.
 
 SETTINGS:
-English and Brazilian Portuguese; resolution scale, fullscreen, VSync,
+Interface languages: English, Brazilian Portuguese, French, German, Spanish,
+Italian, and Russian. Game languages: English, French, German, Spanish, Italian.
+Resolution scale, fullscreen, VSync,
 FXAA anti-aliasing, AMD FidelityFX CAS/FSR post-processing, anisotropic
 filtering, aspect ratios 16:9 / 21:9 / 32:9, and FPS overlay (F1).
 SDL controller support includes Xbox and PlayStation controllers.
