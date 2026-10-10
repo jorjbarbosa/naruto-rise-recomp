@@ -4,6 +4,9 @@ gpu_plugin = "xenos"
 d3d12_readback_resolve = true
 skip_intro_videos = true
 
+# Game language: 1 = English, 4 = French, 3 = German, 5 = Spanish, 6 = Italian.
+user_language = 1
+
 # Fix da piscada preta nas lutas: draws fullscreen sem clipping fazem o
 # estimador de EDRAM alegar o EDRAM inteiro e corromper o buffer de cena via
 # transferencias de ownership (default do SDK agora tambem e true).
@@ -38,7 +41,7 @@ show_fps_overlay = false
 # 0.0 = native 16:9; 2.3889 = 21:9 (3440x1440); 3.5556 = 32:9.
 ultrawide_target_aspect = 2.3889
 
-# Launcher language: "en" (English, default) or "pt_BR" (Portuguese)
+# Launcher interface: "en" (default), "pt_BR", "fr", "de", "es", "it", "ru".
 launcher_language = "en"
 
 # -----------------------------------------------------------------------------

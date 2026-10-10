@@ -1,6 +1,13 @@
 # Discovery seeds from the first strict analysis of this XEX (SHA-256 recorded in logs).
 # These are unresolved unconditional branch destinations, not native replacements.
 # Bounds are inferred by ReXGlue; runtime behavior remains unverified.
+
+# Xbox CRT nonlocal jumps must unwind the native call stack as well as restore
+# the guest context. Shader compiler errors use this path; treating longjmp as
+# an ordinary call returns into the compiler with another frame's registers.
+setjmp_address = 0x822CC540
+longjmp_address = 0x822CC220
+
 [functions]
 "0x82156420" = {} # branch at 0x821592EC
 "0x8254EBA8" = {} # branch at 0x825CD508

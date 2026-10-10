@@ -2,9 +2,25 @@
 
 #include <array>
 
+#include "locales/de.h"
+#include "locales/es.h"
+#include "locales/fr.h"
+#include "locales/it.h"
+#include "locales/ru.h"
+
 namespace {
 
 Localization::Language g_current_language = Localization::Language::English;
+
+const std::array<Localization::LanguageOption, 7> kLanguages = {{
+    {Localization::Language::English, "en", "English"},
+    {Localization::Language::Portuguese, "pt_BR", "Português"},
+    {Localization::Language::French, "fr", "Français"},
+    {Localization::Language::German, "de", "Deutsch"},
+    {Localization::Language::Spanish, "es", "Español"},
+    {Localization::Language::Italian, "it", "Italiano"},
+    {Localization::Language::Russian, "ru", "Русский"},
+}};
 
 // English string table (default)
 const char* const kStringsEn[] = {
@@ -152,6 +168,17 @@ const char* const kStringsEn[] = {
     "Cancel",
     "Uninstall finished. Some files may remain until this window closes.",
     "Uninstall failed: %s",
+    // --- Game language ---
+    "Game",
+    "Game language:",
+    "English",
+    "French",
+    "German",
+    "Spanish",
+    "Italian",
+    "Custom (%u)",
+    "Applied on the next launch. Available text and voices depend on your game files.",
+    "Launcher interface language",
 };
 
 // Portuguese string table (pt-BR)
@@ -300,15 +327,44 @@ const char* const kStringsPtBr[] = {
     "Cancelar",
     "Desinstalacao concluida. Alguns arquivos podem permanecer ate esta janela fechar.",
     "Falha na desinstalacao: %s",
+    // --- Game language ---
+    "Jogo",
+    "Idioma do jogo:",
+    "Inglês",
+    "Francês",
+    "Alemão",
+    "Espanhol",
+    "Italiano",
+    "Personalizado (%u)",
+    "Aplicado ao iniciar o jogo. Os textos e as vozes disponíveis dependem dos arquivos do jogo.",
+    "Idioma da interface do launcher",
 };
 
 static_assert(std::size(kStringsEn) == static_cast<size_t>(TextId::Count));
 static_assert(std::size(kStringsPtBr) == static_cast<size_t>(TextId::Count));
+static_assert(std::size(localization_strings::kFr) == static_cast<size_t>(TextId::Count));
+static_assert(std::size(localization_strings::kDe) == static_cast<size_t>(TextId::Count));
+static_assert(std::size(localization_strings::kEs) == static_cast<size_t>(TextId::Count));
+static_assert(std::size(localization_strings::kIt) == static_cast<size_t>(TextId::Count));
+static_assert(std::size(localization_strings::kRu) == static_cast<size_t>(TextId::Count));
+static_assert(std::size(kLanguages) == static_cast<size_t>(Localization::Language::Count));
+
+const char* const* const kStringTables[] = {
+    kStringsEn, kStringsPtBr,
+    localization_strings::kFr, localization_strings::kDe,
+    localization_strings::kEs, localization_strings::kIt,
+    localization_strings::kRu,
+};
+static_assert(std::size(kStringTables) == std::size(kLanguages));
 
 }  // namespace
 
+const std::array<Localization::LanguageOption, 7>& Localization::GetLanguages() {
+  return kLanguages;
+}
+
 void Localization::SetLanguage(Localization::Language lang) {
-  g_current_language = lang;
+  g_current_language = static_cast<size_t>(lang) < kLanguages.size() ? lang : Language::English;
 }
 
 Localization::Language Localization::GetLanguage() {
@@ -316,15 +372,18 @@ Localization::Language Localization::GetLanguage() {
 }
 
 void Localization::SetLanguageCode(const std::string& code) {
-  if (code == "pt_BR" || code == "pt-BR" || code == "pt") {
-    g_current_language = Language::Portuguese;
-  } else {
-    g_current_language = Language::English;
+  const std::string normalized = (code == "pt-BR" || code == "pt") ? "pt_BR" : code;
+  for (const auto& option : kLanguages) {
+    if (normalized == option.code) {
+      SetLanguage(option.language);
+      return;
+    }
   }
+  SetLanguage(Language::English);
 }
 
 std::string Localization::GetLanguageCode() {
-  return (g_current_language == Language::Portuguese) ? "pt_BR" : "en";
+  return kLanguages[static_cast<size_t>(g_current_language)].code;
 }
 
 const char* Localization::Get(TextId id) {
@@ -333,8 +392,5 @@ const char* Localization::Get(TextId id) {
     return "";
   }
 
-  if (g_current_language == Language::Portuguese) {
-    return kStringsPtBr[index];
-  }
-  return kStringsEn[index];
+  return kStringTables[static_cast<size_t>(g_current_language)][index];
 }

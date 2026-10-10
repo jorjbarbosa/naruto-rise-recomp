@@ -31,7 +31,7 @@ PowerPC code is translated ahead of time into C++. The ReXGlue runtime provides 
 | `app/*-seeds.toml` | Adjustments and information for analysis/code generation |
 | `app/narutorise.toml` | Default runtime configuration |
 | `app/generated/rexglue.cmake` | Generated CMake/SDK integration |
-| `app/generated/default/`, `ai2c/`, `ai2c2/` | Local code generation outputs |
+| `app/generated/default/`, `ai2c/`, `ai2c1/`, `ai2c2/`, `ai2c3/` | Local code generation outputs |
 | `launcher/src/` | SDL3/ImGui UI, configuration, data discovery, and content management |
 | `launcher/assets/` | Launcher cover art, icon, and fonts |
 | `sdk/` | ReXGlue and dependencies |
@@ -59,6 +59,7 @@ PowerPC code is translated ahead of time into C++. The ReXGlue runtime provides 
 | Patch | Purpose |
 | --- | --- |
 | `codegen-alt-version-dll-modules.patch` | Code generation for alternative module versions, required by the DLC workflow |
+| `guest-frame-stats.patch` | Enables the guest frame rate measurement in Release builds, feeding the F1/F3 overlays |
 | `obdosdevices-relative-paths.patch` | Relative device path handling |
 | `physical-memory-trace.patch` | Physical memory diagnostics |
 | `ultrawide-presenter.patch` | Anamorphic presentation in the graphics backend |
@@ -84,7 +85,7 @@ The launcher saves the TOML file and starts the game with `--game_data_root`. Fo
 
 1. **SDK reproducibility:** `.gitmodules` declares the SDK, but the repository root had no files recorded in the Git index when analyzed. Before publication, recording the SDK gitlink/commit and verifying a clean clone with all patches is essential for reproducible builds.
 2. **Setup and manifest:** setup's final instructions suggest `init --force`, while the manifest contains DLC customizations. The documented workflow uses `codegen` directly to preserve them.
-3. **Optional DLC builds:** packaging accepts a missing `narutorise_ai2c2.dll`, but the current manifest requires its input file. A dedicated base-game preset or manifest would be a useful improvement.
+3. **Optional DLC builds:** the current manifest requires all three DLC engine input files. Packaging includes each declared revision and rejects missing generated module binaries. A dedicated base-game preset or manifest would be a useful improvement.
 4. **Portability:** Linux/macOS/ARM64 presets exist, but end-to-end validation and a complete non-Windows launcher graphics path are still needed.
 5. **Revision compatibility:** seeds and hooks use specific addresses. A table of hashes/revisions and test results for the game, DLCs, and TUs is missing.
 6. **Custom user data:** the runtime accepts `user_data_root`; the DLC launcher directly resolves Documents. Shared path resolution would prevent mismatches in customized installations.

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <string>
 
 enum class TextId {
@@ -147,6 +148,17 @@ enum class TextId {
   UnCancel,
   UnDone,
   UnFailed,
+  // --- Game language ---
+  GroupGame,
+  GameLanguageLabel,
+  GameLanguageEnglish,
+  GameLanguageFrench,
+  GameLanguageGerman,
+  GameLanguageSpanish,
+  GameLanguageItalian,
+  GameLanguageCustom,
+  GameLanguageHint,
+  LauncherLanguageTooltip,
   Count
 };
 
@@ -154,9 +166,22 @@ class Localization {
  public:
   enum class Language {
     English,
-    Portuguese
+    Portuguese,
+    French,
+    German,
+    Spanish,
+    Italian,
+    Russian,
+    Count
   };
 
+  struct LanguageOption {
+    Language language;
+    const char* code;
+    const char* name;
+  };
+
+  static const std::array<LanguageOption, 7>& GetLanguages();
   static void SetLanguage(Language lang);
   static Language GetLanguage();
   static void SetLanguageCode(const std::string& code);

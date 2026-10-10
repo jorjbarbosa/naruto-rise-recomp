@@ -187,12 +187,8 @@ int main(int argc, char* argv[]) {
     uninstall_mode = true;
   }
 
-  // Default the wizard language to the system language.
-#if defined(_WIN32)
-  if (PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_PORTUGUESE) {
-    Localization::SetLanguageCode("pt_BR");
-  }
-#endif
+  // Always start the installer in English, independently of Windows language.
+  Localization::SetLanguage(Localization::Language::English);
 
   if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
     std::fprintf(stderr, "Failed to initialize SDL3: %s\n", SDL_GetError());
@@ -226,6 +222,7 @@ int main(int argc, char* argv[]) {
   io.IniFilename = nullptr;
 
   launcher_theme::Apply();  // shared visual identity with the launcher
+  launcher_theme::LoadFonts(installer_payload::InstallerDir());
 
 #if defined(_WIN32)
   ImGui_ImplSDL3_InitForD3D(window);

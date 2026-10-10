@@ -42,13 +42,19 @@ Write-Host "Packaging NarutoRisePC $Version" -ForegroundColor Cyan
 # A directory named "release" is not sufficient: validate the actual CMake mode.
 cmake -S (Join-Path $RootDir 'app') -B $AppBuildDir -DCMAKE_BUILD_TYPE=Release
 if ($LASTEXITCODE -ne 0) { throw 'Release configuration failed. Existing releases were not changed.' }
-# Always refresh the launcher/helper; only rebuild the game when requested or missing.
-$targets = @('narutorise_launcher', 'narutorise_runtime_config', 'narutorise_shader_cache')
+# Refresh the host too: adding a module changes its embedded registry. Ninja
+# skips unchanged compilation; -Build remains accepted for script compatibility.
+$targets = @('narutorise', 'narutorise_ai2c', 'narutorise_launcher', 'narutorise_runtime_config', 'narutorise_shader_cache')
 if (-not $NoSetup) { $targets += 'narutorise_setup_helper' }
-# DLC engine module: build it when codegen produced sources for it (present
-# when game_root/ai2c2.dll - the DLC's AI2C@2.dll - existed at codegen time).
-if (Test-Path (Join-Path $RootDir 'app\generated\ai2c2\sources.cmake')) { $targets += 'narutorise_ai2c2' }
-if ($Build -or -not (Test-Path (Join-Path $AppBuildDir 'narutorise.exe'))) { $targets += 'narutorise' }
+# Build every character DLC engine revision emitted by codegen.
+$DlcEngineDlls = @()
+$ModuleRegistry = Get-Content (Join-Path $RootDir 'app\generated\default\module_registry.cpp') -Raw
+foreach ($revision in 1..3) {
+    if ($ModuleRegistry.Contains('"ai2c@' + $revision + '.dll"')) {
+        $targets += "narutorise_ai2c$revision"
+        $DlcEngineDlls += "narutorise_ai2c$revision.dll"
+    }
+}
 cmake --build $AppBuildDir --target $targets
 if ($LASTEXITCODE -ne 0) { throw "Build failed ($LASTEXITCODE). Existing releases were not changed." }
 
@@ -65,12 +71,14 @@ $FidelityFxDll = 'amd_fidelityfx_dx12.dll'
 if (Test-Path (Join-Path $AppBuildDir $FidelityFxDll)) {
     $binaries += $FidelityFxDll
 }
-# Optional DLC engine module (narutorise_ai2c2.dll): present when the build
-# had the DLC's AI2C@2.dll available for codegen (see docs/dlc.md, seção 3.3).
-# Without it the game runs normally, but a DLC install requires it.
-$DlcEngineDll = 'narutorise_ai2c2.dll'
-if (Test-Path (Join-Path $AppBuildDir $DlcEngineDll)) {
-    $binaries += $DlcEngineDll
+# Never silently omit a DLL that this build's generated registry needs.
+# Use generated revisions rather than copying stale DLLs from earlier builds.
+foreach ($name in $DlcEngineDlls) {
+    $path = Join-Path $AppBuildDir $name
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Item -LiteralPath $path).Length -eq 0) {
+        throw "Missing or empty DLC engine module: $path"
+    }
+    $binaries += $name
 }
 $HelperPath = Join-Path $AppBuildDir 'narutorise_setup_helper.exe'
 if (-not $NoSetup -and -not (Test-Path -LiteralPath $HelperPath -PathType Leaf)) { throw 'Missing ISO helper.' }
@@ -120,6 +128,7 @@ foreach ($dir in @('assets', 'shader_cache', 'game', 'licenses')) {
 }
 try {
     foreach ($name in $binaries) { Copy-Item -LiteralPath (Join-Path $AppBuildDir $name) -Destination $Portable }
+    Set-Content (Join-Path $Portable 'narutorise.version') -Encoding ASCII -Value $Version
     foreach ($asset in @('cover.jpg', 'narutorise.ico')) {
         Copy-Item -LiteralPath (Join-Path $RootDir "launcher\assets\$asset") -Destination (Join-Path $Portable 'assets')
     }
@@ -141,6 +150,13 @@ Choose your original Xbox 360 ISO, or skip it to use already extracted files.
 ISO extraction is available only in Setup; run Setup again to import later.
 The setup preserves game and narutorise.toml on reinstall/uninstall.
 
+MANUAL UPDATE:
+Run the new NarutoRiseInstaller.exe and choose Update an existing installation.
+Select the folder containing narutorise.exe and narutorise_launcher.exe.
+Close the game and launcher first. No ISO import or uninstall is needed.
+Game files, configuration, saves and DLCs are preserved. Portable installations
+can also be updated this way; Setup registers them as installed applications.
+
 PORTABLE PACKAGE:
 Extract this folder to a writable location and run narutorise_launcher.exe.
 Select an extracted game folder in GAME FILES, or put your original extracted
@@ -148,7 +164,9 @@ files into game (default.xex must be at its root). The launcher does not import 
 Optional: run install.ps1 to create shortcuts.
 
 SETTINGS:
-English and Brazilian Portuguese; resolution scale, fullscreen, VSync,
+Interface languages: English, Brazilian Portuguese, French, German, Spanish,
+Italian, and Russian. Game languages: English, French, German, Spanish, Italian.
+Resolution scale, fullscreen, VSync,
 FXAA anti-aliasing, AMD FidelityFX CAS/FSR post-processing, anisotropic
 filtering, aspect ratios 16:9 / 21:9 / 32:9, and FPS overlay (F1).
 SDL controller support includes Xbox and PlayStation controllers.
