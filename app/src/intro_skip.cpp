@@ -54,14 +54,14 @@ std::string ToLower(std::string s) {
   return s;
 }
 
-bool IsIntroVideo(const std::string& lower_path) {
-  // Compara o NOME exato do arquivo: substrings como "_intro_" aparecem em
-  // cutscenes de história (ex.: 110_Intro_Haku_Combat.bik, 301_Jiraya_Intro.bik)
-  // e não devem ser puladas.
+bool IsBootLogoVideo(const std::string& lower_path) {
+  // Pula somente os nomes exatos dos vídeos de logos do boot. Intro.bik é a
+  // abertura da campanha e deve tocar, assim como as demais cutscenes de
+  // história (ex.: 110_Intro_Haku_Combat.bik, 301_Jiraya_Intro.bik).
   auto sep = lower_path.find_last_of("\\/");
   const std::string name =
       sep == std::string::npos ? lower_path : lower_path.substr(sep + 1);
-  return name == "ubisoft.bik" || name == "intro.bik" ||
+  return name == "ubisoft.bik" ||
          name == "logo_corpo_emea.bik" || name == "logo_corpo_us.bik";
 }
 
@@ -70,7 +70,7 @@ bool IsIntroVideo(const std::string& lower_path) {
 REX_HOOK_RAW(sub_822DCA80) {
   if (REXCVAR_GET(skip_intro_videos)) {
     std::string path = ToLower(ReadGuestPath(base, ctx.r3.u32));
-    if (IsIntroVideo(path)) {
+    if (IsBootLogoVideo(path)) {
       REXLOG_INFO("[narutorise] intro video skipped: {}", path);
       // Espelha o caminho de falha especial do wrapper original:
       ctx.r3.u64 = kEngineSkipStatus;

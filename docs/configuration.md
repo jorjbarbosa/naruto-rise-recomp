@@ -74,7 +74,7 @@ The values below match `app/narutorise.toml` at the time of the project analysis
 | `video_mode_refresh_rate` | `60.0` | Reported refresh rate; not a guarantee of 60 FPS |
 | `swap_post_effect` | `"fxaa"` | Edge-smoothing post-processing |
 | `present_effect` | `"cas"` | Presentation effect; integration depends on the SDK |
-| `skip_intro_videos` | `true` | Skip intro videos |
+| `skip_intro_videos` | `true` | Skip boot logos (`Ubisoft.bik`, `LOGO_CORPO_EMEA.bik`, `LOGO_CORPO_US.bik`); preserve the campaign opening (`Intro.bik`) |
 | `show_fps_overlay` | `false` | FPS/frametime overlay |
 | `input_backend` | `"sdl"` | SDL input |
 | `mnk_mode` | `false` | Mouse and keyboard mode disabled by default |
