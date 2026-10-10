@@ -56,7 +56,9 @@ Place the extracted disc contents in `game_root/`, without an extra enclosing fo
 game_root/
 ├── default.xex
 ├── ai2c.dll
+├── ai2c1.dll       # copy of AI2C@1.dll from Shikamaru
 ├── ai2c2.dll       # optional copy of AI2C@2.dll from the DLC
+├── ai2c3.dll       # copy of AI2C@3.dll from Choji & Temari
 └── ...            # remaining disc files and folders
 ```
 
@@ -70,10 +72,10 @@ The expected Title ID is `555307E5`. Identifying the title does not establish co
 
 ### Choose a build with or without DLC
 
-The current manifest **declares the DLC module** `ai2c2.dll`. Before running code generation:
+The current manifest **declares all three DLC engine modules**. Before running code generation:
 
-- **With character DLC:** copy the `AI2C@2.dll` extracted from your package to `game_root/ai2c2.dll`. See [DLCs — recompiled module](dlc.md#33-generate-the-recompiled-module).
-- **Base game only:** in your local copy of `app/narutorise_manifest.toml`, remove only the final `[[modules]]` block containing `guest_path = "ai2c@2.dll"` and its fields. Keep the `ai2c.dll` block and entrypoint seeds. Restore the block when preparing a DLC-enabled build.
+- **With character DLC:** copy the three extracted engine revisions to `game_root/ai2c1.dll`, `game_root/ai2c2.dll`, and `game_root/ai2c3.dll`. See [DLCs — recompiled module](dlc.md#33-generate-the-recompiled-module).
+- **Base game only:** in your local manifest, remove the three `[[modules]]` blocks with `guest_path = "ai2c@1.dll"`, `"ai2c@2.dll"`, and `"ai2c@3.dll"`, including their fields. Keep the `ai2c.dll` block and entrypoint seeds. Restore the blocks when preparing a complete DLC-enabled build.
 
 Code generation fails when a declared module's input file does not exist. The DLL is optional in the final package, but is not automatically skipped in the manifest.
 
@@ -92,7 +94,7 @@ The preset installs to `sdk/out/install/win-amd64/`, including `bin/rexglue.exe`
 .\sdk\out\install\win-amd64\bin\rexglue.exe codegen .\app\narutorise_manifest.toml
 ```
 
-This reads the manifest and `*-seeds.toml` files, producing sources in `app/generated/default/`, `app/generated/ai2c/`, and, when configured, `app/generated/ai2c2/`.
+This reads the manifest and `*-seeds.toml` files, producing sources in `app/generated/default/`, `app/generated/ai2c/`, and the configured `app/generated/ai2c1/`, `ai2c2/`, and `ai2c3/` directories.
 
 Run initial code generation **before configuring the application**, so CMake can find source lists and DLL targets. Subsequent builds use the `narutorise_codegen` target for incremental regeneration. After adding or removing modules, rerun code generation and CMake configuration.
 
@@ -112,7 +114,9 @@ Main files in `app/out/build/win-amd64-release/`:
 narutorise.exe
 narutorise_launcher.exe
 narutorise_ai2c.dll
+narutorise_ai2c1.dll       # Shikamaru engine
 narutorise_ai2c2.dll       # DLC module builds only
+narutorise_ai2c3.dll       # Choji & Temari engine
 rexruntime.dll
 rexgpu-xenos.dll
 amd_fidelityfx_dx12.dll   # when provided by the SDK

@@ -83,9 +83,10 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#PackageDir}\narutorise.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PackageDir}\narutorise_launcher.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PackageDir}\narutorise_ai2c.dll"; DestDir: "{app}"; Flags: ignoreversion
-; DLC engine module - optional (only present when the build included DLC
-; support). Without it the game runs normally, but a DLC install requires it.
+; Each character DLC engine revision needs its corresponding native module.
+Source: "{#PackageDir}\narutorise_ai2c1.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PackageDir}\narutorise_ai2c2.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PackageDir}\narutorise_ai2c3.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PackageDir}\rexgpu-xenos.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PackageDir}\rexruntime.dll"; DestDir: "{app}"; Flags: ignoreversion
 ; AMD FidelityFX runtime DLL - optional (only present when the build enabled

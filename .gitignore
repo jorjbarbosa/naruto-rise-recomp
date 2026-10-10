@@ -27,7 +27,9 @@ dump/
 # --- Codegen output: derivative of the game's code, must not be committed ---
 app/generated/default/
 app/generated/ai2c/
+app/generated/ai2c1/
 app/generated/ai2c2/
+app/generated/ai2c3/
 generated/default/
 generated/*/sources.cmake
 generated/*/dll_targets.cmake

@@ -16,15 +16,24 @@ file_path = "../game_root/ai2c.dll"
 out_directory_path = "generated/ai2c"
 includes = ["ai2c-seeds.toml"]
 
-# Engine module shipped inside the character DLC. With the DLC installed the
-# game mounts the package (DLC974F571A:) and loads "AI2C@2.DLL" instead of
-# ai2c.dll. The file is a copy of the DLC's AI2C@2.dll (extracted from the
-# installed package into the user data tree); the stem must not contain '@' as
-# it becomes the CMake target name (narutorise_ai2c2). NOTE: rexglue init
-# --force regenerates the manifest and drops hand-edits; re-add this entry if
-# that ever runs (see docs/dlc.md).
+# Character DLCs supply alternative engine revisions. The game selects one
+# version per session; each needs its own recompiled module. Local input names
+# omit '@' to produce valid CMake targets. Keep all three mappings when building
+# a distribution with complete character DLC support (see docs/dlc.md).
+[[modules]]
+guest_path = "ai2c@1.dll"
+file_path = "../game_root/ai2c1.dll"
+out_directory_path = "generated/ai2c1"
+includes = ["ai2c1-seeds.toml"]
+
 [[modules]]
 guest_path = "ai2c@2.dll"
 file_path = "../game_root/ai2c2.dll"
 out_directory_path = "generated/ai2c2"
 includes = ["ai2c2-seeds.toml"]
+
+[[modules]]
+guest_path = "ai2c@3.dll"
+file_path = "../game_root/ai2c3.dll"
+out_directory_path = "generated/ai2c3"
+includes = ["ai2c3-seeds.toml"]

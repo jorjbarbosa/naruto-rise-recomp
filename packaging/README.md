@@ -34,8 +34,10 @@ Packaging validates tools and inputs first, stages new artifacts in a private
 directory, and preserves previous artifacts under `dist/previous-release-*/`.
 Existing distribution folders are never recursively deleted. Use
 `-OutputRootDir <folder>` to build isolated test releases and `-NoZip` to skip ZIP
-generation. The launcher and ISO helper are refreshed automatically; `-Build`
-also rebuilds the game. Review backups before removing them manually.
+generation. The game, generated DLC modules, launcher, and ISO helper are
+refreshed automatically so the host registry stays synchronized with its DLLs;
+unchanged sources are not recompiled. `-Build` remains accepted for compatibility.
+Review backups before removing them manually.
 
 ---
 
@@ -97,15 +99,16 @@ Packaging forces CMake Release mode and audits PE imports to reject debug CRTs.
 The setup helper uses a static C++ runtime; the game/launcher require the
 Microsoft Visual C++ 2015-2022 Redistributable (x64), as shown in README.txt.
 
-### DLC engine module (`narutorise_ai2c2.dll`)
+### DLC engine modules
 
-The character DLC ships an updated engine module (`AI2C@2.dll`) inside each
-package; the port recompiles it as `narutorise_ai2c2.dll` when a copy of that
-file is placed at `game_root/ai2c2.dll` before codegen (see `docs/dlc.md`).
-Packaging includes the DLL automatically when the build produced it
-(`skipifsourcedoesntexist` in `installer.iss`, optional in
-`package-release.ps1`): a build without it still runs the game normally, but
-installing a DLC on such a build is unsupported. End users install DLCs through
+Character packs ship distinct engine revisions: `AI2C@1.dll` (Shikamaru),
+`AI2C@2.dll` (Jiraiya & Sarutobi), and `AI2C@3.dll` (Choji & Temari).
+Copy them to `game_root/ai2c1.dll`, `ai2c2.dll`, and `ai2c3.dll` before codegen
+(see `docs/dlc.md`). Packaging builds each generated revision and includes
+`narutorise_ai2c1.dll`, `narutorise_ai2c2.dll`, and `narutorise_ai2c3.dll` in
+both portable and installer distributions. A generated revision with a
+missing or empty binary fails packaging. Base-game builds may omit all three;
+such builds do not support character DLCs. End users install DLCs through
 the launcher's **DLC** tab; the game performs the STFS installation on the
 next launch.
 
