@@ -317,6 +317,12 @@ begin
     end;
 end;
 
+function IsSupersededVersion(const Version: String): Boolean;
+begin
+  Result := (Version = '1.0.0') or (Version = '1.0.1') or
+    (Version = '1.0.2');
+end;
+
 function DestinationError: String;
 var
   PreviousVersion: String;
@@ -336,6 +342,21 @@ begin
   end;
   if not IsExistingInstallation(WizardDirValue) then Exit;
   PreviousVersion := InstalledVersion(WizardDirValue);
+  { Beta 2 replaces the old public 1.0.0 label and local 1.0.1/1.0.2 builds.
+    Scope the numbering reset to this release; other versions still use the
+    normal downgrade check. Reject the reverse transition as well. }
+  if ('{#MyAppVersion}' = '0.1.0-beta.2') and
+    IsSupersededVersion(PreviousVersion) then
+  begin
+    Log('Migrating superseded version ' + PreviousVersion + ' to {#MyAppVersion}.');
+    Exit;
+  end;
+  if (PreviousVersion = '0.1.0-beta.2') and
+    IsSupersededVersion('{#MyAppVersion}') then
+  begin
+    Result := FmtMessage(CustomMessage('VersionNewer'), [PreviousVersion, '{#MyAppVersion}']);
+    Exit;
+  end;
   if StrToVersion(NumericVersion(PreviousVersion), PreviousNumber) and
     StrToVersion(NumericVersion('{#MyAppVersion}'), NewNumber) then
     if ComparePackedVersion(PreviousNumber, NewNumber) > 0 then

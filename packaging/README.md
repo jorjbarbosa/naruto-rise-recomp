@@ -116,7 +116,7 @@ Use `-IsccPath 'C:\path\ISCC.exe'` for a custom compiler location or `-NoSetup`
 to generate only the portable package. The old ImGui installer is not shipped;
 its source remains available behind `NARUTORISE_BUILD_LEGACY_INSTALLER=ON`.
 
-### Manual updates (first update: 1.0.1)
+### Manual updates
 
 Distribute the new `NarutoRiseInstaller.exe` to existing users. They do not need
 an updater in the launcher or the original ISO to update the PC port:
@@ -148,10 +148,15 @@ replacement by an older installer; reinstalling the same version is allowed.
 The version marker is also included in portable packages and is removed by the
 Inno uninstaller. Keep the same production AppId for every release.
 
-Build the first update with:
+The `0.1.0-beta.2` installer accepts migration from the previous public `1.0.0`
+label and the local `1.0.1`/`1.0.2` builds, preserving user data. This numbering
+reset is limited to beta 2; unrelated newer versions remain protected, and the
+updated installer code rejects the reverse transition to these old labels.
+
+Build this beta update with:
 
 ```powershell
-pwsh -File packaging/package-release.ps1 -Build -Version 1.0.1
+pwsh -File packaging/package-release.ps1 -Build -Version 0.1.0-beta.2
 ```
 
 For automation, the installer accepts `/MODE=update` or `/MODE=install`; when

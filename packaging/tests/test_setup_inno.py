@@ -30,7 +30,7 @@ class InnoSetupTests(unittest.TestCase):
         # Exercise the same escaped GUID AppId format as production.
         cls.app_id = "{" + str(uuid.uuid4()).upper() + "}"
         cls.legacy_key = 'Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\' + cls.app_id + '-Legacy'
-        cls.current_version = os.environ.get("NARUTORISE_TEST_VERSION", "1.0.1")
+        cls.current_version = os.environ.get("NARUTORISE_TEST_VERSION", "0.1.0-beta.2")
         cls.uninstall_key = 'Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\' + cls.app_id + '_is1'
 
         def compile_setup(source, version, output):
@@ -294,6 +294,16 @@ class InnoSetupTests(unittest.TestCase):
                 self.assert_user_files(files)
 
     def test_update_compares_numeric_versions(self):
+        if self.current_version == "0.1.0-beta.2":
+            for previous_version in ("1.0.0", "1.0.1", "1.0.2"):
+                with self.subTest(previous_version=previous_version):
+                    for name in ("narutorise.exe", "narutorise_launcher.exe"):
+                        (self.dest / name).write_bytes(b"synthetic superseded binary")
+                    (self.dest / "narutorise.version").write_text(previous_version + "\n")
+                    files = self.user_files()
+                    self.assertEqual(self.install(mode="update"), 0)
+                    self.assert_current_release()
+                    self.assert_user_files(files)
         for name in ("narutorise.exe", "narutorise_launcher.exe"):
             (self.dest / name).write_bytes(b"synthetic newer portable binary")
         (self.dest / "narutorise.version").write_text("1.0.10\n")
