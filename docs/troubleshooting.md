@@ -11,7 +11,7 @@
 | Preset parsing error | Use CMake 3.26+; presets use schema version 6 |
 | `ReXGlue SDK not found` | Build and install the SDK, then pass its prefix through `CMAKE_PREFIX_PATH` |
 | A patch does not apply | Compare the SDK commit and local changes with the patch; do not discard modifications to force application |
-| `DLL XEX not found` for `ai2c2.dll` | Supply the extracted DLC module or remove only its manifest block for a base-game build |
+| `DLL XEX not found` for `ai2c1.dll`, `ai2c2.dll`, or `ai2c3.dll` | Supply the matching extracted DLC module or remove the DLC manifest blocks for a base-game build |
 | Missing generated header or DLL target | Run code generation before configuring the application and reconfigure after changing modules |
 | Failure to copy `extract-xiso.exe` | Run `setup.ps1`; the complete build includes the installer helper |
 | Out of memory during compilation | Reduce concurrency: `cmake --build app/out/build/win-amd64-release --parallel 2` |
@@ -26,7 +26,7 @@ Select the folder directly containing `default.xex`. Use `game/` in a distributi
 
 ### Missing DLL at startup
 
-Keep runtime and module binaries alongside the game, together with launcher assets. Install the Visual C++ x64 Redistributable. For character DLCs, specifically check `narutorise_ai2c2.dll`; importing content through the launcher does not compile this module.
+Keep runtime and module binaries alongside the game, together with launcher assets. Install the Visual C++ x64 Redistributable. For character DLCs, check the matching `narutorise_ai2c1.dll` (Shikamaru), `narutorise_ai2c2.dll` (Jiraiya & Sarutobi), or `narutorise_ai2c3.dll` (Choji & Temari). Importing content through the launcher does not compile these modules.
 
 ### Stretched image on a 16:9 monitor
 

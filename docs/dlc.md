@@ -12,14 +12,24 @@ The project implements installation and enumeration of additional content for Ti
 
 The launcher recursively searches for packages with `CON `, `LIVE`, or `PIRS` signatures, even without a recognized extension. When packages are found, it copies them to `dlc/` next to `narutorise.exe`. The runtime installs them on the next launch and writes content metadata. If no STFS packages are found, it treats the selection as a folder of already extracted files.
 
-The base game can run without DLC. For **character DLCs**, the distribution also needs `narutorise_ai2c2.dll`; copying content packages alone does not create this DLL.
+The base game can run without DLC. Each **character DLC** requires its matching recompiled engine module; copying content packages alone does not create these DLLs.
+
+| Character DLC | Guest engine | Recompiled module | XEX entry point |
+| --- | --- | --- | --- |
+| Shikamaru | `AI2C@1.dll` | `narutorise_ai2c1.dll` | `0x883A0CF8` |
+| Jiraiya & Sarutobi | `AI2C@2.dll` | `narutorise_ai2c2.dll` | `0x883ADD48` |
+| Choji & Temari | `AI2C@3.dll` | `narutorise_ai2c3.dll` | `0x883AEF88` |
+
+Japanese Voices does not contain an engine DLL. When multiple character packs are installed, the game selects an engine revision; ship all three native modules to support every combination.
 
 ## 2. Paths and manual installation
 
 ```text
 <executable folder>/
 ├── narutorise.exe
+├── narutorise_ai2c1.dll
 ├── narutorise_ai2c2.dll
+├── narutorise_ai2c3.dll
 └── dlc/
     └── <user-supplied STFS packages>
 
@@ -41,19 +51,19 @@ Already installed packages are recognized by their content and corresponding hea
 
 ## 3. Build with the DLC module
 
-### 3.1. Why are there two DLLs?
+### 3.1. Why are there separate engine DLLs?
 
-The base game uses the guest module `ai2c.dll`, recompiled as `narutorise_ai2c.dll`. Character content supplies another engine version, `AI2C@2.dll`, which must be recompiled separately.
+The base game uses the guest module `ai2c.dll`, recompiled as `narutorise_ai2c.dll`. Character packs supply `AI2C@1.dll`, `AI2C@2.dll`, or `AI2C@3.dll`, each with a different code layout. They must be recompiled separately; renaming a native DLL from another revision is not a substitute.
 
 ### 3.2. Prepare the file
 
-Extract `AI2C@2.dll` from your DLC package using an STFS-compatible tool. If you have already used a DLC-enabled build, it may also be present in the installed content folder in Documents.
+Extract the three engine DLLs from your DLC packages using an STFS-compatible tool. If you have already imported the DLCs, they may also be present in the installed content folder in Documents.
 
-Copy that file to **`game_root/ai2c2.dll`**. The local name without `@` produces a valid CMake target name; the guest name remains `ai2c@2.dll`.
+Copy `AI2C@1.dll` to **`game_root/ai2c1.dll`**, `AI2C@2.dll` to **`game_root/ai2c2.dll`**, and `AI2C@3.dll` to **`game_root/ai2c3.dll`**. Local names without `@` produce valid CMake target names; the guest names retain `@1`, `@2`, and `@3`.
 
 ### 3.3. Generate the recompiled module
 
-The following block is already present in `app/narutorise_manifest.toml`:
+All three mappings are already present in `app/narutorise_manifest.toml`, with a separate seed file for each revision. For example:
 
 ```toml
 [[modules]]
@@ -72,7 +82,7 @@ cmake --preset win-amd64-release -S app -B app/out/build/win-amd64-release "-DCM
 cmake --build app/out/build/win-amd64-release
 ```
 
-Confirm that `app/out/build/win-amd64-release/narutorise_ai2c2.dll` exists. Packaging includes this DLL when available. It does not replace the DLC content files.
+Confirm that `narutorise_ai2c1.dll`, `narutorise_ai2c2.dll`, and `narutorise_ai2c3.dll` exist in `app/out/build/win-amd64-release/`. Packaging builds and includes each generated revision and rejects missing module binaries. The DLLs do not replace DLC content files.
 
 `patches/sdk/codegen-alt-version-dll-modules.patch` is part of this workflow. Avoid regenerating the project with `init --force`, which can remove the custom block. For a base-game-only build, see module selection in the [build guide](build-and-run.md).
 
@@ -95,4 +105,26 @@ Use **extracted** Title Update files. Mounting this folder does not mean executa
 
 ## 5. Diagnostics
 
-Search logs for `Installing DLC package`, `DLC auto-install`, `ContentManager lists`, and `DLC install failed`. If content appears installed but the game fails to load it, first check `narutorise_ai2c2.dll`, the SDK version, and the input file used for code generation.
+Search logs for `Installing DLC package`, `DLC auto-install`, `ContentManager lists`, and `DLC install failed`. Successful engine loading also logs `Registering module: ai2c@N.dll` and a function count. If content appears installed but the game fails to load it, check the matching native DLL, the SDK version, and the input file used for code generation.
+
+Issue #7 was reproduced with Choji & Temari: an unsupported `AI2C@3.dll` caused `Execute(883AEF88): function not in function table`, followed by a fatal call to `0x88040000`. A build containing only the `@2` engine cannot run this pack. Setting `dlc_source_path = ""` stops new imports but does not disable installed DLCs; use an isolated user data directory when comparing character packs.
+
+## 6. Startup regression test
+
+With all four packs installed in a user-supplied content tree, run the opt-in
+test from the repository root. Use a new output directory:
+
+```powershell
+python packaging/tests/test_dlc_runtime.py `
+  --package app/out/build/win-amd64-release `
+  --game "C:/path/to/extracted/game" `
+  --content "$env:USERPROFILE/Documents/narutorise" `
+  --output out/dlc-startup-test
+```
+
+The test copies binaries and marketplace content into isolated directories,
+then starts the base game, each character engine separately, and all packs
+together. Each case must register the expected engine and remain running for
+30 seconds without a fatal function dispatch error. Logs and `results.json`
+remain in the output directory. The test does not change installed DLCs,
+settings, or saves; it checks startup rather than gameplay.

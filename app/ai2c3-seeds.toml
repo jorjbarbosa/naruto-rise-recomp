@@ -1,0 +1,6 @@
+# Discovery seeds for AI2C@3.dll shipped with Choji & Temari.
+# Entry point read from the original XEX header and observed in issue #7.
+# This revision has its own code layout; other revisions' seeds do not apply.
+[functions]
+"0x883AEF88" = {} # module entry point (DLL_PROCESS_ATTACH)
+"0x883AEB0C" = {} # unresolved branch at 0x883AEB5C in strict analysis

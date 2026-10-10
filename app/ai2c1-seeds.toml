@@ -1,0 +1,6 @@
+# Discovery seeds for AI2C@1.dll shipped with Shikamaru.
+# Entry point read from the original XEX header. This revision has its own
+# code layout; seeds from the base engine or other DLC revisions do not apply.
+[functions]
+"0x883A0CF8" = {} # module entry point (DLL_PROCESS_ATTACH)
+"0x883A087C" = {} # unresolved branch at 0x883A08CC in strict analysis

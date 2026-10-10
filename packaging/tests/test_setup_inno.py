@@ -30,7 +30,7 @@ class InnoSetupTests(unittest.TestCase):
         # Exercise the same escaped GUID AppId format as production.
         cls.app_id = "{" + str(uuid.uuid4()).upper() + "}"
         cls.legacy_key = 'Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\' + cls.app_id + '-Legacy'
-        cls.current_version = "1.0.1"
+        cls.current_version = os.environ.get("NARUTORISE_TEST_VERSION", "1.0.1")
         cls.uninstall_key = 'Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\' + cls.app_id + '_is1'
 
         def compile_setup(source, version, output):
