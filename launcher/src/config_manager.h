@@ -37,6 +37,8 @@ struct GameConfig {
 
   // Game language: 1 = English, 4 = French, 3 = German, 5 = Spanish, 6 = Italian.
   std::uint32_t user_language = 1;
+  // Selected translation package under mods/; empty selects an official language.
+  std::string translation_mod;
 
   bool log_verbose = false;
   std::string log_level = "info";

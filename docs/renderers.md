@@ -80,6 +80,7 @@ These apply to the native renderer. Report anything else through the [issue trac
 
 | Issue | Details |
 | --- | --- |
+| Options labels missing or displaced | Native captures from 2026-10-19 omit **VIBRATION** and **SUBTITLES** and shift **INVERT VERTICAL CAMERA** horizontally, including with translation mods disabled. Xenos shows the labels correctly. The cause is not established; this is not confined to translation mods. See the local [native baseline](../out/translation-mod/2026-10-19/baseline-native/options.png) and [Xenos comparison](../out/translation-mod/2026-10-19/demo-xenos/options.png). A [2026-10-20 typography test](../out/translation-fixes-20261020-082055/mixed-native/options.png) displayed the missing labels with different text content; this does not establish a renderer fix. |
 | Slow close | With a controller connected, closing the window can leave a game thread waiting; the game gives its threads 3 seconds and then exits. Closing right after a fight has also been slow. |
 | Short pause when something new appears | A pipeline outside the startup list compiles the first time it appears on a given driver, and the draw waits for it instead of skipping it, so a new matchup in Fight Mode can pause for a few tens of milliseconds the first time. The game's loading screens give that compilation the highest priority. |
 | Light glows | The game uses occlusion queries only for light glows, and the native renderer answers them with a fixed value: a glow behind a wall stays visible, and large or close glows look dimmer than with Xenos. |

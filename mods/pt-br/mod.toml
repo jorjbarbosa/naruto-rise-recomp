@@ -1,0 +1,6 @@
+[mod]
+type = "translation"
+name = "Português (Brasil)"
+version = "0.1.0"
+base_language = "en"
+texts = "texts.json"

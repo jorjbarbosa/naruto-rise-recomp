@@ -136,7 +136,16 @@ Inno Setup and creates an uninstaller. The folder picker uses the selected folde
 directly, without appending a new application subfolder.
 
 Updates replace only the packaged port binaries, DLLs, assets, bundled shader
-cache and README. Existing `narutorise.toml`, `game/`, legacy `game_root/`, pending
+cache, README and the bundled `mods/pt-br/mod.toml` and `mods/pt-br/texts.json`.
+The complete Portuguese translation is sourced from [`mods/pt-br`](../mods/pt-br),
+not from ignored build output, and is included in both the portable ZIP and Setup.
+New installations and updates receive it without changing the selected game
+language. Select **Português (Brasil)** in the launcher's game language list to
+activate it. Other mod folders and extra files are preserved; copy the bundled
+package to a different folder before customizing it, since updates replace those
+two bundled files.
+
+Existing `narutorise.toml`, `game/`, legacy `game_root/`, pending
 `dlc/` packages, personal files, and saves/installed DLCs in the configured user
 data directory are preserved. No configuration defaults are forcibly migrated.
 The previous native uninstaller is never executed. Its obsolete registration is

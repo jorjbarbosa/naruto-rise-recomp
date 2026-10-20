@@ -7,6 +7,9 @@
 #   NativeRenderer - NARUTORISE_NATIVE_RENDERER_BOOTSTRAP is ON
 @{
     Components = @(
+        @{ Name = 'nlohmann/json 3.11.3'; License = 'MIT'
+           Url = 'https://github.com/nlohmann/json'; File = 'third_party/nlohmann_json/LICENSE.MIT'; Target = 'nlohmann-json.txt'
+           Usage = 'narutorise.exe, narutorise_launcher.exe' }
         @{ Name = 'ReXGlue SDK (includes code derived from Xenia)'; License = 'BSD-3-Clause'
            Url = 'https://github.com/rexglue/rexglue-sdk'; File = 'sdk/LICENSE'; Target = 'rexglue-sdk.txt'
            Usage = 'narutorise.exe, rexruntime.dll, rexgpu-xenos.dll' }

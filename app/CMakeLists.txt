@@ -25,7 +25,11 @@ set(NARUTORISE_SOURCES
     src/crash_report.cpp
     src/window_title.cpp
     src/mouse_camera.cpp
+    src/mods/translation_data.cpp
+    src/mods/translation_mod.cpp
 )
+
+add_subdirectory(../third_party/nlohmann_json third_party/nlohmann_json)
 
 # The native renderer (opt-in): its own D3D boundary and engine, chosen at
 # launch in place of the Xenos plugin (renderer = "native" in narutorise.toml).
@@ -95,6 +99,17 @@ if(WIN32)
 else()
     add_executable(narutorise ${NARUTORISE_SOURCES})
 endif()
+target_link_libraries(narutorise PRIVATE narutorise::json)
+
+add_executable(narutorise_translation_test EXCLUDE_FROM_ALL
+    tests/translation_test.cpp src/mods/translation_data.cpp)
+target_include_directories(narutorise_translation_test PRIVATE src)
+target_link_libraries(narutorise_translation_test PRIVATE rex::runtime narutorise::json)
+
+add_executable(narutorise_validate_translation_package EXCLUDE_FROM_ALL
+    ../tools/localization/validate-package.cpp src/mods/translation_data.cpp)
+target_include_directories(narutorise_validate_translation_package PRIVATE src)
+target_link_libraries(narutorise_validate_translation_package PRIVATE rex::runtime narutorise::json)
 
 if(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP)
     include(${CMAKE_CURRENT_SOURCE_DIR}/../tools/native-renderer/plume-engine.cmake)

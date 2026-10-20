@@ -135,7 +135,7 @@ inline constexpr const char* kFr[] = {
     "Espagnol",  // GameLanguageSpanish
     "Italien",  // GameLanguageItalian
     "Personnalisée (%u)",  // GameLanguageCustom
-    "Appliquée au prochain lancement. Les textes et voix disponibles dépendent des fichiers du jeu.",  // GameLanguageDescription
+    "Appliquée au prochain lancement. Les traductions installées dans mods apparaissent ici et remplacent les textes uniquement si elles sont sélectionnées. Les voix disponibles dépendent des fichiers du jeu.",  // GameLanguageDescription
     "Langue de l'interface du lanceur",  // LauncherLanguageTooltip
     "Xenos (GPU émulé)",  // RendererXenos
     "Natif",  // RendererNative

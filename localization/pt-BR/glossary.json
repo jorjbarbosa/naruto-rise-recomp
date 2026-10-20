@@ -1,0 +1,1472 @@
+{
+  "schema": "narutorise-translation-glossary-v1",
+  "version": "0.1.0",
+  "source_language": "en",
+  "target_language": "pt-BR",
+  "scope": "Initial project glossary for Naruto: Rise of a Ninja. Preferred spellings are project policy, not a claim that all Brazilian releases agree or that this game had an official Portuguese localization.",
+  "user_decisions": {
+    "leaf-village": "Aldeia da Folha",
+    "shadow-possession": "Possessão das Sombras",
+    "shadow-possession-jutsu": "Jutsu de Possessão das Sombras"
+  },
+  "status_definitions": {
+    "preferred": "Use as the current project preference, subject to the notes and grammatical inflection.",
+    "contextual": "Use only when the required sense is established; not a global replacement rule.",
+    "needs_review": "Unverified candidate; do not silently treat the proposed translation as approved terminology."
+  },
+  "translation_rules": [
+    "Explicit user decisions take precedence over source variants and model preferences.",
+    "Translate into natural Brazilian Portuguese; adapt grammar, articles, capitalization and number to the sentence.",
+    "Use the longest applicable complete technique name before a shorter generic glossary term.",
+    "This glossary guides translation; do not apply blind substring search-and-replace.",
+    "Preserve every <...> engine token exactly, including <ryou>, colors and controller symbols. Preserve the multiplicity of %1, %2 and other numbered arguments.",
+    "Retain source character names and existing honorifics. Do not infer speaker identity from a name mentioned in dialogue.",
+    "Keep the original story knowledge. Do not inject later identities, relationships, titles or names such as Kurama where the source does not reveal them.",
+    "Original table neighbors are supporting linguistic context, not proof of scene order or speaker.",
+    "Do not turn source utterances into facts about their speaker; faithfully translate jokes, threats, mistakes and uncertainty.",
+    "Contextual terms require the specified sense. Needs-review terms are unresolved candidates, not locked output.",
+    "The supplied URLs document terminology decisions; all translation-critical preferences and conditions are included here without requiring the model to browse."
+  ],
+  "sources": {
+    "online-ninjas": {
+      "title": "Naruto Online: character and ability presentation",
+      "url": "https://naruto.narutowebgame.com/pt/event/Ninjas/index.html",
+      "kind": "licensed_game",
+      "language": "pt-BR",
+      "accessed": "2026-10-19",
+      "coverage": "Character spellings, several technique names, ranks, academy and ramen terminology.",
+      "access": "page_or_indexed_text"
+    },
+    "online-talents": {
+      "title": "Naruto Online: class talents",
+      "url": "https://naruto.narutowebgame.com/pt/event/Classe/main.html",
+      "kind": "licensed_game",
+      "language": "pt-BR",
+      "accessed": "2026-10-19",
+      "coverage": "Chakra, ninjutsu, taijutsu, elemental styles and Shadow Clone terminology.",
+      "access": "page_or_indexed_text"
+    },
+    "online-servers": {
+      "title": "Naruto Online: named server list",
+      "url": "https://naruto.narutowebgame.com/pt/serverlist",
+      "kind": "licensed_game",
+      "language": "pt-BR",
+      "accessed": "2026-10-19",
+      "coverage": "Named roster and localized labels including Aldeia da Folha, Pais das Ondas, Jutsu Sexy and Sabio Tarado.",
+      "access": "page_or_indexed_text"
+    },
+    "online-currency": {
+      "title": "Naruto Online: maintenance announcement, January 2026",
+      "url": "https://naruto.narutowebgame.com/pt/articlelist/all/anuncio_de_manutencao_de_rotina_20260115",
+      "kind": "licensed_game",
+      "language": "pt-BR",
+      "accessed": "2026-10-19",
+      "coverage": "Usage of ryos as the in-universe currency.",
+      "access": "indexed_search_text"
+    },
+    "cr-shadow": {
+      "title": "Crunchyroll Naruto episode 60: Byakugan versus Shadow Clone",
+      "url": "https://www.crunchyroll.com/pt-br/watch/GN7UNJX1Z/byakugan-vs-shadow-clone-jutsu",
+      "kind": "licensed_anime",
+      "language": "pt-BR",
+      "accessed": "2026-10-19",
+      "coverage": "Byakugan, Shadow Clone and Chunin Exam names.",
+      "access": "indexed_search_text"
+    },
+    "cr-forest": {
+      "title": "Crunchyroll Naruto episode 27: Forest of Death",
+      "url": "https://www.crunchyroll.com/pt-br/watch/G68VJQE86/the-chnin-exam-stage-2-the-forest-of-death",
+      "kind": "licensed_anime",
+      "language": "pt-BR",
+      "accessed": "2026-10-19",
+      "coverage": "Floresta da Morte and Exame Chunin.",
+      "access": "indexed_search_text"
+    },
+    "cr-summoning": {
+      "title": "Crunchyroll Naruto episode 55: summoning training",
+      "url": "https://www.crunchyroll.com/pt-br/watch/G6X04Q08Y/a-feeling-of-yearning-a-flower-full-of-hope",
+      "kind": "licensed_anime",
+      "language": "pt-BR",
+      "accessed": "2026-10-19",
+      "coverage": "Jutsu de Invocacao and Raposa de Nove Caudas.",
+      "access": "indexed_search_text"
+    },
+    "cr-gamabunta": {
+      "title": "Crunchyroll Naruto episode 57: Gamabunta",
+      "url": "https://www.crunchyroll.com/pt-br/watch/GYVNX4N06/he-flies-he-jumps-he-lurks-chief-toad-appears",
+      "kind": "licensed_anime",
+      "language": "pt-BR",
+      "accessed": "2026-10-19",
+      "coverage": "Gamabunta and Nove Caudas.",
+      "access": "indexed_search_text"
+    },
+    "cr-ice": {
+      "title": "Crunchyroll Naruto episode 16: The Broken Seal",
+      "url": "https://www.crunchyroll.com/pt-br/watch/G609QW4P6/the-broken-seal",
+      "kind": "licensed_anime",
+      "language": "pt-BR",
+      "accessed": "2026-10-19",
+      "coverage": "Espelhos de Cristais de Gelo and Haku.",
+      "access": "indexed_search_text"
+    },
+    "cr-series": {
+      "title": "Crunchyroll: Naruto series in Brazilian Portuguese",
+      "url": "https://www.crunchyroll.com/pt-br/series/GY9PJ5KWR/naruto",
+      "kind": "licensed_anime",
+      "language": "pt-BR",
+      "accessed": "2026-10-19",
+      "coverage": "Series terminology and documented variation between Chunin and Chuunin.",
+      "access": "indexed_search_text"
+    },
+    "panini-chunin": {
+      "title": "Panini: Naruto Gold volume 13",
+      "url": "https://panini.com.br/naruto-gold-vol-13-amaxr013r7",
+      "kind": "licensed_publisher",
+      "language": "pt-BR",
+      "accessed": "2026-10-19",
+      "coverage": "Exame Chunin, Gaara, Sasuke and Kakashi.",
+      "access": "page_or_indexed_text"
+    },
+    "panini-village": {
+      "title": "Panini: Naruto Parents and Children Day",
+      "url": "https://panini.com.br/naruto-a-verdadeira-historia-de-naruto-dia-de-pais-e-filhos-vol-11",
+      "kind": "licensed_publisher",
+      "language": "pt-BR",
+      "accessed": "2026-10-19",
+      "coverage": "Konoha and Vila da Folha as an attested alternative to the user-selected Aldeia da Folha.",
+      "access": "page_or_indexed_text"
+    },
+    "wiki-shadow": {
+      "title": "Wiki Naruto: Shadow Imitation/Possession naming variants",
+      "url": "https://naruto.fandom.com/pt-br/wiki/T%C3%A9cnica_de_Imita%C3%A7%C3%A3o_pela_Sombra",
+      "kind": "community_reference",
+      "language": "pt-BR",
+      "accessed": "2026-10-19",
+      "coverage": "Lists Possessao and Imitacao variants across Brazilian editions; the project choice is the user decision.",
+      "access": "indexed_search_text; direct page unavailable"
+    },
+    "wiki-transformation": {
+      "title": "Wiki Naruto: Transformation Technique names",
+      "url": "https://naruto.fandom.com/pt-br/wiki/T%C3%A9cnica_de_Transforma%C3%A7%C3%A3o",
+      "kind": "community_reference",
+      "language": "pt-BR",
+      "accessed": "2026-10-19",
+      "coverage": "Jutsu de Transformacao in the listed Brazilian adaptations.",
+      "access": "indexed_search_text"
+    },
+    "wiki-prison": {
+      "title": "Wiki Naruto: Water Prison names",
+      "url": "https://naruto.fandom.com/pt-br/wiki/T%C3%A9cnica_da_Pris%C3%A3o_de_%C3%81gua",
+      "kind": "community_reference",
+      "language": "pt-BR",
+      "accessed": "2026-10-19",
+      "coverage": "Jutsu Prisao de Agua and its localized variants.",
+      "access": "indexed_search_text"
+    },
+    "wiki-fang": {
+      "title": "Wiki Naruto: Fang over Fang names",
+      "url": "https://naruto.fandom.com/pt-br/wiki/Presa_Sobre_Presa",
+      "kind": "community_reference",
+      "language": "pt-BR",
+      "accessed": "2026-10-19",
+      "coverage": "Presa Sobre Presa and variants; identifies Gatsuga separately from Tsuga.",
+      "access": "indexed_search_text; direct page unavailable"
+    },
+    "catchphrase-article": {
+      "title": "Legiao dos Herois: translation for dubbing",
+      "url": "https://www.legiaodosherois.com.br/2021/por-que-original-diferente-dublado-traducao-dublagem.html",
+      "kind": "secondary_editorial",
+      "language": "pt-BR",
+      "accessed": "2026-10-19",
+      "coverage": "Reports the Brazilian catchphrase To certo; not evidence for every occurrence of believe it.",
+      "access": "indexed_search_text"
+    }
+  },
+  "entries": [
+    {
+      "id": "leaf-village",
+      "term": "Leaf Village",
+      "translation": "Aldeia da Folha",
+      "aliases": [
+        "Hidden Leaf Village",
+        "Village Hidden in the Leaves",
+        "Village Hidden in the Leaf",
+        "Hidden Leaf"
+      ],
+      "category": "place",
+      "status": "preferred",
+      "basis": "user_decision",
+      "source_refs": [
+        "online-servers",
+        "panini-village"
+      ],
+      "variants_pt_BR": [
+        "Vila da Folha",
+        "Vila Oculta da Folha",
+        "Aldeia Oculta da Folha"
+      ],
+      "notes": "User-selected project wording, including the long Hidden Leaf variants. Konoha remains Konoha when used as a proper name."
+    },
+    {
+      "id": "shadow-possession-jutsu",
+      "term": "Shadow Possession Jutsu",
+      "translation": "Jutsu de Possessão das Sombras",
+      "aliases": [
+        "Shadow Posession Jutsu",
+        "Shadow Imitation Jutsu"
+      ],
+      "category": "technique",
+      "status": "preferred",
+      "basis": "user_decision",
+      "source_refs": [
+        "wiki-shadow",
+        "online-ninjas"
+      ],
+      "variants_pt_BR": [
+        "Jutsu Possessão da Sombra",
+        "Jutsu de Imitação das Sombras"
+      ],
+      "notes": "User-selected Possessao das Sombras. Posession is an actual English source typo. Online Ninjas uses Imitacao; that alternative is not the project preference."
+    },
+    {
+      "id": "shadow-possession",
+      "term": "Shadow Possession",
+      "translation": "Possessão das Sombras",
+      "aliases": [
+        "Shadow Posession",
+        "Shadow Imitation"
+      ],
+      "category": "technique",
+      "status": "preferred",
+      "basis": "user_decision",
+      "source_refs": [
+        "wiki-shadow"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Short form of the same user-selected technique; preserve the distinction between the name and an ordinary shadow."
+    },
+    {
+      "id": "name-naruto",
+      "term": "Naruto",
+      "translation": "Naruto",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-sasuke",
+      "term": "Sasuke",
+      "translation": "Sasuke",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-sakura",
+      "term": "Sakura",
+      "translation": "Sakura",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-kakashi",
+      "term": "Kakashi",
+      "translation": "Kakashi",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-konohamaru",
+      "term": "Konohamaru",
+      "translation": "Konohamaru",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-shikamaru",
+      "term": "Shikamaru",
+      "translation": "Shikamaru",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-rock-lee",
+      "term": "Rock Lee",
+      "translation": "Rock Lee",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-neji",
+      "term": "Neji",
+      "translation": "Neji",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-hinata",
+      "term": "Hinata",
+      "translation": "Hinata",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-kiba",
+      "term": "Kiba",
+      "translation": "Kiba",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-akamaru",
+      "term": "Akamaru",
+      "translation": "Akamaru",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-jiraiya",
+      "term": "Jiraiya",
+      "translation": "Jiraiya",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-orochimaru",
+      "term": "Orochimaru",
+      "translation": "Orochimaru",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-gaara",
+      "term": "Gaara",
+      "translation": "Gaara",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-temari",
+      "term": "Temari",
+      "translation": "Temari",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-kankuro",
+      "term": "Kankuro",
+      "translation": "Kankuro",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-anko",
+      "term": "Anko",
+      "translation": "Anko",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-haku",
+      "term": "Haku",
+      "translation": "Haku",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-zabuza",
+      "term": "Zabuza",
+      "translation": "Zabuza",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-tazuna",
+      "term": "Tazuna",
+      "translation": "Tazuna",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-gamabunta",
+      "term": "Gamabunta",
+      "translation": "Gamabunta",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the source name. Preserve a full name or existing honorific; do not expand a short name or infer the speaker from a mention."
+    },
+    {
+      "id": "name-iruka",
+      "term": "Iruka",
+      "translation": "Iruka",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Preserve the spelling already present in the game. No claim of a unique Brazilian canonical spelling; Gato is a person name here, not the Portuguese noun."
+    },
+    {
+      "id": "name-ebisu",
+      "term": "Ebisu",
+      "translation": "Ebisu",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Preserve the spelling already present in the game. No claim of a unique Brazilian canonical spelling; Gato is a person name here, not the Portuguese noun."
+    },
+    {
+      "id": "name-mizuki",
+      "term": "Mizuki",
+      "translation": "Mizuki",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Preserve the spelling already present in the game. No claim of a unique Brazilian canonical spelling; Gato is a person name here, not the Portuguese noun."
+    },
+    {
+      "id": "name-teuchi",
+      "term": "Teuchi",
+      "translation": "Teuchi",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Preserve the spelling already present in the game. No claim of a unique Brazilian canonical spelling; Gato is a person name here, not the Portuguese noun."
+    },
+    {
+      "id": "name-moegi",
+      "term": "Moegi",
+      "translation": "Moegi",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Preserve the spelling already present in the game. No claim of a unique Brazilian canonical spelling; Gato is a person name here, not the Portuguese noun."
+    },
+    {
+      "id": "name-udon",
+      "term": "Udon",
+      "translation": "Udon",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Preserve the spelling already present in the game. No claim of a unique Brazilian canonical spelling; Gato is a person name here, not the Portuguese noun."
+    },
+    {
+      "id": "name-gato",
+      "term": "Gato",
+      "translation": "Gato",
+      "aliases": [],
+      "category": "character",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Preserve the spelling already present in the game. No claim of a unique Brazilian canonical spelling; Gato is a person name here, not the Portuguese noun."
+    },
+    {
+      "id": "name-guy",
+      "term": "Guy",
+      "translation": "Guy",
+      "aliases": [],
+      "category": "character",
+      "status": "contextual",
+      "basis": "source_preservation",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Only when referring to the character, notably Guy-sensei. Ordinary English guy means a person and must be translated by context."
+    },
+    {
+      "id": "konoha",
+      "term": "Konoha",
+      "translation": "Konoha",
+      "aliases": [],
+      "category": "place",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [
+        "panini-village"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Preserve this proper name when explicitly used; it does not require expansion to the village title."
+    },
+    {
+      "id": "land-of-waves",
+      "term": "Land of Waves",
+      "translation": "País das Ondas",
+      "aliases": [
+        "Land of the Waves"
+      ],
+      "category": "place",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": ""
+    },
+    {
+      "id": "forest-of-death",
+      "term": "Forest of Death",
+      "translation": "Floresta da Morte",
+      "aliases": [],
+      "category": "place",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "cr-forest"
+      ],
+      "variants_pt_BR": [],
+      "notes": ""
+    },
+    {
+      "id": "forest-of-death-exam",
+      "term": "Forest of Death Exam",
+      "translation": "Exame da Floresta da Morte",
+      "aliases": [],
+      "category": "event",
+      "status": "preferred",
+      "basis": "project_convention",
+      "source_refs": [
+        "cr-forest"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Project adaptation of the game event label using the attested place name; not an official Portuguese title for this game."
+    },
+    {
+      "id": "chunin-exam",
+      "term": "Chunin Exam",
+      "translation": "Exame Chunin",
+      "aliases": [
+        "Chunin Exams",
+        "Chunin examinations"
+      ],
+      "category": "event",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "panini-chunin",
+        "cr-forest"
+      ],
+      "variants_pt_BR": [
+        "Exame Chuunin",
+        "Exame Chūnin"
+      ],
+      "notes": "Use Chunin consistently; adapt singular/plural exam wording to the surrounding sentence."
+    },
+    {
+      "id": "ninja-academy",
+      "term": "Ninja Academy",
+      "translation": "Academia Ninja",
+      "aliases": [],
+      "category": "place",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-ninjas"
+      ],
+      "variants_pt_BR": [],
+      "notes": ""
+    },
+    {
+      "id": "hokage",
+      "term": "Hokage",
+      "translation": "Hokage",
+      "aliases": [],
+      "category": "rank",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-ninjas"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Preserve the title; do not replace it with president or king."
+    },
+    {
+      "id": "third-hokage",
+      "term": "Third Hokage",
+      "translation": "Terceiro Hokage",
+      "aliases": [
+        "the Third Hokage"
+      ],
+      "category": "rank",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-ninjas"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Handle an article outside the name naturally in the translated sentence."
+    },
+    {
+      "id": "fourth-hokage",
+      "term": "Fourth Hokage",
+      "translation": "Quarto Hokage",
+      "aliases": [],
+      "category": "rank",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-ninjas"
+      ],
+      "variants_pt_BR": [],
+      "notes": ""
+    },
+    {
+      "id": "rank-genin",
+      "term": "Genin",
+      "translation": "genin",
+      "aliases": [],
+      "category": "rank",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-ninjas"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Lowercase rank in running text; respect uppercase UI formatting. Romanization is a project consistency choice."
+    },
+    {
+      "id": "rank-chunin",
+      "term": "Chunin",
+      "translation": "chunin",
+      "aliases": [],
+      "category": "rank",
+      "status": "preferred",
+      "basis": "project_convention",
+      "source_refs": [
+        "panini-chunin"
+      ],
+      "variants_pt_BR": [
+        "chuunin",
+        "chūnin"
+      ],
+      "notes": "Lowercase rank in running text; respect uppercase UI formatting. Romanization is a project consistency choice."
+    },
+    {
+      "id": "rank-jonin",
+      "term": "Jonin",
+      "translation": "jonin",
+      "aliases": [],
+      "category": "rank",
+      "status": "preferred",
+      "basis": "project_convention",
+      "source_refs": [
+        "online-ninjas"
+      ],
+      "variants_pt_BR": [
+        "jounin",
+        "jōnin"
+      ],
+      "notes": "Lowercase rank in running text; respect uppercase UI formatting. Romanization is a project consistency choice."
+    },
+    {
+      "id": "chakra",
+      "term": "Chakra",
+      "translation": "chakra",
+      "aliases": [],
+      "category": "world",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-talents"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Keep chakra; do not substitute mana or energy points. Match sentence/UI capitalization."
+    },
+    {
+      "id": "jutsu",
+      "term": "Jutsu",
+      "translation": "jutsu",
+      "aliases": [],
+      "category": "world",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-talents"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Retain the franchise term. A complete technique name takes precedence over this generic entry."
+    },
+    {
+      "id": "ninjutsu",
+      "term": "Ninjutsu",
+      "translation": "ninjutsu",
+      "aliases": [],
+      "category": "world",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-talents"
+      ],
+      "variants_pt_BR": [],
+      "notes": ""
+    },
+    {
+      "id": "genjutsu",
+      "term": "Genjutsu",
+      "translation": "genjutsu",
+      "aliases": [],
+      "category": "world",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-ninjas"
+      ],
+      "variants_pt_BR": [],
+      "notes": ""
+    },
+    {
+      "id": "taijutsu",
+      "term": "Taijutsu",
+      "translation": "taijutsu",
+      "aliases": [],
+      "category": "world",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-talents"
+      ],
+      "variants_pt_BR": [],
+      "notes": ""
+    },
+    {
+      "id": "sensei",
+      "term": "sensei",
+      "translation": "sensei",
+      "aliases": [],
+      "category": "honorific",
+      "status": "preferred",
+      "basis": "project_convention",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Preserve existing Japanese honorifics such as Iruka-sensei. Do not add an honorific where the source has none."
+    },
+    {
+      "id": "kunai",
+      "term": "Kunai",
+      "translation": "kunai",
+      "aliases": [],
+      "category": "equipment",
+      "status": "preferred",
+      "basis": "source_preservation",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Retain the established weapon term present in the game; inflect only as required by natural Portuguese."
+    },
+    {
+      "id": "hand-signs",
+      "term": "Hand Signs",
+      "translation": "selos de mão",
+      "aliases": [],
+      "category": "world",
+      "status": "preferred",
+      "basis": "project_convention",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Project wording for the input sequences; preserve any button tokens next to it."
+    },
+    {
+      "id": "ramen",
+      "term": "Ramen",
+      "translation": "ramen",
+      "aliases": [],
+      "category": "food",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-ninjas"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Keep the food name. A generic Ramen Shop does not establish the proper name Ichiraku by itself."
+    },
+    {
+      "id": "ryou",
+      "term": "Ryou",
+      "translation": "ryo",
+      "aliases": [
+        "Ryo"
+      ],
+      "category": "currency",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-currency"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Keep the fictional currency; preserve amounts and the engine token <ryou> exactly."
+    },
+    {
+      "id": "ryous",
+      "term": "Ryous",
+      "translation": "ryos",
+      "aliases": [
+        "Ryos"
+      ],
+      "category": "currency",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-currency"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Plural currency spelling; never change the <ryou> token."
+    },
+    {
+      "id": "nine-tailed-fox",
+      "term": "Nine-Tailed Fox",
+      "translation": "Raposa de Nove Caudas",
+      "aliases": [
+        "Nine Tailed Fox"
+      ],
+      "category": "world",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "cr-summoning"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Keep this source-era description. Do not introduce the later proper name Kurama where the source does not reveal it."
+    },
+    {
+      "id": "nine-tails",
+      "term": "Nine-Tails",
+      "translation": "Nove Caudas",
+      "aliases": [
+        "Nine Tails"
+      ],
+      "category": "world",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "cr-gamabunta"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Short designation; do not add a name or information absent from the source."
+    },
+    {
+      "id": "pervy-sage",
+      "term": "Pervy Sage",
+      "translation": "Sábio Tarado",
+      "aliases": [],
+      "category": "epithet",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Jiraiya epithet; preserve its informal tone."
+    },
+    {
+      "id": "shadow-clone-jutsu",
+      "term": "Shadow Clone Jutsu",
+      "translation": "Jutsu Clone das Sombras",
+      "aliases": [
+        "Shadow Clone Technique"
+      ],
+      "category": "technique",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-ninjas",
+        "cr-shadow"
+      ],
+      "variants_pt_BR": [
+        "Jutsu de Clone das Sombras",
+        "Jutsu dos Clones das Sombras"
+      ],
+      "notes": "Use this project form consistently across dialogue and UI."
+    },
+    {
+      "id": "shadow-clone",
+      "term": "Shadow Clone",
+      "translation": "clone das sombras",
+      "aliases": [],
+      "category": "world",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-talents"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Inflect clone/clones naturally. Do not turn the basic Clone Jutsu into this technique."
+    },
+    {
+      "id": "clone-jutsu",
+      "term": "Clone Jutsu",
+      "translation": "Jutsu de Clonagem",
+      "aliases": [],
+      "category": "technique",
+      "status": "preferred",
+      "basis": "project_convention",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Basic cloning is distinct from Shadow Clone Jutsu; do not add Shadow when absent."
+    },
+    {
+      "id": "sexy-jutsu",
+      "term": "Sexy Jutsu",
+      "translation": "Jutsu Sexy",
+      "aliases": [],
+      "category": "technique",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-servers"
+      ],
+      "variants_pt_BR": [],
+      "notes": ""
+    },
+    {
+      "id": "substitution-jutsu",
+      "term": "Substitution Jutsu",
+      "translation": "Jutsu de Substituição",
+      "aliases": [],
+      "category": "technique",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-ninjas"
+      ],
+      "variants_pt_BR": [],
+      "notes": ""
+    },
+    {
+      "id": "transformation-jutsu",
+      "term": "Transformation Jutsu",
+      "translation": "Jutsu de Transformação",
+      "aliases": [],
+      "category": "technique",
+      "status": "preferred",
+      "basis": "community_usage",
+      "source_refs": [
+        "wiki-transformation"
+      ],
+      "variants_pt_BR": [],
+      "notes": ""
+    },
+    {
+      "id": "summoning-jutsu",
+      "term": "Summoning Jutsu",
+      "translation": "Jutsu de Invocação",
+      "aliases": [],
+      "category": "technique",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "cr-summoning"
+      ],
+      "variants_pt_BR": [],
+      "notes": ""
+    },
+    {
+      "id": "chakra-concentration",
+      "term": "Chakra Concentration",
+      "translation": "Concentração de Chakra",
+      "aliases": [],
+      "category": "gameplay",
+      "status": "preferred",
+      "basis": "project_convention",
+      "source_refs": [
+        "online-talents"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Game-specific action name adapted by the project; the reference supports chakra terminology, not an official translation of this action."
+    },
+    {
+      "id": "chakra-concentration-jutsu",
+      "term": "Chakra Concentration Jutsu",
+      "translation": "Jutsu de Concentração de Chakra",
+      "aliases": [],
+      "category": "gameplay",
+      "status": "preferred",
+      "basis": "project_convention",
+      "source_refs": [
+        "online-talents"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Game-specific extended action name; use the shorter term when the source omits Jutsu."
+    },
+    {
+      "id": "chidori",
+      "term": "Chidori",
+      "translation": "Chidori",
+      "aliases": [],
+      "category": "technique",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-ninjas"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Preserve the technique name; do not replace it with Lightning Blade."
+    },
+    {
+      "id": "sharingan",
+      "term": "Sharingan",
+      "translation": "Sharingan",
+      "aliases": [],
+      "category": "technique",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "cr-series"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Preserve this eye-technique name."
+    },
+    {
+      "id": "byakugan",
+      "term": "Byakugan",
+      "translation": "Byakugan",
+      "aliases": [],
+      "category": "technique",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "cr-shadow"
+      ],
+      "variants_pt_BR": [],
+      "notes": ""
+    },
+    {
+      "id": "fireball-jutsu",
+      "term": "Fireball Jutsu",
+      "translation": "Jutsu Bola de Fogo",
+      "aliases": [],
+      "category": "technique",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-ninjas"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Do not add a stronger technique variant absent from the source."
+    },
+    {
+      "id": "lightning-blade",
+      "term": "Lightning Blade",
+      "translation": "Espada Relâmpago",
+      "aliases": [],
+      "category": "technique",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-ninjas"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Keep distinct from Chidori; do not merge their glossary entries."
+    },
+    {
+      "id": "eight-trigrams",
+      "term": "8 Trigrams 64 Palms",
+      "translation": "Oito Trigramas, 64 Palmas",
+      "aliases": [
+        "Eight Trigrams 64 Palms"
+      ],
+      "category": "technique",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-ninjas"
+      ],
+      "variants_pt_BR": [],
+      "notes": "The wording is attested; punctuation is a project convention."
+    },
+    {
+      "id": "fang-over-fang",
+      "term": "Fang over Fang",
+      "translation": "Presa Sobre Presa",
+      "aliases": [],
+      "category": "technique",
+      "status": "preferred",
+      "basis": "community_usage",
+      "source_refs": [
+        "wiki-fang"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Gatsuga; do not confuse it with the single-user Tsuga technique."
+    },
+    {
+      "id": "lions-barrage",
+      "term": "Lion's Barrage",
+      "translation": "Rajada de Leões",
+      "aliases": [],
+      "category": "technique",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-ninjas"
+      ],
+      "variants_pt_BR": [],
+      "notes": ""
+    },
+    {
+      "id": "primary-lotus",
+      "term": "Primary Lotus",
+      "translation": "Lótus Primária",
+      "aliases": [],
+      "category": "technique",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "online-ninjas"
+      ],
+      "variants_pt_BR": [],
+      "notes": ""
+    },
+    {
+      "id": "water-prison",
+      "term": "Water Prison Jutsu",
+      "translation": "Jutsu Prisão de Água",
+      "aliases": [],
+      "category": "technique",
+      "status": "preferred",
+      "basis": "community_usage",
+      "source_refs": [
+        "wiki-prison"
+      ],
+      "variants_pt_BR": [],
+      "notes": ""
+    },
+    {
+      "id": "crystal-ice-mirrors",
+      "term": "Crystal Ice Mirrors",
+      "translation": "Espelhos de Cristais de Gelo",
+      "aliases": [],
+      "category": "technique",
+      "status": "preferred",
+      "basis": "licensed_usage",
+      "source_refs": [
+        "cr-ice"
+      ],
+      "variants_pt_BR": [],
+      "notes": ""
+    },
+    {
+      "id": "water-style",
+      "term": "Water Style",
+      "translation": "Estilo Água",
+      "aliases": [],
+      "category": "world",
+      "status": "preferred",
+      "basis": "community_usage",
+      "source_refs": [
+        "wiki-prison"
+      ],
+      "variants_pt_BR": [],
+      "notes": "Elemental technique prefix; preserve the rest of the complete technique name."
+    },
+    {
+      "id": "water-dragon",
+      "term": "Water Dragon Jutsu",
+      "translation": "Jutsu Dragão de Água",
+      "aliases": [],
+      "category": "technique",
+      "status": "needs_review",
+      "basis": "unverified_candidate",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Candidate adaptation; verify the preferred Brazilian name for the exact technique."
+    },
+    {
+      "id": "giant-vortex",
+      "term": "Water Style: Giant Vortex Jutsu",
+      "translation": "Estilo Água: Jutsu do Grande Vórtice",
+      "aliases": [],
+      "category": "technique",
+      "status": "needs_review",
+      "basis": "unverified_candidate",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Do not assume equivalence to Water Dragon or substitute another technique based on similar effects."
+    },
+    {
+      "id": "sand-burial",
+      "term": "Sand Burial",
+      "translation": "Enterro de Areia",
+      "aliases": [],
+      "category": "technique",
+      "status": "needs_review",
+      "basis": "unverified_candidate",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Check the intended Gaara technique and edition variants before locking Funeral/Enterro/Caixao wording."
+    },
+    {
+      "id": "armor-of-sand",
+      "term": "Armor of Sand",
+      "translation": "Armadura de Areia",
+      "aliases": [],
+      "category": "technique",
+      "status": "needs_review",
+      "basis": "unverified_candidate",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Literal candidate; no directly checked Portuguese reference for this label yet."
+    },
+    {
+      "id": "striking-shadow-snake",
+      "term": "Striking Shadow Snake",
+      "translation": "Serpente das Sombras",
+      "aliases": [],
+      "category": "technique",
+      "status": "needs_review",
+      "basis": "unverified_candidate",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "The exact source label to franchise technique mapping has not been established."
+    },
+    {
+      "id": "palm-healing",
+      "term": "Palm Healing",
+      "translation": "Cura pela Palma",
+      "aliases": [],
+      "category": "technique",
+      "status": "needs_review",
+      "basis": "unverified_candidate",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Check the intended medical technique before equating it with a named franchise technique."
+    },
+    {
+      "id": "uzumaki-barrage",
+      "term": "Uzumaki Barrage",
+      "translation": "Rajada Uzumaki",
+      "aliases": [],
+      "category": "technique",
+      "status": "needs_review",
+      "basis": "unverified_candidate",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Online Ninjas has a related localized barrage label; equivalence to this exact game attack remains to be checked."
+    },
+    {
+      "id": "curse-mark",
+      "term": "Curse Mark",
+      "translation": "Marca da Maldição",
+      "aliases": [],
+      "category": "technique",
+      "status": "needs_review",
+      "basis": "unverified_candidate",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Choose consistently between Marca da Maldicao and Selo Amaldicoado after checking the scene."
+    },
+    {
+      "id": "believe-it",
+      "term": "Believe it",
+      "translation": "Tô certo!",
+      "aliases": [],
+      "category": "expression",
+      "status": "contextual",
+      "basis": "context_dependent_adaptation",
+      "source_refs": [
+        "catchphrase-article"
+      ],
+      "variants_pt_BR": [
+        "Acredite!"
+      ],
+      "notes": "Only for Naruto catchphrase usage. Ordinary believe it, cannot believe it and sincere requests to believe someone need contextual translation. Do not infer a speaker merely from these words."
+    },
+    {
+      "id": "options",
+      "term": "OPTIONS",
+      "translation": "OPÇÕES",
+      "aliases": [],
+      "category": "interface",
+      "status": "preferred",
+      "basis": "project_convention",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Existing demo wording; project UI convention."
+    },
+    {
+      "id": "subtitles",
+      "term": "Subtitles",
+      "translation": "Legendas",
+      "aliases": [],
+      "category": "interface",
+      "status": "preferred",
+      "basis": "project_convention",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Existing demo wording; project UI convention."
+    },
+    {
+      "id": "game-paused",
+      "term": "GAME PAUSED",
+      "translation": "JOGO PAUSADO",
+      "aliases": [],
+      "category": "interface",
+      "status": "preferred",
+      "basis": "project_convention",
+      "source_refs": [],
+      "variants_pt_BR": [],
+      "notes": "Existing demo wording; project UI convention."
+    }
+  ]
+}

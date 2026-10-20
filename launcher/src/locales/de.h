@@ -135,7 +135,7 @@ inline constexpr const char* kDe[] = {
     "Spanisch",  // GameLanguageSpanish
     "Italienisch",  // GameLanguageItalian
     "Benutzerdefiniert (%u)",  // GameLanguageCustom
-    "Wird beim nächsten Spielstart angewendet. Verfügbare Texte und Stimmen hängen von deinen Spieldateien ab.",  // GameLanguageDescription
+    "Wird beim nächsten Spielstart angewendet. Übersetzungen im Ordner mods erscheinen hier und ersetzen Texte nur, wenn sie ausgewählt sind. Verfügbare Stimmen hängen von deinen Spieldateien ab.",  // GameLanguageDescription
     "Sprache der Launcher-Oberfläche",  // LauncherLanguageTooltip
     "Xenos (emulierte GPU)",  // RendererXenos
     "Nativ",  // RendererNative

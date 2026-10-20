@@ -4,6 +4,10 @@ project(narutorise_launcher LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if(NOT TARGET narutorise::json)
+    add_subdirectory(../third_party/nlohmann_json third_party/nlohmann_json)
+endif()
+
 set(LAUNCHER_SOURCES
     src/main.cpp
     src/app_version.cpp
@@ -11,6 +15,8 @@ set(LAUNCHER_SOURCES
     src/content_manager.cpp
     src/folders.cpp
     src/graphics_devices.cpp
+    src/game_languages.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../app/src/mods/translation_data.cpp
     src/key_bindings.cpp
     src/key_names.cpp
     src/localization.cpp
@@ -50,6 +56,7 @@ get_filename_component(REXSDK_INSTALL_DIR "${rexglue_DIR}/../../.." ABSOLUTE)
 
 target_include_directories(narutorise_launcher PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../app/src
     ${REXSDK_INSTALL_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/thirdparty/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/thirdparty/stb
@@ -57,6 +64,7 @@ target_include_directories(narutorise_launcher PRIVATE
 
 target_link_libraries(narutorise_launcher PRIVATE
     SDL3::SDL3-static
+    narutorise::json
 )
 
 # The release version, shown under the cover when the copy has no
@@ -125,6 +133,20 @@ set_target_properties(narutorise_localization_test PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 if(MSVC)
     target_compile_options(narutorise_localization_test PRIVATE /utf-8)
+endif()
+
+# Exercise discovery and language selection with the same package reader as the game.
+add_executable(narutorise_game_languages_test EXCLUDE_FROM_ALL
+    tests/test_game_languages.cpp
+    src/game_languages.cpp src/config_manager.cpp src/key_bindings.cpp src/localization.cpp
+    ../app/src/mods/translation_data.cpp)
+target_include_directories(narutorise_game_languages_test PRIVATE
+    src ../app/src ${REXSDK_INSTALL_DIR}/include)
+target_link_libraries(narutorise_game_languages_test PRIVATE narutorise::json)
+set_target_properties(narutorise_game_languages_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+if(MSVC)
+    target_compile_options(narutorise_game_languages_test PRIVATE /utf-8)
 endif()
 
 # The game executable carries the native renderer next to the Xenos plugin:

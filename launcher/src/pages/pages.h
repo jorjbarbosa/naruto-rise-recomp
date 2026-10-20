@@ -4,6 +4,7 @@
 #include <string>
 
 #include "config_manager.h"
+#include "game_languages.h"
 
 struct SDL_Window;
 
@@ -31,6 +32,7 @@ struct PageContext {
   std::string& status_message;
   bool& request_launch;
   Page& page;  // A page may send the user to another one.
+  const std::vector<TranslationMod>& translation_mods;
 };
 
 void RenderPlayPage(PageContext& context);

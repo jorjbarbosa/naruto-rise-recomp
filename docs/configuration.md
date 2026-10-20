@@ -40,6 +40,8 @@ Open **Settings → Game → Game language** in the launcher. The selection is s
 
 For example, set `user_language = 5` in `narutorise.toml` to select Spanish. This preference is independent of `launcher_language`. The launcher preserves manually configured SDK language codes outside this list, displaying them as **Custom (code)** until you select a listed language.
 
+External [translation mods](translation-mods.md) installed in `mods/` next to the executable appear in this same selector, using only their package names. Selecting one saves `translation_mod = "folder-name"` and `user_language = 1` automatically; selecting an official language clears the mod selection. Installation alone does not activate a package. The list refreshes when the launcher opens, regains focus, or starts the game. If the selected package is missing or invalid, it disappears from the list and English is selected automatically, without a warning. Restoring a package does not reactivate it. Changes take effect on the next game launch.
+
 ## Launcher and installer languages
 
 Both interfaces offer languages in this order:
@@ -54,7 +56,7 @@ Both interfaces offer languages in this order:
 | Italian | `"it"` |
 | Russian | `"ru"` |
 
-Use the selector in the launcher's header to change its interface. Portuguese and Russian apply to the launcher and installer interfaces only; the game selector still offers the five native languages listed above.
+Use the selector in the launcher's header to change its interface. This does not change the game language: the game selector offers the five native languages listed above plus installed translation packages.
 
 The installer always starts with English selected, independently of the Windows language or a previous installation's language. Numbered installer options preserve the order above. On a fresh installation, the selected installer language becomes the launcher language. Reinstallation preserves existing configuration, including language preferences.
 
@@ -85,6 +87,7 @@ The values below match `app/narutorise.toml`:
 | --- | --- | --- |
 | `launcher_language` | `"en"` | Launcher interface; see the seven language codes above |
 | `user_language` | `1` | Game language; see the language codes above |
+| `translation_mod` | `""` | External translation package under `mods/`; requires English and a restart |
 | `resolution_scale` | `1` | Internal scale, the SDK's (and Xenia's) default; the launcher offers 1× through 4× |
 | `draw_resolution_scale_x`, `draw_resolution_scale_y` | `1`, `1` | Draw scales, synchronized by the launcher |
 | `graphics_device` | `""` | Graphics card by the name Windows gives it (both renderers); empty is automatic. See [Graphics card](#graphics-card) |

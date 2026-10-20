@@ -41,6 +41,8 @@ pwsh -File .\setup.ps1
 
 The script checks tools, initializes submodules, downloads `extract-xiso.exe`, and applies the patches in `patches/sdk/`. The SDK configured in `.gitmodules` is `https://github.com/rexglue/rexglue-sdk.git`.
 
+The translation loader and launcher use the pinned JSON parser in `third_party/nlohmann_json`, through the `narutorise::json` CMake target. This application dependency does not require the SDK's private inja headers or a separate download.
+
 If the SDK and extractor are already available, still make sure the local patches have been applied before building the SDK:
 
 ```powershell

@@ -135,7 +135,7 @@ inline constexpr const char* kEs[] = {
     "Español",  // GameLanguageSpanish
     "Italiano",  // GameLanguageItalian
     "Personalizado (%u)",  // GameLanguageCustom
-    "Se aplica al iniciar el juego. Los textos y voces disponibles dependen de los archivos del juego.",  // GameLanguageDescription
+    "Se aplica al iniciar el juego. Las traducciones instaladas en mods aparecen aquí y solo sustituyen los textos al seleccionarlas. Las voces disponibles dependen de los archivos del juego.",  // GameLanguageDescription
     "Idioma de la interfaz del launcher",  // LauncherLanguageTooltip
     "Xenos (GPU emulada)",  // RendererXenos
     "Nativo",  // RendererNative

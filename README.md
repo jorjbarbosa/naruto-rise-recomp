@@ -47,6 +47,7 @@ The current build and distribution workflow targets **Windows x64**. Presets for
 
 - **DLC support**, with launcher import and STFS package installation at game startup. Character DLCs use additional recompiled engine modules.
 - **Game language selection**, with English, French, German, Spanish, and Italian options in the launcher; available text and voices depend on your game files.
+- **External translation mods**, selected in the launcher's game language list, with UTF-8 text replacements by ID and fallback to the original English text. Releases include the complete Brazilian Portuguese package. See the [translation mod guide](docs/translation-mods.md).
 
 **Launcher and distribution**
 

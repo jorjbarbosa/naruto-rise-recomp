@@ -73,14 +73,22 @@ void RenderFooter(const std::string& status_message, float y) {
 }  // namespace
 
 LauncherUI::LauncherUI(SDL_Window* window, std::filesystem::path base_dir, Cover cover)
-    : window_(window), base_dir_(std::move(base_dir)), cover_(cover), version_(AppVersion(base_dir_)) {}
+    : window_(window), base_dir_(std::move(base_dir)), cover_(cover), version_(AppVersion(base_dir_)) {
+  RefreshTranslationMods();
+}
+
+void LauncherUI::RefreshTranslationMods() {
+  translation_mods_ = ui::DiscoverTranslationMods(base_dir_);
+}
 
 void LauncherUI::SetupTheme() { launcher_theme::Apply(); }
 
 void LauncherUI::Render(GameConfig& config, bool& request_launch, std::string& status_message) {
   Localization::SetLanguageCode(config.launcher_language);
+  ui::ReconcileGameLanguage(config, translation_mods_);
   ui::GameStatus game;
-  ui::PageContext context{window_, base_dir_, config, game, status_message, request_launch, page_};
+  ui::PageContext context{window_, base_dir_, config, game, status_message, request_launch, page_,
+                          translation_mods_};
   // A folder picked in a dialog counts in this frame's game status.
   ui::ApplyGameFolderSelection(context);
   ui::ApplyDlcFolderSelection(context);
@@ -105,6 +113,10 @@ void LauncherUI::Render(GameConfig& config, bool& request_launch, std::string& s
   ImGui::PushID(static_cast<int>(page_));
   ImGui::BeginChild("PageBody", ImVec2(0, ImGui::GetContentRegionAvail().y - kFooterHeight));
   RenderPage(context);
+  if (request_launch) {
+    RefreshTranslationMods();
+    ui::ReconcileGameLanguage(config, translation_mods_);
+  }
   ImGui::EndChild();
   ImGui::PopID();
   RenderFooter(status_message, size.y - 64);

@@ -20,6 +20,7 @@ bool ConfigManager::Load(const std::filesystem::path& toml_path, GameConfig& con
     if (auto v = tbl["d3d12_readback_resolve"].value<bool>()) config.d3d12_readback_resolve = *v;
     if (auto v = tbl["skip_intro_videos"].value<bool>()) config.skip_intro_videos = *v;
     if (auto v = tbl["user_language"].value<std::uint32_t>()) config.user_language = *v;
+    if (auto v = tbl["translation_mod"].value<std::string>()) config.translation_mod = *v;
     if (auto v = tbl["log_verbose"].value<bool>()) config.log_verbose = *v;
     if (auto v = tbl["log_level"].value<std::string>()) config.log_level = *v;
     if (auto v = tbl["protect_zero"].value<bool>()) config.protect_zero = *v;
@@ -98,6 +99,7 @@ bool ConfigManager::Save(const std::filesystem::path& toml_path, const GameConfi
   tbl.insert_or_assign("d3d12_readback_resolve", config.d3d12_readback_resolve);
   tbl.insert_or_assign("skip_intro_videos", config.skip_intro_videos);
   tbl.insert_or_assign("user_language", config.user_language);
+  tbl.insert_or_assign("translation_mod", config.translation_mod);
   tbl.insert_or_assign("log_verbose", config.log_verbose);
   tbl.insert_or_assign("log_level", config.log_level);
   tbl.insert_or_assign("protect_zero", config.protect_zero);

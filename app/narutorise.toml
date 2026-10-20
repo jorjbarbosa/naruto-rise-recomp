@@ -15,6 +15,9 @@ skip_intro_videos = true
 
 # Game language: 1 = English, 4 = French, 3 = German, 5 = Spanish, 6 = Italian.
 user_language = 1
+# Folder under mods/ next to the executable. Example: "pt-br-demo".
+# Translation mods currently use English as their base; restart after changing.
+translation_mod = ""
 
 # Fix da piscada preta nas lutas: draws fullscreen sem clipping fazem o
 # estimador de EDRAM alegar o EDRAM inteiro e corromper o buffer de cena via

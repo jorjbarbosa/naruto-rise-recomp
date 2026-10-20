@@ -109,6 +109,7 @@ class InnoSetupTests(unittest.TestCase):
     def test_without_iso_and_uninstall_preservation(self):
         self.assertEqual(self.install(), 0)
         self.assertTrue((self.dest / "narutorise_launcher.exe").exists())
+        self.assert_bundled_translation()
         self.assertTrue((self.dest / "assets/narutorise.ico").exists())
         # Every runtime DLL staged in the package must be installed: missing
         # DLLs break loading (e.g. rexruntime.dll imports amd_fidelityfx_dx12).
@@ -209,6 +210,9 @@ class InnoSetupTests(unittest.TestCase):
             "dlc/pending-package": b"pending DLC",
             "logs/session.log": b"existing log",
             "personal.txt": b"personal file",
+            "mods/community/mod.toml": b"[mod]\nname='My translation'\n",
+            "mods/community/texts.json": b'{"1":"Personal translation"}',
+            "mods/pt-br/review-notes.txt": b"personal translation notes",
             "test-user-data/saves/save.bin": b"save data",
             "test-user-data/0000000000000000/555307E5/00000002/dlc.bin": b"installed DLC",
         }
@@ -227,7 +231,47 @@ class InnoSetupTests(unittest.TestCase):
             with self.subTest(file=name):
                 self.assertEqual((self.dest / name).read_bytes(), content)
 
+    def assert_bundled_translation(self):
+        for name in ("mod.toml", "texts.json"):
+            self.assertEqual((self.dest / "mods/pt-br" / name).read_bytes(),
+                             (self.package / "mods/pt-br" / name).read_bytes(), name)
+
+    def test_bundled_translation_on_install_and_update(self):
+        self.assertEqual(self.install(), 0)
+        self.assert_bundled_translation()
+        config = self.dest / "narutorise.toml"
+        defaults = tomllib.loads(config.read_text(encoding="utf-8-sig"))
+        self.assertEqual(defaults["user_language"], 1)
+        self.assertEqual(defaults["translation_mod"], "")
+        # Refresh an older bundled dictionary, preserving the selected language,
+        # a personal translation package, and files that Setup does not own.
+        config.write_text('user_language = 5\ntranslation_mod = ""\n', encoding="utf-8")
+        saved_config = config.read_bytes()
+        bundled = self.dest / "mods/pt-br/texts.json"
+        bundled.write_bytes(b'{"1":"Older bundled translation"}')
+        personal = self.dest / "mods/community/texts.json"
+        personal.parent.mkdir(parents=True)
+        personal.write_bytes(b'{"1":"User translation"}')
+        notes = self.dest / "mods/pt-br/review-notes.txt"
+        notes.write_bytes(b"User notes")
+        self.assertEqual(self.install(mode="update"), 0)
+        self.assert_bundled_translation()
+        self.assertEqual(config.read_bytes(), saved_config)
+        self.assertEqual(personal.read_bytes(), b'{"1":"User translation"}')
+        self.assertEqual(notes.read_bytes(), b"User notes")
+        # A copy without the bundled package receives it again on update.
+        bundled.unlink()
+        (self.dest / "mods/pt-br/mod.toml").unlink()
+        self.assertEqual(self.install(mode="update"), 0)
+        self.assert_bundled_translation()
+        self.assertEqual(config.read_bytes(), saved_config)
+        self.uninstall()
+        self.assertFalse(bundled.exists())
+        self.assertTrue(personal.exists())
+        self.assertTrue(notes.exists())
+
     def assert_current_release(self):
+        self.assert_bundled_translation()
         for name in ("narutorise.exe", "narutorise_launcher.exe", "rexruntime.dll", "narutorise_ai2c.dll"):
             self.assertEqual((self.dest / name).read_bytes(), (self.package / name).read_bytes(), name)
         self.assertEqual((self.dest / "narutorise.version").read_text().strip(), self.current_version)

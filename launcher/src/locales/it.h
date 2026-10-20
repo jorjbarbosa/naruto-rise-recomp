@@ -135,7 +135,7 @@ inline constexpr const char* kIt[] = {
     "Spagnolo",  // GameLanguageSpanish
     "Italiano",  // GameLanguageItalian
     "Personalizzata (%u)",  // GameLanguageCustom
-    "Applicata all'avvio del gioco. I testi e le voci disponibili dipendono dai file di gioco.",  // GameLanguageDescription
+    "Applicata all'avvio del gioco. Le traduzioni installate in mods appaiono qui e sostituiscono i testi solo quando selezionate. Le voci disponibili dipendono dai file di gioco.",  // GameLanguageDescription
     "Lingua dell'interfaccia del launcher",  // LauncherLanguageTooltip
     "Xenos (GPU emulata)",  // RendererXenos
     "Nativo",  // RendererNative

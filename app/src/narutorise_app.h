@@ -27,6 +27,7 @@
 #include "crash_report.h"
 #include "graphics_device.h"
 #include "input_replay.h"
+#include "mods/translation_mod.h"
 #include "ultrawide.h"
 #include "window_title.h"
 #ifdef NARUTORISE_NATIVE_RENDERER_BOOTSTRAP
@@ -292,6 +293,7 @@ class NarutoriseApp : public rex::ReXApp {
   }
 
   void OnPostSetup() override {
+    narutorise::translation::Initialize(rex::filesystem::GetExecutableFolder());
     narutorise::crash_report::Install();  // After the SDK's exception handler.
     // The game's name and version in place of the SDK's name and build stamp.
     if (window()) window()->SetTitle(narutorise::WindowTitle());

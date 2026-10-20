@@ -135,7 +135,7 @@ inline constexpr const char* kRu[] = {
     "Испанский",  // GameLanguageSpanish
     "Итальянский",  // GameLanguageItalian
     "Другой (%u)",  // GameLanguageCustom
-    "Применяется при запуске игры. Доступные тексты и озвучка зависят от файлов игры.",  // GameLanguageDescription
+    "Применяется при запуске игры. Переводы из папки mods появляются здесь и заменяют текст только после выбора. Доступная озвучка зависит от файлов игры.",  // GameLanguageDescription
     "Язык интерфейса лаунчера",  // LauncherLanguageTooltip
     "Xenos (эмуляция GPU)",  // RendererXenos
     "Нативный",  // RendererNative

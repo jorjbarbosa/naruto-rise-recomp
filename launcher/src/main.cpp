@@ -196,6 +196,10 @@ int main(int argc, char* argv[]) {
       // A key being mapped is the launcher's, not ImGui's.
       if (launcher_ui::CaptureKeyEvent(event)) continue;
       ImGui_ImplSDL3_ProcessEvent(&event);
+      if (event.type == SDL_EVENT_WINDOW_FOCUS_GAINED &&
+          event.window.windowID == SDL_GetWindowID(window)) {
+        ui.RefreshTranslationMods();
+      }
       if (event.type == SDL_EVENT_QUIT) {
         running = false;
       }

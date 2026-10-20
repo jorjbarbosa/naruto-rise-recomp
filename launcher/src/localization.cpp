@@ -160,7 +160,7 @@ const char* const kStringsEn[] = {
     "Spanish",
     "Italian",
     "Custom (%u)",
-    "Applied on the next launch. Available text and voices depend on your game files.",
+    "Applied on the next launch. Translation packages installed in mods appear here and replace text only when selected. Available voices depend on your game files.",
     "Launcher interface language",
     // --- Renderer ---
     "Xenos (emulated GPU)",
@@ -373,7 +373,7 @@ const char* const kStringsPtBr[] = {
     "Espanhol",
     "Italiano",
     "Personalizado (%u)",
-    "Aplicado ao iniciar o jogo. Os textos e as vozes disponíveis dependem dos arquivos do jogo.",
+    "Aplicado ao iniciar o jogo. Pacotes de tradução instalados em mods aparecem aqui e só substituem os textos quando selecionados. As vozes disponíveis dependem dos arquivos do jogo.",
     "Idioma da interface do launcher",
     // --- Renderer ---
     "Xenos (GPU emulada)",

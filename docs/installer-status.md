@@ -44,7 +44,8 @@ See the test sources for requirements and compiler paths. ISO fixtures are synth
 - Run the portable package and select an extracted game folder.
 - Verify the installer starts in English and offers English, Portuguese, French, German, Spanish, Italian, and Russian in that order.
 - Switch all seven launcher languages, including Cyrillic text, graphics settings, and 16:9/ultrawide aspect ratios.
-- Confirm Portuguese and Russian are interface options only and the five native game language selections persist independently.
+- Confirm the bundled **Português (Brasil)** translation appears alongside the five native game languages on new installations and updates, without changing the saved selection. Interface language remains independent.
+- Update an older bundled translation and check that other mod packages and personal files remain intact.
 - Import DLC and launch a build containing `narutorise_ai2c2.dll`.
 - For builds with the native renderer: launch once with each renderer, check that the options of the other renderer are greyed out, and play with the frame rate at 30, 60, and 120.
 - Check saves, logs, and cache in the documented locations.

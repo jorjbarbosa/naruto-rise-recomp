@@ -98,6 +98,10 @@ Source: "..\launcher\assets\cover.jpg"; DestDir: "{app}\assets"; Flags: ignoreve
 Source: "..\launcher\assets\narutorise.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
 Source: "..\launcher\assets\fonts\*"; DestDir: "{app}\assets\fonts"; Flags: ignoreversion
 Source: "{#PackageDir}\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion
+; Bundled translation: install on new copies and refresh on updates.
+; Only these owned files are replaced; community packages are left untouched.
+Source: "{#PackageDir}\mods\pt-br\mod.toml"; DestDir: "{app}\mods\pt-br"; Flags: ignoreversion
+Source: "{#PackageDir}\mods\pt-br\texts.json"; DestDir: "{app}\mods\pt-br"; Flags: ignoreversion
 Source: "{#PackageDir}\narutorise.toml"; DestDir: "{app}"; Flags: onlyifdoesntexist uninsneveruninstall
 Source: "..\tools\extract-xiso\extract-xiso.exe"; Flags: dontcopy
 Source: "{#HelperPath}"; Flags: dontcopy
