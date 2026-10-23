@@ -1,6 +1,6 @@
 # Documentation
 
-- [Build and run](build-and-run.md)
+- [Build and run](build-and-run.md) (Windows, and [Linux](build-and-run.md#linux))
 - [Configuration and ultrawide](configuration.md)
 - [DLCs and Title Updates](dlc.md)
 - [Translation mods](translation-mods.md)
