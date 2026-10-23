@@ -304,6 +304,15 @@ if(WIN32)
     endif()
 endif()
 
+# The SDK runtime next to the executable on Linux, where the executable finds it
+# through its $ORIGIN RUNPATH; the SDK stages it itself only on Windows and macOS.
+if(UNIX AND NOT APPLE AND TARGET rex::runtime)
+    add_custom_command(TARGET narutorise POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:rex::runtime> $<TARGET_FILE_DIR:narutorise>
+        VERBATIM)
+endif()
+
 # Launcher (SDL3 + Dear ImGui). Outside Windows the game is configured through
 # narutorise.toml for now.
 if(WIN32)
