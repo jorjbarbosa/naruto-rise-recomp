@@ -25,13 +25,24 @@ int64_t TickFrequency() {
   return frequency;
 }
 bool Sleep(int64_t ticks) {
-  thread_local HANDLE timer =
-      CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-  if (!timer) return false;
+  // A high-resolution timer per thread (Windows 10 1803 and later). Without
+  // one, Sleep in whole milliseconds, at the system timer's resolution: a
+  // coarser wait, but not a spin of the whole period.
+  struct Timer {
+    HANDLE handle = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    ~Timer() {
+      if (handle) CloseHandle(handle);
+    }
+  };
+  thread_local Timer timer;
+  if (!timer.handle) {
+    ::Sleep(DWORD((std::max<int64_t>)(0, ticks * 1000 / TickFrequency())));
+    return true;
+  }
   LARGE_INTEGER due{};  // Relative, in 100 ns units.
   due.QuadPart = -(std::max<int64_t>)(1, ticks * 10000000 / TickFrequency());
-  if (!SetWaitableTimerEx(timer, &due, 0, nullptr, nullptr, nullptr, 0)) return false;
-  WaitForSingleObject(timer, 1000);
+  if (!SetWaitableTimerEx(timer.handle, &due, 0, nullptr, nullptr, nullptr, 0)) return false;
+  WaitForSingleObject(timer.handle, 1000);
   return true;
 }
 void Pause() { YieldProcessor(); }

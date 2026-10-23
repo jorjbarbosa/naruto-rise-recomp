@@ -117,9 +117,9 @@ int Run() {
       }
     }
     const bool lot_pending = frame && !frames_refused.load();
-    std::vector<rex::thread::WaitHandle*> handles{doorbell.get()};
-    if (lot_pending) handles.push_back(frame->event.get());
-    const auto wait = rex::thread::WaitAny(handles, false, std::chrono::milliseconds(1000)).first;
+    rex::thread::WaitHandle* handles[] = {doorbell.get(), lot_pending ? frame->event.get() : nullptr};
+    const auto wait =
+        rex::thread::WaitAny(handles, lot_pending ? 2 : 1, false, std::chrono::milliseconds(1000)).first;
     if (closing.load()) break;
     if (wait == rex::thread::WaitResult::kFailed) Stop("own-completion-wait", Context(), 0, 0, 88);
     if (!lot_pending ||
