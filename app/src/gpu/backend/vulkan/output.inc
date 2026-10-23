@@ -65,18 +65,18 @@ bool Backend::State::OutputEffects(OutputImage& source, BackImage& back, uint32_
 bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, uint32_t& width,
                        uint32_t& height, std::string& evidence) {
   auto& s = *state_; bgra.clear(); width = height = 0;
-  if (!s.ready || s.owner_thread != GetCurrentThreadId() || !s.window || slot >= s.stages.size())
+  if (!s.ready || s.owner_thread != rex::thread::current_thread_system_id() || !s.Attached() || slot >= s.stages.size())
     return GraphicsError(evidence, "native-present-owner-or-slot");
   auto& stage = s.stages[slot];
   if (!stage.staged || stage.presented) return GraphicsError(evidence, "native-present-slot-not-staged");
-  RECT rect{};
-  if (!IsWindow(s.window) || !GetClientRect(s.window, &rect) || IsIconic(s.window) || rect.right <= 0 || rect.bottom <= 0) {
+  uint32_t width_now = 0, height_now = 0;
+  if (!platform::ClientSize(s.window, width_now, height_now)) {
     stage.presented = true; evidence = "{\"presented\":false,\"skipped\":\"window-empty\"}"; return true;
   }
   const char* reason = nullptr; VkResult result = VK_SUCCESS;
   if (!s.CloseBatch(reason, result)) return GraphicsError(evidence, reason, result);
-  if (!s.swapchain || s.recreate_swapchain || uint32_t(rect.right) != s.swap_extent.width || uint32_t(rect.bottom) != s.swap_extent.height)
-    if (!s.CreateSwapchain(rect.right, rect.bottom, evidence)) return false;
+  if (!s.swapchain || s.recreate_swapchain || width_now != s.swap_extent.width || height_now != s.swap_extent.height)
+    if (!s.CreateSwapchain(width_now, height_now, evidence)) return false;
   // Bound the presentation queue to one pending frame independently of render completion.
   for (auto& back : s.back_images) if (back.pending) {
     if (!s.WaitPresent(back.presented, evidence)) return false;
@@ -93,17 +93,16 @@ bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, u
   const auto deadline = std::chrono::steady_clock::now() + kWaitBudget;
   std::vector<int32_t> acquire_results;
   do {
-    if (!IsWindow(s.window) || IsIconic(s.window)) {
+    if (!platform::ClientSize(s.window, width_now, height_now)) {
       stage.presented = true; evidence = "{\"presented\":false,\"skipped\":\"window-closed-or-minimized\"}"; return true;
     }
     result = vkAcquireNextImageKHR(s.vulkan->vk, s.swapchain, 20'000'000, VK_NULL_HANDLE, s.acquire_fence, &index);
     acquire_results.push_back(int32_t(result));
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
-      GetClientRect(s.window, &rect);
-      if (rect.right <= 0 || rect.bottom <= 0) {
+      if (!platform::ClientSize(s.window, width_now, height_now)) {
         stage.presented = true; evidence = "{\"presented\":false,\"skipped\":\"window-empty\"}"; return true;
       }
-      if (!s.CreateSwapchain(rect.right, rect.bottom, evidence)) return false;
+      if (!s.CreateSwapchain(width_now, height_now, evidence)) return false;
     } else if (result != VK_TIMEOUT && result != VK_NOT_READY) break;
   } while (std::chrono::steady_clock::now() < deadline && !s.failures->Failed());
   if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {

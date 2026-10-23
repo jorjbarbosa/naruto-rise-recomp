@@ -60,8 +60,8 @@ class Backend {
   // Waits for the work submitted so far without closing the open batch: the
   // wait of WaitIdle once a failure was retained.
   virtual bool WaitSubmitted(std::string& evidence) = 0;
-  virtual bool CloseFrame(void* event, uint64_t& target, std::string& evidence) = 0;
-  virtual bool AttachWindow(void* window, std::string& evidence, const PresentMode& mode) = 0;
+  virtual bool CloseFrame(FrameEvent event, uint64_t& target, std::string& evidence) = 0;
+  virtual bool AttachWindow(const platform::NativeWindow& window, std::string& evidence, const PresentMode& mode) = 0;
   virtual bool DetachWindow(std::string& evidence) = 0;
   virtual bool SetGammaRamp(const std::array<uint16_t, 768>& words, std::string& evidence) = 0;
   virtual bool SetVsync(bool enabled, std::string& evidence) = 0;

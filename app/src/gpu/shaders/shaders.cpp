@@ -11,11 +11,11 @@
 #include "gpu/host/services.h"
 #include "gpu/diagnostics/profile.h"
 #include "gpu/settings.h"
+#include <bit>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <dxgiformat.h>
 #include <array>
 #include <chrono>
 #include <atomic>
@@ -31,7 +31,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <windows.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <rex/cvar.h>
@@ -257,7 +256,7 @@ bool ReadBoundShader(uint8_t* base, uint32_t object, bool vertex, BoundShader& s
   if (!s.code_size || s.code_size > 0x10000 || (s.code_size & 3)) return fail("microcode-size");
   std::vector<uint8_t> raw(s.code_size);
   if (!ReadPhysical(base, s.code_physical, s.code_size, raw.data())) return fail("microcode-unreadable");
-  for (uint32_t i = 0; i < s.code_size; i += 4) s.code.push_back(_byteswap_ulong(*reinterpret_cast<uint32_t*>(&raw[i])));
+  for (uint32_t i = 0; i < s.code_size; i += 4) s.code.push_back(std::byteswap(*reinterpret_cast<uint32_t*>(&raw[i])));
   s.virtual_hash = Fnv64(base + s.container, s.virtual_size);
   s.hash = Fnv64(raw.data(), raw.size(), s.virtual_hash);
   return true;

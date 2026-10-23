@@ -9,21 +9,18 @@
 #include <string>
 #include <utility>
 #include <vector>
-#include <windows.h>
 #include <rex/ppc/context.h>
+#include "gpu/common/platform.h"
 #include "gpu/d3d/d3d.h"
 
 namespace rex::ui { class Window; }
 
 namespace gpu {
 rex::ui::Window* DisplayWindow();
-HWND DisplayHwnd();
-// Window helpers shared with the swapchain proof (diagnostics/present_proof.cpp).
+// The SDK window by the handles of the system (gpu/common/platform.h).
+platform::NativeWindow DisplayNativeWindow();
+// Runs function on the UI thread and waits for it.
 bool InUiThread(std::function<void()> function);
-std::pair<uint32_t, uint32_t> ClientSize(HWND hwnd);
-bool WaitClient(HWND hwnd, uint32_t w, uint32_t h, int ms);
-bool SetClientSize(HWND hwnd, uint32_t w, uint32_t h);
-std::string WindowFacts(HWND hwnd);
 // A file of REX_NATIVE_FRAME_DIR, as JSON fields (file, sha256).
 std::string PresentFile(const std::string& name, const std::vector<uint8_t>& bytes);
 // REX_NATIVE_CLOSE_AFTER_SWAPS, the window close without a person.

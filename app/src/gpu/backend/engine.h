@@ -42,13 +42,14 @@ class Engine final {
   bool ClearSurfaces(const ClearRequest& request, uint64_t& fence, std::string& evidence);
   // Waits for every submitted operation (BlockOnFence for own work).
   bool WaitIdle(std::string& evidence);
-  // Closes the open batch without waiting; the host event (a HANDLE)
+  // Closes the open batch without waiting; the host event (FrameEvent)
   // is set once every operation submitted so far has completed (target is the
   // fence it waits for). The frame lot of D3DDevice_Swap.
-  bool CloseFrame(void* event, uint64_t& target, std::string& evidence);
+  bool CloseFrame(FrameEvent event, uint64_t& target, std::string& evidence);
   // Presentation: own Plume swapchain (B8G8R8A8_UNORM; buffers and frame
-  // latency from the mode) on the window (an HWND), created on the engine queue.
-  bool AttachWindow(void* window, std::string& evidence, const PresentMode& mode = PresentMode{});
+  // latency from the mode) on the window (its native handles), created on the
+  // engine queue.
+  bool AttachWindow(const platform::NativeWindow& window, std::string& evidence, const PresentMode& mode = PresentMode{});
   // Waits for every submitted operation, then releases the swapchain.
   bool DetachWindow(std::string& evidence);
   // The title's gamma ramp: D3DGAMMARAMP words (red, green, blue x 256; the

@@ -53,6 +53,7 @@
 // stream the VS fetches (up to 256 KiB each) and the indices of an indexed draw.
 // Texture contents and addresses are not in it.
 
+#include "gpu/common/platform.h"
 #include "gpu/diagnostics/frame_state.h"
 #include "gpu/diagnostics/diagnostics.h"
 #include "gpu/d3d/hooks.h"
@@ -64,11 +65,11 @@
 #include "gpu/common/records.h"
 #include "gpu/backend/dispatcher.h"
 #include "gpu/common/sha256.h"
+#include <bit>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <dxgiformat.h>
 #include <array>
 #include <chrono>
 #include <atomic>
@@ -84,9 +85,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <windows.h>
-#include <wrl/client.h>
-#include <dxcapi.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <rex/cvar.h>
@@ -372,11 +370,11 @@ void StateNoteDraw(PPCContext& ctx, uint8_t* base, unsigned kind) {
           uint32_t v;
           if (size == 4) {
             std::memcpy(&v, &indices[4 * i], 4);
-            if (endian == 2) v = _byteswap_ulong(v);
+            if (endian == 2) v = std::byteswap(v);
           } else {
             uint16_t h;
             std::memcpy(&h, &indices[2 * i], 2);
-            v = endian == 1 ? _byteswap_ushort(h) : h;
+            v = endian == 1 ? std::byteswap(h) : h;
           }
           low = std::min(low, v);
           high = std::max(high, v);
@@ -438,7 +436,7 @@ void StateNoteDraw(PPCContext& ctx, uint8_t* base, unsigned kind) {
             for (unsigned k = 0; k < 2; ++k) {
               uint32_t word;
               std::memcpy(&word, &bytes[from + 4 * k], 4);
-              if ((d1 & 3) == 2) word = _byteswap_ulong(word);
+              if ((d1 & 3) == 2) word = std::byteswap(word);
               float value;
               std::memcpy(&value, &word, 4);
               if (!vertices || value < low[k]) low[k] = value;
@@ -660,11 +658,10 @@ int64_t StateAtSwap(PPCContext& ctx, uint8_t* base, uint32_t dev, bool own, uint
     state_captures.push_back(fmt::format("{{\"k\":{},\"raster\":true,\"draws\":{},{}}}", state_records.size(),
                                          f.draws, fields));
   }
-  LARGE_INTEGER now{};
-  QueryPerformanceCounter(&now);
+  const int64_t now = platform::Ticks();
   const uint64_t calls = state_clock_calls.load();
   state_records.push_back({Get32(base, dev + 16544), Get32(base, dev + 16532), Get32(base, dev + 16552),
-                           state_clock_last.load(), calls - state_clock_calls_seen, now.QuadPart, f.draws, f.red,
+                           state_clock_last.load(), calls - state_clock_calls_seen, now, f.draws, f.red,
                            f.white, f.digest});
   state_clock_calls_seen = calls;
   const int64_t k = int64_t(state_records.size()) - 1;

@@ -1,13 +1,13 @@
 // The pipeline set of the draw layer (pipeline_set.h).
 #include "gpu/backend/pipeline_set.h"
 
-#include <windows.h>
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <string_view>
 #include <fmt/format.h>
 #include "gpu/common/title_loading.h"
+#include <rex/thread.h>
 #include "gpu/diagnostics/profile.h"
 
 namespace gpu {
@@ -87,14 +87,14 @@ bool PipelineSet::Post(uint64_t key, PipelineDesc desc, bool only_if_absent, boo
 // Two thirds of the hardware threads, at least two, as the recomps.
 void PipelineSet::StartThreads(bool lowest) {
   const unsigned threads = std::max(2u, std::thread::hardware_concurrency() * 2 / 3);
-  const int base = lowest ? THREAD_PRIORITY_LOWEST : THREAD_PRIORITY_NORMAL;
+  const auto base = lowest ? platform::ThreadPriority::kLowest : platform::ThreadPriority::kNormal;
   for (unsigned i = 0; i < threads; ++i) threads_.emplace_back([this, base] { Work(base); });
 }
 
-void PipelineSet::Work(int base_priority) {
-  SetThreadDescription(GetCurrentThread(), L"Native Pipeline Async");
-  int priority = base_priority;
-  SetThreadPriority(GetCurrentThread(), priority);
+void PipelineSet::Work(platform::ThreadPriority base_priority) {
+  rex::thread::set_current_thread_name("Native Pipeline Async");
+  auto priority = base_priority;
+  platform::SetThreadPriority(priority);
   for (;;) {
     std::pair<uint64_t, PipelineDesc> job;
     {
@@ -107,10 +107,10 @@ void PipelineSet::Work(int base_priority) {
     }
     // The title's loading screen waits for what compiles: the highest
     // priority then, the base otherwise (as the UnleashedRecomp's threads).
-    const int wanted = TitleLoading() ? THREAD_PRIORITY_HIGHEST : base_priority;
+    const auto wanted = TitleLoading() ? platform::ThreadPriority::kHighest : base_priority;
     if (wanted != priority) {
       priority = wanted;
-      SetThreadPriority(GetCurrentThread(), priority);
+      platform::SetThreadPriority(priority);
     }
     const PipelineDesc& d = job.second;
     Pipeline created;

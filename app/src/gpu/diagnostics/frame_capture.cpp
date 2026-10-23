@@ -1,4 +1,5 @@
 // Front-buffer captures of the own Swap (frame_capture.h).
+#include "gpu/common/platform.h"
 #include "gpu/diagnostics/frame_capture.h"
 #include "gpu/diagnostics/diagnostics.h"
 #include "gpu/textures/textures.h"
@@ -8,7 +9,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <dxgiformat.h>
 #include <array>
 #include <chrono>
 #include <atomic>
@@ -24,9 +24,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <windows.h>
-#include <wrl/client.h>
-#include <dxcapi.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <rex/cvar.h>
@@ -93,7 +90,7 @@ uint64_t TransitionPeriod() {
   static const uint64_t value = [] {
     if (!Diagnostics()) return uint64_t(0);
     const char* text = std::getenv("REX_NATIVE_TRANSITION_CAPTURES");
-    return text && *text ? std::strtoull(text, nullptr, 10) : 0;
+    return text && *text ? uint64_t(std::strtoull(text, nullptr, 10)) : uint64_t(0);
   }();
   return value;
 }
@@ -134,7 +131,7 @@ void TransitionCaptureAtSwap(uint32_t front, uint64_t n, uint64_t frame_draws) {
     ++t.changes;
     for (uint64_t k : {0, 1, 3, 10, 30}) t.pending.emplace(n + k, fmt::format("{}+{}", change, k));
   }
-  const bool f9 = (GetAsyncKeyState(VK_F9) & 0x8000) != 0;  // A burst of consecutive captures.
+  const bool f9 = platform::KeyDown(platform::Key::kF9);  // A burst of consecutive captures.
   if (f9 && !t.f9_down && t.bursts < kKeyBursts) {
     ++t.bursts;
     for (uint64_t k = 0; k < kKeyBurstFrames; ++k)

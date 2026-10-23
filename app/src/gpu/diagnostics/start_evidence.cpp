@@ -35,9 +35,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <windows.h>
-#include <wrl/client.h>
-#include <dxcapi.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <rex/cvar.h>
@@ -242,9 +239,7 @@ std::string StartVertexHeaders(uint8_t* base, uint32_t dev, uint32_t address, ui
   const std::array<std::pair<uint32_t, uint32_t>, 2> ranges{{{0x40000000u, 0x80000000u}, {0x82000000u, 0x84000000u}}};
   for (const auto& [lo, hi] : ranges)
     for (uint64_t at = lo; at < hi && found < 16; at += page.size()) {
-      SIZE_T copied = 0;
-      if (!ReadProcessMemory(GetCurrentProcess(), base + at, page.data(), page.size(), &copied) || copied != page.size())
-        continue;
+      if (!CopyFromGuest(GuestMemory(), uint32_t(at), page.data(), page.size())) continue;
       ++pages;
       for (uint32_t i = 0; i + 8 <= page.size() && found < 16; i += 4) {
         const uint32_t w0 = BigEndianWord(&page[i]), w1 = BigEndianWord(&page[i + 4]);

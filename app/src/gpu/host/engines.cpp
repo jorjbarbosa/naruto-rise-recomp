@@ -31,9 +31,7 @@ bool InitializeEngines(PPCContext& ctx) {
       0x3d,0x60,0x7f,0xc8,0x39,0x40,0x00,0x07,0x91,0x4b,0x32,0x14,0x7c,0x00,0x06,0xac,
       0x39,0x40,0x08,0x00,0x91,0x4b,0x34,0x08,0x7c,0x00,0x06,0xac,0x4e,0x80,0x00,0x20}};
   std::array<uint8_t, 32> owned{};
-  SIZE_T copied = 0;
-  if (!ReadProcessMemory(GetCurrentProcess(), ts->memory()->TranslateVirtual(ctx.r4.u32),
-                         owned.data(), owned.size(), &copied) || copied != owned.size() || owned != callback)
+  if (!CopyFromGuest(ts->memory(), ctx.r4.u32, owned.data(), owned.size()) || owned != callback)
     Stop("VdInitializeEngines-callback-variant", &ctx);
   // PFP/ME identify legacy hardware bootstrap, never native commands. Whole
   // lengths/semantics are unknown; package hashes are bound by the run preflight.

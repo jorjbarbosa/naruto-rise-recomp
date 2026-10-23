@@ -1,4 +1,5 @@
 // The motion record of the frames the title builds (motion.h).
+#include "gpu/common/platform.h"
 #include "gpu/diagnostics/motion.h"
 #include "gpu/diagnostics/diagnostics.h"
 #include "gpu/diagnostics/sampler.h"
@@ -7,7 +8,6 @@
 #include "gpu/common/guest_memory.h"
 #include "gpu/host/services.h"
 #include "gpu/textures/formats.h"
-#include <windows.h>
 #include <fmt/format.h>
 #include <rex/hook.h>
 #include <rex/ppc/context.h>
@@ -82,17 +82,9 @@ uint64_t effect_runs = 0, effect_overlaps = 0, view_ticks = 0;
 // The view block's waits for that update (transforms.h), main thread.
 uint64_t effect_waits = 0, effect_wait_us_sum = 0, effect_wait_us_max = 0, effect_wait_timeouts = 0;
 double effect_ms_sum = 0, effect_ms_max = 0, overlap_ms_sum = 0, overlap_ms_max = 0;
-int64_t Qpc() {
-  LARGE_INTEGER now{};
-  QueryPerformanceCounter(&now);
-  return now.QuadPart;
-}
+int64_t Qpc() { return platform::Ticks(); }
 double QpcMs(int64_t ticks) {
-  static const int64_t f = [] {
-    LARGE_INTEGER q{};
-    QueryPerformanceFrequency(&q);
-    return q.QuadPart;
-  }();
+  static const int64_t f = platform::TickFrequency();
   return double(ticks) * 1000.0 / double(f);
 }
 void EffectsUpdate(PPCContext& ctx, uint8_t* base) {
@@ -227,15 +219,12 @@ void BoneCopy(uint8_t* base, uint32_t bone, uint32_t matrix, uint32_t return_add
 }
 
 int64_t Microseconds() {
-  LARGE_INTEGER now{};
-  QueryPerformanceCounter(&now);
+  const int64_t now = platform::Ticks();
   if (!frequency) {
-    LARGE_INTEGER f{};
-    QueryPerformanceFrequency(&f);
-    frequency = f.QuadPart;
-    start = now.QuadPart;
+    frequency = platform::TickFrequency();
+    start = now;
   }
-  return (now.QuadPart - start) * 1000000 / frequency;
+  return (now - start) * 1000000 / frequency;
 }
 
 // The stage probe: the words of the view ([82709C40], kViewBytes from its
@@ -260,8 +249,8 @@ void ProbeStage(uint8_t* base, Probe stage) {
   const uint32_t view = Get32(base, kViewHolder);
   if (!view) return;
   std::vector<uint8_t> now(kViewBytes + kCopyBytes);
-  if (!CopyFromGuest(now.data(), base + view, kViewBytes) ||
-      !CopyFromGuest(now.data() + kViewBytes, base + kCopy, kCopyBytes))
+  if (!CopyFromGuest(GuestMemory(), view, now.data(), kViewBytes) ||
+      !CopyFromGuest(GuestMemory(), kCopy, now.data() + kViewBytes, kCopyBytes))
     return;
   const int t = tick::Current().tick ? 1 : 0;
   if (probe_stage >= 0) {

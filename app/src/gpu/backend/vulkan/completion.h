@@ -22,7 +22,8 @@
 #pragma once
 
 #include <plume_vulkan.h>  // Vulkan through volk, with the platform defines of Plume.
-#include <windows.h>
+
+#include "gpu/common/frame_event.h"
 
 #include <atomic>
 #include <chrono>
@@ -68,7 +69,7 @@ class Completion {
   // Owner: sets event once sequence completed, at once when it has or when the
   // service already retained a failure; otherwise when it completes, or after
   // the service retains one.
-  bool SetEventOnCompletion(uint64_t sequence, HANDLE event);
+  bool SetEventOnCompletion(uint64_t sequence, FrameEvent event);
   // Owner: waits until sequence completed or the budget ends; true when it
   // completed. A failure does not end the wait: completion is a fact of the
   // fence, and only it proves the work done.
@@ -107,7 +108,7 @@ class Completion {
   std::condition_variable progressed_;  // The completed sequence advanced.
   std::deque<Pending> pending_;
   std::vector<VkFence> free_;
-  std::vector<std::pair<uint64_t, HANDLE>> events_;
+  std::vector<std::pair<uint64_t, FrameEvent>> events_;
   std::atomic<uint64_t> completed_{0};
   bool stop_ = false, failed_ = false;
   std::thread thread_;

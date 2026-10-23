@@ -40,7 +40,7 @@ int main(int argc, char** argv) {
     if (!check("initialize", engine.Initialize(evidence, mode), evidence)) return 5;
     PresentMode present;
     present.vsync = false;
-    if (!check("attach", engine.AttachWindow(window, evidence, present), evidence)) return 6;
+    if (!check("attach", engine.AttachWindow(platform::WindowHandles(window), evidence, present), evidence)) return 6;
     SurfaceDesc surface{0x1234, 64, 36};
     check("surface", engine.CreateSurface(surface, evidence), evidence);
     ClearRequest clear;

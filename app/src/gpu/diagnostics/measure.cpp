@@ -1,4 +1,5 @@
 // Measurement of the own frames (measure.h).
+#include "gpu/common/platform.h"
 #include "gpu/diagnostics/measure.h"
 #include "gpu/diagnostics/diagnostics.h"
 #include "gpu/diagnostics/frame_capture.h"
@@ -19,7 +20,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <dxgiformat.h>
 #include <array>
 #include <chrono>
 #include <atomic>
@@ -35,9 +35,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <windows.h>
-#include <wrl/client.h>
-#include <dxcapi.h>
+#include <rex/thread.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <rex/cvar.h>
@@ -85,20 +83,18 @@ std::string ThreadCensus() {
   auto* current = rex::system::XThread::GetCurrentThread();
   auto* kernel = current ? current->kernel_state() : nullptr;
   if (!kernel) return "[]";
-  auto ticks = [](const FILETIME& f) { return (uint64_t(f.dwHighDateTime) << 32) | f.dwLowDateTime; };
   std::string out;
   for (const auto& thread : kernel->object_table()->GetObjectsByType<rex::system::XThread>()) {
     auto* host = thread->thread();
-    FILETIME created{}, exited{}, kernel_time{}, user_time{};
-    const bool times = host && GetThreadTimes(static_cast<HANDLE>(host->native_handle()), &created, &exited,
-                                              &kernel_time, &user_time);
+    uint64_t kernel_time = 0, user_time = 0;
+    const bool times = host && platform::ThreadTimes(host->native_handle(), kernel_time, user_time);
     std::string name;
     for (char c : host ? host->name() : std::string()) name += c == '"' || c == '\\' ? '_' : c;
     out += fmt::format("{}{{\"id\":{},\"guest\":{},\"running\":{},\"priority\":{},\"cpu\":{},\"host_tid\":{},"
                        "\"name\":\"{}\",\"kernel_100ns\":{},\"user_100ns\":{}}}", out.empty() ? "" : ",",
                        thread->thread_id(), thread->is_guest_thread(), thread->is_running(), thread->priority(),
                        unsigned(thread->active_cpu()), host ? host->system_id() : 0, name,
-                       times ? ticks(kernel_time) : 0, times ? ticks(user_time) : 0);
+                       times ? kernel_time : 0, times ? user_time : 0);
   }
   return "[" + out + "]";
 }
@@ -118,12 +114,11 @@ std::vector<PacingSample> pacing_samples;  // Swap thread only.
 bool pacing_written = false;
 std::string WritePacingSamples(bool own) {
   pacing_written = true;
-  LARGE_INTEGER frequency{};
-  QueryPerformanceFrequency(&frequency);
+  const int64_t frequency = platform::TickFrequency();
   std::string text = fmt::format("{{\"schema\":\"native-4-4b-pacing-samples-v1\",\"mode\":\"{}\",\"qpc_frequency\":{},"
                                  "\"requested\":{},\"columns\":\"qpc,vblank16532,timebase16536,last_flip16540,"
                                  "swaps16544,swap_interrupts16548,flips16552,timebase21676,red_word,red,white\","
-                                 "\"samples\":[", own ? "own" : "reference", frequency.QuadPart, PacingSamples());
+                                 "\"samples\":[", own ? "own" : "reference", frequency, PacingSamples());
   for (size_t i = 0; i < pacing_samples.size(); ++i) {
     const auto& s = pacing_samples[i];
     text += fmt::format("{}\n[{},{},{},{},{}]", i ? "," : "", s.qpc, fmt::join(s.device, ","), s.red_word, s.red,
@@ -143,9 +138,8 @@ void PacingAtSwap(PPCContext& ctx, uint8_t* base, uint32_t dev, bool own) {
   const uint32_t white = pacing_white.exchange(0);
   if (!pacing_content.load() || pacing_written) return;
   if (pacing_samples.empty()) pacing_samples.reserve(size_t(requested));
-  LARGE_INTEGER now{};
-  QueryPerformanceCounter(&now);
-  PacingSample s{now.QuadPart, {}, red_word, red, white};
+  const int64_t now = platform::Ticks();
+  PacingSample s{now, {}, red_word, red, white};
   for (size_t i = 0; i < kPacingDeviceWords.size(); ++i) s.device[i] = Get32(base, dev + kPacingDeviceWords[i]);
   pacing_samples.push_back(s);
   if (pacing_samples.size() < requested) return;
@@ -178,10 +172,12 @@ uint64_t Percentile(std::vector<uint64_t> values, size_t percent) {
   return values[std::max<size_t>(rank, 1) - 1];
 }
 std::atomic<uint32_t> measure_thread{0};  // Host thread of MeasureAtSwap.
-bool OnMeasureThread() { return measure_thread.load(std::memory_order_relaxed) == GetCurrentThreadId(); }
+bool OnMeasureThread() {
+  return measure_thread.load(std::memory_order_relaxed) == rex::thread::current_thread_system_id();
+}
 void MeasureAtSwap(PPCContext& ctx) {
   static uint64_t previous = 0, previous_draws = 0, previous_start = 0;
-  measure_thread.store(GetCurrentThreadId(), std::memory_order_relaxed);
+  measure_thread.store(rex::thread::current_thread_system_id(), std::memory_order_relaxed);
   const uint64_t now = profile::Now();
   MeasureFrame f;
   f.interval_ns = previous ? now - previous : 0;

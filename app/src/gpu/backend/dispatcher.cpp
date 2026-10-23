@@ -1,5 +1,4 @@
 #include "gpu/backend/dispatcher.h"
-#include <windows.h>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
@@ -11,7 +10,9 @@
 #include <atomic>
 #include <algorithm>
 #include <fmt/format.h>
+#include "gpu/common/platform.h"
 #include "gpu/common/title_loading.h"
+#include <rex/thread.h>
 #include "gpu/diagnostics/profile.h"
 #include "gpu/diagnostics/sampler.h"
 
@@ -51,7 +52,7 @@ struct Dispatcher::State {
   std::deque<std::unique_ptr<StageTask>> stage;
   bool stage_stopped = false;
   std::thread translator;
-  std::atomic<DWORD> translator_id{0};
+  std::atomic<uint32_t> translator_id{0};
   std::atomic<bool> discarding{false};
   uint64_t stage_enqueued = 0, stage_waits = 0, stage_max = 0;
   std::atomic<uint64_t> stage_depth_frame{0};  // The deepest since the last take.
@@ -79,8 +80,8 @@ struct Dispatcher::State {
   // destroyed (a pending Run fails in its destructor).
   void StartStage() {
     translator = std::thread([this] {
-      translator_id.store(GetCurrentThreadId());
-      SetThreadDescription(GetCurrentThread(), L"Native Translation");
+      translator_id.store(rex::thread::current_thread_system_id());
+      rex::thread::set_current_thread_name("Native Translation");
       sampler::RegisterThread("translate");
       for (;;) {
         std::unique_ptr<StageTask> task;
@@ -259,7 +260,7 @@ bool Dispatcher::Initialize(std::string& evidence, const RenderMode& mode) {
     bool ok = state_->engine->Initialize(raw, mode);
     result->set_value({ok, state_->dedicated ? fmt::format(
         "{{\"dedicated_owner\":true,\"owner_thread\":{},\"deferred_translation\":{},\"engine\":{}}}",
-        GetCurrentThreadId(), state_->deferred, raw) : raw});
+        rex::thread::current_thread_system_id(), state_->deferred, raw) : raw});
   };
   {
     std::lock_guard lock(state_->mutex);
@@ -327,7 +328,7 @@ bool Dispatcher::Frontend(unsigned operation, uint64_t generation, std::string& 
 
 bool Dispatcher::Deferred() const { return state_->deferred; }
 bool Dispatcher::OnTranslator() const {
-  return state_->deferred && state_->translator_id.load(std::memory_order_relaxed) == GetCurrentThreadId();
+  return state_->deferred && state_->translator_id.load(std::memory_order_relaxed) == rex::thread::current_thread_system_id();
 }
 bool Dispatcher::Enqueue(std::unique_ptr<StageTask> task) {
   auto& s = *state_;
@@ -479,14 +480,14 @@ bool Dispatcher::StartPool(size_t count, unsigned threads,
   state_->pool_active = threads;
   for (unsigned t = 0; t < threads; ++t)
     state_->pool.emplace_back([this, engine, count, t, shared_work, shared_done] {
-      SetThreadDescription(GetCurrentThread(), L"Native Pipeline Compiler");
+      rex::thread::set_current_thread_name("Native Pipeline Compiler");
       // The pool yields to the game: while the title shows its loading screen
       // every thread compiles at the highest priority (the player waits anyway);
       // with the game running, only the first kPoolThreadsInGame threads go on,
       // at the lowest priority, and the others wait for the next loading screen
       // (a cold driver cache takes some twenty seconds for the list on ten
       // threads, and the frames of the first seconds of a world paid for it).
-      int priority = 0;
+      auto priority = platform::ThreadPriority::kNormal;
       const bool in_game_thread = t < kPoolThreadsInGame;
       for (;;) {
         // The wait comes before the claim: an entry claimed by a sleeping
@@ -498,8 +499,8 @@ bool Dispatcher::StartPool(size_t count, unsigned threads,
         if (state_->pool_stop.load()) break;
         const size_t i = state_->pool_next.fetch_add(1);
         if (i >= count) break;
-        const int wanted = TitleLoading() ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_LOWEST;
-        if (wanted != priority) SetThreadPriority(GetCurrentThread(), priority = wanted);
+        const auto wanted = TitleLoading() ? platform::ThreadPriority::kHighest : platform::ThreadPriority::kLowest;
+        if (wanted != priority) platform::SetThreadPriority(priority = wanted);
         (*shared_work)(i, *engine);
       }
       if (state_->pool_active.fetch_sub(1) == 1 && *shared_done) (*shared_done)(state_->pool_stop.load());
@@ -537,7 +538,7 @@ bool Dispatcher::Shutdown(std::string& evidence) {
     std::string raw;
     bool ok = !state_->engine || state_->engine->Shutdown(raw);
     if (ok) state_->engine.reset(); // Destruction on the same owner.
-    const auto owner = GetCurrentThreadId();
+    const auto owner = rex::thread::current_thread_system_id();
     result->set_value({ok, raw.empty() ? std::string{} : state_->dedicated ? fmt::format(
         "{{\"dedicated_owner\":true,\"owner_thread\":{},\"engine\":{}}}", owner, raw) : raw});
     if (ok && state_->dedicated) {

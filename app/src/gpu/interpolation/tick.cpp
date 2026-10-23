@@ -1,4 +1,5 @@
 // The logic tick of the engine at a free frame rate (tick.h).
+#include "gpu/common/platform.h"
 #include "gpu/interpolation/tick.h"
 #include "gpu/interpolation/transforms.h"
 #include "gpu/common/guest_memory.h"
@@ -7,7 +8,6 @@
 #include "gpu/diagnostics/motion.h"
 #include "gpu/host/services.h"
 #include "gpu/settings.h"
-#include <windows.h>
 #include <fmt/format.h>
 #include <rex/hook.h>
 #include <rex/ppc/context.h>
@@ -107,15 +107,12 @@ void Record(const char* reason, int64_t now) {
 void Decide(uint8_t* base) {
   if (decided) return;
   decided = true;
-  LARGE_INTEGER now{};
-  QueryPerformanceCounter(&now);
+  const int64_t now = platform::Ticks();
   if (!frequency) {
-    LARGE_INTEGER f{};
-    QueryPerformanceFrequency(&f);
-    frequency = f.QuadPart;
-    window_start = now.QuadPart;
+    frequency = platform::TickFrequency();
+    window_start = now;
   }
-  const bool f8 = by_variable && (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
+  const bool f8 = by_variable && platform::KeyDown(platform::Key::kF8);
   const bool toggled = f8 && !f8_down;
   f8_down = f8;
   if (toggled) switched_off = !switched_off;
@@ -143,7 +140,7 @@ void Decide(uint8_t* base) {
     // A new run of the gate starts with a tick; then the real time since the
     // previous iteration is owed. A tick is due within half a frame of its
     // period, so the frames at a steady rate alternate without jitter.
-    debt = started ? debt + double(now.QuadPart - last) / double(frequency) : double(period);
+    debt = started ? debt + double(now - last) / double(frequency) : double(period);
     started = true;
     if (debt > 2.0 * period) {
       debt = 2.0 * period;
@@ -167,11 +164,11 @@ void Decide(uint8_t* base) {
     const double alpha = std::fabs(paced - real) <= 0.5 * frame_period / double(period) ? paced : real;
     frame.alpha = float(std::clamp(alpha, 0.0, 1.0));
   }
-  last = now.QuadPart;
+  last = now;
   ++window_iterations;
   if (frame.tick) ++window_ticks;
   if (toggled || changed || frame.index % 300 == 0)
-    Record(toggled ? "f8" : changed ? "mode" : "periodic", now.QuadPart);
+    Record(toggled ? "f8" : changed ? "mode" : "periodic", now);
   motion::LoopStart(base);  // REX_NATIVE_MOTION_RECORD.
 }
 

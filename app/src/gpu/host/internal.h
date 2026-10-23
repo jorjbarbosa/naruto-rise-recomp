@@ -10,7 +10,6 @@
 #include <mutex>
 #include <string>
 #include <string_view>
-#include <windows.h>
 #include <rex/cvar.h>
 #include <rex/ppc/context.h>
 

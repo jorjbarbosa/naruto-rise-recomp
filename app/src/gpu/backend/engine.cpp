@@ -97,11 +97,11 @@ bool Engine::WaitIdle(std::string& evidence) {
   evidence.insert(evidence.size() - 1, ",\"submitted_work_idle\":" + idle);
   return false;
 }
-bool Engine::CloseFrame(void* event, uint64_t& target, std::string& evidence) {
+bool Engine::CloseFrame(FrameEvent event, uint64_t& target, std::string& evidence) {
   if (Refused(evidence)) return false;
-  return backend_ ? backend_->CloseFrame(event, target, evidence) : NoBackend(evidence);
+  return backend_ ? backend_->CloseFrame(std::move(event), target, evidence) : NoBackend(evidence);
 }
-bool Engine::AttachWindow(void* window, std::string& evidence, const PresentMode& mode) {
+bool Engine::AttachWindow(const platform::NativeWindow& window, std::string& evidence, const PresentMode& mode) {
   if (Refused(evidence)) return false;
   return backend_ ? backend_->AttachWindow(window, evidence, mode) : NoBackend(evidence);
 }

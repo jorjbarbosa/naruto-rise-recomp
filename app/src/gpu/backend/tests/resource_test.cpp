@@ -64,7 +64,7 @@ DrawTexture Texture(uint32_t key, TextureFormat format, uint32_t width, uint32_t
 int main(int argc, char** argv) {
   if (argc != 2 || std::filesystem::exists(argv[1])) return 2;
   // The debug layer is off by default (backend/d3d12); the host test asks for it.
-  if (!std::getenv("REX_NATIVE_D3D12_DEBUG")) _putenv_s("REX_NATIVE_D3D12_DEBUG", "1");
+  if (!std::getenv("REX_NATIVE_D3D12_DEBUG")) SetTestEnvironment("REX_NATIVE_D3D12_DEBUG", "1");
   std::ofstream output(argv[1]);
   if (!output) return 3;
   bool passed = true;
