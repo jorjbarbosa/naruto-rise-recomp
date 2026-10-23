@@ -27,25 +27,42 @@
 # NARUTORISE_SHADER_STORE: the content-addressed store of the translated and compiled
 # shaders, kept across builds (shader_store.py; empty: none). It derives from the game
 # files, so it stays in a git-ignored folder; deleting it only makes the next build slower.
-# NARUTORISE_SPIRV_VAL: spirv-val of SPIRV-Tools, for SPIRV (the Vulkan SDK's, or the one
-# tools/native-renderer/vulkan/build-validation-layer.ps1 builds under out/vulkan-tools).
+# NARUTORISE_SPIRV_VAL: spirv-val of SPIRV-Tools, for SPIRV (the Vulkan SDK's, the system's
+# on Linux, or the one tools/native-renderer/vulkan/build-validation-layer.ps1 builds under
+# out/vulkan-tools).
+#
+# NARUTORISE_DXC is the DXC of the build host from dxc-bin (dxc.exe on Windows, dxc-linux on
+# Linux), and NARUTORISE_DXC_ENV the command prefix that runs it and every tool that starts
+# it: dxc-linux finds libdxcompiler.so through LD_LIBRARY_PATH.
 include_guard(GLOBAL)
 include(ExternalProject)
 enable_language(C)  # Zstandard.
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
+get_filename_component(_narutorise_fork "${CMAKE_CURRENT_LIST_DIR}/../xenosrecomp" ABSOLUTE)
+set(NARUTORISE_XENOS_RECOMP_THIRDPARTY "${_narutorise_fork}/thirdparty"
+    CACHE PATH "thirdparty directory with the XenosRecomp dependencies")
+get_filename_component(_narutorise_dxc_bin "${NARUTORISE_XENOS_RECOMP_THIRDPARTY}/dxc-bin" ABSOLUTE)
+if(CMAKE_HOST_WIN32)
+  set(NARUTORISE_DXC "${_narutorise_dxc_bin}/bin/x64/dxc.exe")
+  set(NARUTORISE_DXC_ENV)
+elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+  set(NARUTORISE_DXC "${_narutorise_dxc_bin}/bin/x64/dxc-linux")
+  set(NARUTORISE_DXC_ENV "${CMAKE_COMMAND}" -E env "LD_LIBRARY_PATH=${_narutorise_dxc_bin}/lib/x64")
+else()
+  message(FATAL_ERROR "The shader cache of the native renderer has no DXC for ${CMAKE_HOST_SYSTEM_NAME}")
+endif()
+
 function(narutorise_shader_cache target source)
   cmake_parse_arguments(PARSE_ARGV 2 arg "SPIRV" "PASSES" "")
   set(tools "${CMAKE_CURRENT_FUNCTION_LIST_DIR}")
-  get_filename_component(fork "${tools}/../xenosrecomp" ABSOLUTE)
+  set(fork "${_narutorise_fork}")
   set(NARUTORISE_GAME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../game" CACHE PATH "Local game files (xeshader.sdb)")
-  set(NARUTORISE_XENOS_RECOMP_THIRDPARTY "${fork}/thirdparty"
-      CACHE PATH "thirdparty directory with the XenosRecomp dependencies")
   set(NARUTORISE_SHADER_STORE "${CMAKE_CURRENT_SOURCE_DIR}/../out/shader-store"
       CACHE PATH "Store of the translated and compiled shaders kept across builds (empty: none)")
   get_filename_component(game "${NARUTORISE_GAME_DIR}" ABSOLUTE)
   get_filename_component(thirdparty "${NARUTORISE_XENOS_RECOMP_THIRDPARTY}" ABSOLUTE)
-  foreach(input "${game}/xeshader.sdb" "${thirdparty}/dxc-bin/bin/x64/dxc.exe")
+  foreach(input "${game}/xeshader.sdb" "${NARUTORISE_DXC}")
     if(NOT EXISTS "${input}")
       message(FATAL_ERROR "The shader cache of the native renderer needs ${input}")
     endif()
@@ -100,8 +117,15 @@ function(narutorise_shader_cache target source)
     set(spirv_encoder ${target}_smolv_encode)  # Reruns the chain when the encoder changes.
   endif()
 
-  # The fork as a host tool (the C compiler is the clang of the build, as C).
+  # The fork as a host tool (the C compiler is the clang of the build, as C). Its DXIL
+  # (the in-process cache mode, not the single-file mode the chain uses) needs dxil.dll,
+  # which dxc-bin has on Windows only.
   string(REGEX REPLACE "clang\\+\\+" "clang" c_compiler "${CMAKE_CXX_COMPILER}")
+  if(CMAKE_HOST_WIN32)
+    set(recomp_dxil ON)
+  else()
+    set(recomp_dxil OFF)
+  endif()
   set(recomp_build "${CMAKE_CURRENT_BINARY_DIR}/xenosrecomp")
   set(recomp "${recomp_build}/XenosRecomp/XenosRecomp${CMAKE_EXECUTABLE_SUFFIX}")
   ExternalProject_Add(${target}_xenosrecomp
@@ -109,7 +133,7 @@ function(narutorise_shader_cache target source)
       BINARY_DIR "${recomp_build}"
       CMAKE_ARGS -DCMAKE_BUILD_TYPE=RelWithDebInfo "-DCMAKE_C_COMPILER=${c_compiler}"
                  "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}" "-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
-                 -DXENOS_RECOMP_DXIL=ON "-DXENOS_RECOMP_THIRDPARTY_ROOT=${thirdparty}"
+                 -DXENOS_RECOMP_DXIL=${recomp_dxil} "-DXENOS_RECOMP_THIRDPARTY_ROOT=${thirdparty}"
       BUILD_COMMAND "${CMAKE_COMMAND}" --build "${recomp_build}" --target XenosRecomp
       INSTALL_COMMAND ""
       BUILD_BYPRODUCTS "${recomp}")
@@ -121,8 +145,8 @@ function(narutorise_shader_cache target source)
   list(TRANSFORM scripts PREPEND "${tools}/")
   add_custom_command(
       OUTPUT "${out}/shader_cache.bin" "${out}/shader_cache.json" ${spirv_outputs}
-      COMMAND "${Python3_EXECUTABLE}" -I "${tools}/build-shader-cache.py" "${game}/xeshader.sdb" "${recomp}"
-              "${fork}/XenosRecomp/shader_common.h" "${thirdparty}/dxc-bin/bin/x64/dxc.exe" "${out}"
+      COMMAND ${NARUTORISE_DXC_ENV} "${Python3_EXECUTABLE}" -I "${tools}/build-shader-cache.py" "${game}/xeshader.sdb"
+              "${recomp}" "${fork}/XenosRecomp/shader_common.h" "${NARUTORISE_DXC}" "${out}"
               "${NARUTORISE_SHADER_STORE}" --compressor "$<TARGET_FILE:${target}_shader_compress>" ${spirv}
       DEPENDS "${game}/xeshader.sdb" "${recomp}" ${target}_xenosrecomp "${fork}/XenosRecomp/shader_common.h"
               ${scripts} ${spirv_encoder} ${pass_sources} ${target}_shader_compress

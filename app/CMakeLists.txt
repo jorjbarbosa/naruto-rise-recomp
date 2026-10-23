@@ -9,7 +9,9 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Enable AMD FidelityFX present effects (CAS/FSR) for the D3D12 presenter.
-set(REXGLUE_ENABLE_FIDELITYFX ON CACHE BOOL "Enable AMD FidelityFX integration" FORCE)
+if(WIN32)
+    set(REXGLUE_ENABLE_FIDELITYFX ON CACHE BOOL "Enable AMD FidelityFX integration" FORCE)
+endif()
 
 include(generated/rexglue.cmake)
 
@@ -38,8 +40,20 @@ add_subdirectory(../third_party/nlohmann_json third_party/nlohmann_json)
 option(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP "Build the native renderer next to the Xenos plugin" OFF)
 # The host graphics APIs of the native renderer, apart from the SDK's
 # REXGLUE_USE_VULKAN (the Xenos plugin's). Native builds include both APIs by
-# default, and the launcher offers the same backends as the game.
-option(NARUTORISE_NATIVE_D3D12 "Build the D3D12 backend of the native renderer" ON)
+# default on Windows, and the launcher offers the same backends as the game.
+# Elsewhere the native renderer is the only one, on Vulkan: no D3D12 and no
+# Xenos plugin.
+if(WIN32)
+    option(NARUTORISE_NATIVE_D3D12 "Build the D3D12 backend of the native renderer" ON)
+    set(NARUTORISE_GPU_PLUGINS GPU_PLUGINS xenos)
+else()
+    set(NARUTORISE_NATIVE_D3D12 OFF)
+    set(NARUTORISE_GPU_PLUGINS)
+    if(NOT NARUTORISE_NATIVE_RENDERER_BOOTSTRAP)
+        message(FATAL_ERROR "Outside Windows the game draws with the native renderer: "
+                            "set NARUTORISE_NATIVE_RENDERER_BOOTSTRAP=ON")
+    endif()
+endif()
 option(NARUTORISE_NATIVE_VULKAN "Build the Vulkan backend of the native renderer" ON)
 if(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP AND NOT NARUTORISE_NATIVE_D3D12 AND NOT NARUTORISE_NATIVE_VULKAN)
     message(FATAL_ERROR "Enable at least one native backend: NARUTORISE_NATIVE_D3D12 or NARUTORISE_NATIVE_VULKAN")
@@ -113,7 +127,7 @@ target_link_libraries(narutorise_validate_translation_package PRIVATE rex::runti
 
 if(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP)
     include(${CMAKE_CURRENT_SOURCE_DIR}/../tools/native-renderer/plume-engine.cmake)
-    rexglue_setup_target(narutorise GPU_PLUGINS xenos)
+    rexglue_setup_target(narutorise ${NARUTORISE_GPU_PLUGINS})
     if(NARUTORISE_NATIVE_D3D12)
         target_link_libraries(narutorise PRIVATE native_renderer_plume)
     else()
@@ -166,7 +180,6 @@ if(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP)
             target_link_libraries(native_engine_${_narutorise_engine_test}_test PRIVATE native_engine_test_units)
         endforeach()
         set(_draw_cache_shaders "${CMAKE_CURRENT_BINARY_DIR}/draw-cache-test")
-        get_filename_component(_draw_cache_thirdparty "${NARUTORISE_XENOS_RECOMP_THIRDPARTY}" ABSOLUTE)
         file(MAKE_DIRECTORY "${_draw_cache_shaders}")
         foreach(_stage IN ITEMS vs ps)
             if(_stage STREQUAL "vs")
@@ -177,13 +190,12 @@ if(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP)
                 set(_symbol kCachePs)
             endif()
             add_custom_command(OUTPUT "${_draw_cache_shaders}/draw_cache_${_stage}.h"
-                COMMAND "${_draw_cache_thirdparty}/dxc-bin/bin/x64/dxc.exe"
+                COMMAND ${NARUTORISE_DXC_ENV} "${NARUTORISE_DXC}"
                     -T ${_stage}_6_0 -E ${_stage}_main -HV 2021 -spirv -fspv-target-env=vulkan1.2
                     -fvk-use-dx-layout -fvk-stage-io-order=decl -fspv-entrypoint-name=main ${_invert}
                     -Vn ${_symbol} -Fh "${_draw_cache_shaders}/draw_cache_${_stage}.h"
                     "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/backend/vulkan/tests/draw_cache.hlsl"
-                DEPENDS src/gpu/backend/vulkan/tests/draw_cache.hlsl
-                        "${_draw_cache_thirdparty}/dxc-bin/bin/x64/dxc.exe" VERBATIM)
+                DEPENDS src/gpu/backend/vulkan/tests/draw_cache.hlsl "${NARUTORISE_DXC}" VERBATIM)
             target_sources(native_engine_draw_cache_test PRIVATE "${_draw_cache_shaders}/draw_cache_${_stage}.h")
         endforeach()
         target_include_directories(native_engine_draw_cache_test PRIVATE "${_draw_cache_shaders}")
@@ -204,7 +216,7 @@ if(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP)
         add_dependencies(native_shader_package_test narutorise_native_shader_cache)
     endif()
 else()
-    rexglue_setup_target(narutorise GPU_PLUGINS xenos)
+    rexglue_setup_target(narutorise ${NARUTORISE_GPU_PLUGINS})
 endif()
 
 # The mouse camera inside each script module, the base game's and the DLCs':
@@ -222,7 +234,8 @@ endforeach()
 
 # The release version, in the window title when the copy has no
 # narutorise.version file (development builds), as in the launcher. The
-# launcher's directory already makes version.iss a configure dependency.
+# launcher's directory makes version.iss a configure dependency; without the
+# launcher, this directory does.
 set(NARUTORISE_GAME_VERSION_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../packaging/version.iss)
 file(STRINGS ${NARUTORISE_GAME_VERSION_FILE} NARUTORISE_GAME_VERSION_LINE REGEX "#define MyAppVersion")
 if(NARUTORISE_GAME_VERSION_LINE MATCHES "\"([^\"]+)\"")
@@ -265,6 +278,11 @@ if(WIN32)
     endif()
 endif()
 
-# Cross-platform Launcher (SDL3 + Dear ImGui)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../launcher ${CMAKE_CURRENT_BINARY_DIR}/launcher)
+# Launcher (SDL3 + Dear ImGui). Outside Windows the game is configured through
+# narutorise.toml for now.
+if(WIN32)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../launcher ${CMAKE_CURRENT_BINARY_DIR}/launcher)
+else()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${NARUTORISE_GAME_VERSION_FILE})
+endif()
 
