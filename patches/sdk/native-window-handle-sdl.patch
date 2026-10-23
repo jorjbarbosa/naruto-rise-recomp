@@ -1,0 +1,28 @@
+diff --git a/include/rex/ui/window.h b/include/rex/ui/window.h
+index f607be2..c7b78e8 100644
+--- a/include/rex/ui/window.h
++++ b/include/rex/ui/window.h
+@@ -286,7 +286,8 @@ class Window {
+   void SetIcon(const void* buffer, size_t size);
+   void ResetIcon() { SetIcon(nullptr, 0); }
+ 
+-  /// Returns the platform-native window handle (HWND on Windows), or nullptr.
++  /// Returns the platform-native window handle (HWND on Windows; the SDL_Window
++  /// elsewhere, whose properties give the system's handles), or nullptr.
+   /// Valid after Open() returns successfully.
+   virtual void* GetNativeWindowHandle() const { return nullptr; }
+ 
+diff --git a/src/ui/window_sdl.cpp b/src/ui/window_sdl.cpp
+index 2251429..48dff51 100644
+--- a/src/ui/window_sdl.cpp
++++ b/src/ui/window_sdl.cpp
+@@ -236,7 +236,8 @@ void* WindowSDL::GetNativeWindowHandle() const {
+   return SDL_GetPointerProperty(SDL_GetWindowProperties(sdl_window_),
+                                 SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+ #else
+-  return nullptr;
++  // The SDL window: its properties give the system's handles (X11, Wayland).
++  return sdl_window_;
+ #endif
+ }
+ 

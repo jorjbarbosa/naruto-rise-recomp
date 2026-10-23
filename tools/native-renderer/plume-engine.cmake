@@ -106,9 +106,13 @@ if(NARUTORISE_NATIVE_VULKAN)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                  "${CMAKE_CURRENT_LIST_DIR}/../../app/cmake/extend-plume-vulkan.py")
+    set(plume_vulkan_wayland)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(plume_vulkan_wayland wayland)
+    endif()
     execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/../../app/cmake/extend-plume-vulkan.py"
                             "${plume_vulkan_dir}/plume_vulkan.cpp" "${CMAKE_BINARY_DIR}/plume-native-vulkan.cpp"
-                            COMMAND_ERROR_IS_FATAL ANY)
+                            ${plume_vulkan_wayland} COMMAND_ERROR_IS_FATAL ANY)
     add_library(native_renderer_plume_vulkan STATIC "${CMAKE_BINARY_DIR}/plume-native-vulkan.cpp")
     target_include_directories(native_renderer_plume_vulkan PUBLIC "${NATIVE_RENDERER_PLUME_SOURCE}"
         "${NATIVE_RENDERER_PLUME_SOURCE}/contrib/volk"
