@@ -28,5 +28,6 @@ void NoteSwap(uint64_t) {}
 
 namespace gpu {
 bool PresentProofRequested() { return false; }
+// Not reached (PresentProofRequested is false); a request would stop as an internal failure.
 void PresentProof(PPCContext&) { platform::Terminate(88); }
 }  // namespace gpu

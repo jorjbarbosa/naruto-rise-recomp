@@ -30,8 +30,9 @@ void Pause();
 enum class ThreadPriority { kLowest, kNormal, kHighest };
 void SetThreadPriority(ThreadPriority priority);
 // The CPU times of a host thread by its native handle (rex::thread::Thread),
-// in 100 ns units. Outside Windows the system gives the total only, reported
-// as user time.
+// in 100 ns units, by the native_handle() of a running rex::thread::Thread
+// (outside Windows the handle of an ended thread may be gone). Outside Windows
+// the system gives the total only, reported as user time.
 bool ThreadTimes(void* native_thread, uint64_t& kernel_100ns, uint64_t& user_100ns);
 
 // A window to present to, by the handles of the system: what a Vulkan

@@ -122,8 +122,12 @@ void ReportProductStop(std::string_view name, int code, bool released, std::stri
   std::string message = fmt::format("The native renderer stopped and the game will close.\n\nReason: {}", name);
   if (int32_t(removed) < 0)  // A failed HRESULT.
     message += fmt::format("\nThe graphics card stopped responding (0x{:08X}).", removed);
+#ifdef _WIN32
   message += "\n\nThe details are in the log, in the logs folder next to narutorise.exe. "
              "If this happens again, the Xenos renderer can be chosen in the launcher.";
+#else
+  message += "\n\nThe details are in the log, in the logs folder next to the narutorise executable.";
+#endif
   platform::ShowError("narutorise", message);
 }
 }  // namespace

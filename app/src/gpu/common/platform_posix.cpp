@@ -8,6 +8,7 @@
 #include <link.h>
 #include <pthread.h>
 #include <sched.h>
+#include <sys/uio.h>
 #include <unistd.h>
 #include <SDL3/SDL.h>
 #include <fmt/format.h>
@@ -42,6 +43,8 @@ void SetThreadPriority(ThreadPriority priority) {
   pthread_setschedparam(pthread_self(), priority == ThreadPriority::kLowest ? SCHED_BATCH : SCHED_OTHER, &param);
 }
 bool ThreadTimes(void* native_thread, uint64_t& kernel_100ns, uint64_t& user_100ns) {
+  // A pthread_t is valid until the SDK joins the thread, at the first wait
+  // on an ended one: the caller asks only while the thread runs.
   if (!native_thread) return false;
   clockid_t clock{};
   timespec used{};
@@ -53,6 +56,10 @@ bool ThreadTimes(void* native_thread, uint64_t& kernel_100ns, uint64_t& user_100
   return true;
 }
 
+// The window queries below run on the render thread, as their Win32 versions
+// do, although SDL documents them for the main thread. On X11 and Wayland they
+// read the state SDL keeps for the window, without a call to the display
+// server. A client size kept by the UI thread would let them move there.
 NativeWindow WindowHandles(void* native_handle) {
   NativeWindow window;
   auto* sdl = static_cast<SDL_Window*>(native_handle);
@@ -110,9 +117,22 @@ bool KeyDown(Key key) {
   return state && code < count && state[code];
 }
 
+const uintptr_t kPageSize = uintptr_t(sysconf(_SC_PAGESIZE));
 bool ReadableRegion(const void* address, uintptr_t& begin, uintptr_t& end) {
-  // The SDK reads /proc/self/maps; a stack's guard gap is a mapping without access.
-  const uintptr_t page = reinterpret_cast<uintptr_t>(address) & ~uintptr_t(sysconf(_SC_PAGESIZE) - 1);
+  // One page (the protection is per page), probed by the kernel: process_vm_readv
+  // fails with EFAULT where a load would fault, a stack's guard gap included,
+  // and takes neither memory nor locks, so the crash report can call it inside
+  // the signal handler. A sandbox that refuses the call falls back to the SDK's
+  // /proc/self/maps reader.
+  const uintptr_t page = reinterpret_cast<uintptr_t>(address) & ~(kPageSize - 1);
+  char byte = 0;
+  iovec local{&byte, 1}, remote{reinterpret_cast<void*>(page), 1};
+  if (process_vm_readv(getpid(), &local, 1, &remote, 1, 0) == 1) {
+    begin = page;
+    end = page + kPageSize;
+    return true;
+  }
+  if (errno == EFAULT) return false;
   size_t length = 0;
   auto access = rex::memory::PageAccess::kNoAccess;
   if (!rex::memory::QueryProtect(reinterpret_cast<void*>(page), length, access) ||

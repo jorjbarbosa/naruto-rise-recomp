@@ -226,8 +226,11 @@ void Report(const char* kind, uint32_t code, uint64_t host_fault) {
 // Windows, the signal handlers elsewhere), after its own handlers, which
 // resume the faults they handle (the write watch, the MMIO windows); the
 // report sees only the rest and never handles the fault. A fault of the
-// report itself passes. The chain gives access violations and illegal
-// instructions; the report keeps their Windows codes on every system.
+// report itself passes on Windows; elsewhere the signal is blocked while its
+// handler runs, so the system ends the process there. The report formats and
+// logs, which takes memory: a fault inside the allocator can hang it. The
+// chain gives access violations and illegal instructions; the report keeps
+// their Windows codes on every system.
 bool Handler(rex::arch::Exception* ex, void*) {
   if (!ex) return false;
   const char* kind = nullptr;

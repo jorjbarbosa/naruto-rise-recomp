@@ -78,7 +78,7 @@ std::string WriteFrameFile(const char* name, const std::string& text) {
   return fmt::format("\"file\":\"{}\",\"sha256\":\"{}\"", name, Sha256Hex(text.data(), text.size()));
 }
 // Guest and host threads of the kernel at the end of a measurement
-// (the audio threads among them), with their host CPU times.
+// (the audio threads among them), with the host CPU times of those running.
 std::string ThreadCensus() {
   auto* current = rex::system::XThread::GetCurrentThread();
   auto* kernel = current ? current->kernel_state() : nullptr;
@@ -87,7 +87,8 @@ std::string ThreadCensus() {
   for (const auto& thread : kernel->object_table()->GetObjectsByType<rex::system::XThread>()) {
     auto* host = thread->thread();
     uint64_t kernel_time = 0, user_time = 0;
-    const bool times = host && platform::ThreadTimes(host->native_handle(), kernel_time, user_time);
+    const bool times =
+        host && thread->is_running() && platform::ThreadTimes(host->native_handle(), kernel_time, user_time);
     std::string name;
     for (char c : host ? host->name() : std::string()) name += c == '"' || c == '\\' ? '_' : c;
     out += fmt::format("{}{{\"id\":{},\"guest\":{},\"running\":{},\"priority\":{},\"cpu\":{},\"host_tid\":{},"
