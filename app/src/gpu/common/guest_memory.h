@@ -65,12 +65,13 @@ inline uint32_t GuestPhysicalAlias(uint32_t address) { return (((address >> 20) 
 // own loads and stores (ReadProcessMemory and WriteProcessMemory would make a
 // system call at every access). The SDK's page table of the heap decides
 // first: a range that is not committed whole, or not writable for a store,
-// fails instead of faulting (its host pages have no access).
+// fails instead of faulting (its host pages have no access). The page
+// protection alone does not tell: a reserved or decommitted page keeps it.
 inline bool VirtualRangeAccessible(rex::memory::Memory* memory, uint32_t address, size_t size, bool write) {
   if (!memory || !size || uint64_t(address) + size - 1 > UINT32_MAX) return false;
   auto* heap = memory->LookupHeap(address);
   if (!heap) return false;
-  const auto access = heap->QueryRangeAccess(address, uint32_t(address + size - 1));
+  const auto access = heap->QueryCommittedRangeAccess(address, uint32_t(address + size - 1));
   const auto needed = write ? rex::memory::PageAccess::kReadWrite : rex::memory::PageAccess::kReadOnly;
   return (uint32_t(access) & uint32_t(needed)) == uint32_t(needed);
 }
