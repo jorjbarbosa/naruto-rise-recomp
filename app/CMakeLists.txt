@@ -26,6 +26,7 @@ set(NARUTORISE_SOURCES
     src/window_title.cpp
     src/wine.cpp
     src/mouse_camera.cpp
+    src/mods/key_prompts.cpp
     src/mods/translation_data.cpp
     src/mods/translation_mod.cpp
 )
@@ -105,6 +106,11 @@ add_executable(narutorise_translation_test EXCLUDE_FROM_ALL
     tests/translation_test.cpp src/mods/translation_data.cpp)
 target_include_directories(narutorise_translation_test PRIVATE src)
 target_link_libraries(narutorise_translation_test PRIVATE rex::runtime narutorise::json)
+
+# Pure functions without SDK dependencies: builds with any C++20 compiler.
+add_executable(narutorise_key_prompts_test EXCLUDE_FROM_ALL
+    tests/key_prompts_test.cpp src/mods/key_prompts.cpp)
+target_include_directories(narutorise_key_prompts_test PRIVATE src)
 
 add_executable(narutorise_validate_translation_package EXCLUDE_FROM_ALL
     ../tools/localization/validate-package.cpp src/mods/translation_data.cpp)

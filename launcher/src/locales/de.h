@@ -180,6 +180,8 @@ inline constexpr const char* kDe[] = {
     "Bewegt die Kamera (den rechten Stick) mit der Maus. Aus: Die Kamera bewegt sich nur mit den Tasten des rechten Sticks.",  // MouseCameraDescription
     "Empfindlichkeit",  // MouseSensitivityLabel
     "Wie schnell die Kamera der Maus folgt. 100 % ist der Standard.",  // MouseSensitivityDescription
+    "Tasten in Spieltexten anzeigen",  // KeyPromptsLabel
+    "Zeigt in Hinweisen und Tutorials die belegten Tasten statt der Controllertasten, z. B. [Space] für A. Funktioniert mit englischem Spieltext und Übersetzungsmods.",  // KeyPromptsDescription
     "Tasten",  // KeysLabel
     "Die Tasten und Maustasten für jede Controller-Eingabe, zwei pro Eingabe.",  // KeysDescription
     "Tasten belegen…",  // MapKeysButton

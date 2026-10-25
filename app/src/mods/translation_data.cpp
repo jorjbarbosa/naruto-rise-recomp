@@ -132,6 +132,22 @@ std::multiset<std::string> Substitutions(std::string_view text) {
   }
   return formats;
 }
+// Why a translation cannot replace the original text; empty when it can.
+std::string TranslationProblem(const std::string& original, const std::string& translated) {
+  std::u16string unicode;
+  try {
+    unicode = Utf16(translated);
+  } catch (const utf8::exception&) {
+    return "Invalid UTF-8";
+  }
+  if (translated.find('\0') != std::string::npos || unicode.size() > kMaxTextUnits)
+    return "Text contains NUL or exceeds the text limit";
+  if (Tags(original) != Tags(translated))
+    return "Engine tags changed";
+  if (Substitutions(original) != Substitutions(translated))
+    return "Numbered arguments changed";
+  return {};
+}
 bool ReadFile(const std::filesystem::path& path, std::string& text, std::string& error) {
   std::error_code ec;
   const auto size = std::filesystem::file_size(path, ec);
@@ -245,9 +261,10 @@ bool ReadTable(std::span<const uint8_t> input, std::vector<TextRow>& out, std::s
   }
 }
 
-PatchResult PatchTable(std::span<const uint8_t> input, const Dictionary& translations) {
+PatchResult PatchTable(std::span<const uint8_t> input, const Dictionary& translations,
+                       const TextTransform& transform) {
   PatchResult result;
-  if (translations.empty())
+  if (translations.empty() && !transform)
     return result;
   std::vector<TextRow> rows;
   if (!ReadTable(input, rows, result.error)) {
@@ -256,30 +273,31 @@ PatchResult PatchTable(std::span<const uint8_t> input, const Dictionary& transla
   }
   try {
     for (auto& row : rows) {
+      std::string text = row.text;
       const auto found = translations.find(row.id);
-      if (found == translations.end() || found->second == row.text)
+      if (found != translations.end() && found->second != row.text) {
+        const auto reason = TranslationProblem(row.text, found->second);
+        if (reason.empty())
+          text = found->second;
+        else
+          result.rejected.push_back({row.id, reason});
+      }
+      if (transform)
+        text = transform(text);
+      if (text == row.text)
         continue;
-      const auto& translated = found->second;
       std::u16string unicode;
       try {
-        unicode = Utf16(translated);
+        unicode = Utf16(text);
       } catch (const utf8::exception&) {
         result.rejected.push_back({row.id, "Invalid UTF-8"});
         continue;
       }
-      if (translated.find('\0') != std::string::npos || unicode.size() > kMaxTextUnits) {
+      if (text.find('\0') != std::string::npos || unicode.size() > kMaxTextUnits) {
         result.rejected.push_back({row.id, "Text contains NUL or exceeds the text limit"});
         continue;
       }
-      if (Tags(row.text) != Tags(translated)) {
-        result.rejected.push_back({row.id, "Engine tags changed"});
-        continue;
-      }
-      if (Substitutions(row.text) != Substitutions(translated)) {
-        result.rejected.push_back({row.id, "Numbered arguments changed"});
-        continue;
-      }
-      Encode(row, translated, unicode);
+      Encode(row, text, unicode);
       ++result.replacements;
     }
     if (result.replacements == 0)

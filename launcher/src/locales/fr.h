@@ -180,6 +180,8 @@ inline constexpr const char* kFr[] = {
     "Déplace la caméra (le stick droit) avec la souris. Désactivé, la caméra ne bouge qu'avec les touches du stick droit.",  // MouseCameraDescription
     "Sensibilité",  // MouseSensitivityLabel
     "La vitesse à laquelle la caméra suit la souris. 100 % est la valeur par défaut.",  // MouseSensitivityDescription
+    "Afficher les touches dans les textes",  // KeyPromptsLabel
+    "Affiche les touches attribuées au lieu des boutons de la manette dans les astuces et tutoriels du jeu, par exemple [Space] pour A. Fonctionne avec le texte anglais du jeu et les mods de traduction.",  // KeyPromptsDescription
     "Touches",  // KeysLabel
     "Les touches et boutons de la souris de chaque commande de la manette, deux par commande.",  // KeysDescription
     "Configurer les touches…",  // MapKeysButton
