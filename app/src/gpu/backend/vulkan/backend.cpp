@@ -27,6 +27,10 @@
 #include "gpu/d3d/init/initializer_services.h"
 #include "gpu/diagnostics/profile.h"
 #include "gpu/shaders/package.h"
+#if defined(__linux__)
+// Wayland's WSI: not in Plume's headers, which build for Xlib on Linux.
+#include <vulkan/vulkan_wayland.h>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -271,8 +275,8 @@ class Backend final : public gpu::Backend {
   bool ClearSurfaces(const ClearRequest& request, uint64_t& fence, std::string& evidence) override;
   bool WaitIdle(std::string& evidence) override;
   bool WaitSubmitted(std::string& evidence) override;
-  bool CloseFrame(void* event, uint64_t& target, std::string& evidence) override;
-  bool AttachWindow(void*, std::string& evidence, const PresentMode&) override;
+  bool CloseFrame(FrameEvent event, uint64_t& target, std::string& evidence) override;
+  bool AttachWindow(const platform::NativeWindow& window, std::string& evidence, const PresentMode&) override;
   bool DetachWindow(std::string& evidence) override;
   bool SetGammaRamp(const std::array<uint16_t, 768>&, std::string& evidence) override;
   bool SetVsync(bool, std::string& evidence) override;
@@ -338,7 +342,7 @@ struct Backend::State {
   bool operation_poisoned = false;
   bool unproved_execution = false;  // A submission's outcome is unknown.
   bool device_lost = false;         // A Vulkan call answered VK_ERROR_DEVICE_LOST.
-  DWORD owner_thread = 0;
+  uint32_t owner_thread = 0;
   uint64_t epoch = 0;
   RenderMode render_mode;
   std::atomic<uint32_t> pipeline_msaa{0};
@@ -523,7 +527,8 @@ struct Backend::State {
   std::map<uint64_t, std::string> pipeline_origins;
   std::map<uint64_t, uint32_t> pipeline_worlds, pipeline_create_us;
   uint64_t depth_resolves = 0;
-  HWND window = nullptr;
+  platform::NativeWindow window;  // Kind kNone while no window is attached.
+  bool Attached() const { return window.kind != platform::NativeWindow::Kind::kNone; }
   VkSurfaceKHR window_surface{};
   VkSwapchainKHR swapchain{};
   VkExtent2D swap_extent{};
@@ -632,7 +637,7 @@ class Backend::State::Hooks final : public CompletionTestHooks {
  public:
   explicit Hooks(State& state) : state_(state) {}
   bool HoldSubmissions(std::string& evidence) override {
-    if (!state_.ready || state_.owner_thread != GetCurrentThreadId() || !state_.timeline_semaphore) {
+    if (!state_.ready || state_.owner_thread != rex::thread::current_thread_system_id() || !state_.timeline_semaphore) {
       evidence = "{\"held\":false,\"reason\":\"native-vulkan-hold-unavailable\"}";
       return false;
     }
@@ -1065,7 +1070,7 @@ bool Backend::Initialize(std::string& evidence, const RenderMode& mode) {
   state_->pending_sequence = 0;
   state_->epoch = AllocateEngineEpoch();
   if (state_->epoch == 0) return fail("native-owner-epoch-exhausted");
-  state_->owner_thread = GetCurrentThreadId();
+  state_->owner_thread = rex::thread::current_thread_system_id();
   state_->ready = true;
   const auto& p = vulkan->physicalDeviceProperties;
   std::string requested;
@@ -1101,7 +1106,7 @@ bool Backend::Shutdown(std::string& evidence) {
     evidence = "{\"released\":false,\"reason\":\"frontend-session-still-retained\"}";
     return false;
   }
-  if (state_->ready && state_->owner_thread != GetCurrentThreadId()) {
+  if (state_->ready && state_->owner_thread != rex::thread::current_thread_system_id()) {
     evidence = "{\"released\":false,\"reason\":\"native-owner-thread\",\"guest_shutdown\":false}";
     return false;
   }
@@ -1179,7 +1184,7 @@ bool Backend::Shutdown(std::string& evidence) {
 
 bool Backend::InitializeFrontend(uint64_t generation, std::string& evidence) {
   // No admitted operation, resource generation or GPU callback is discarded.
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned ||
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || state_->operation_poisoned ||
       state_->pending_sequence || state_->unproved_execution || !state_->frontend.Initialize(generation)) {
     evidence = "{\"reason\":\"frontend-not-cold-or-duplicate\"}";
     return false;
@@ -1188,7 +1193,7 @@ bool Backend::InitializeFrontend(uint64_t generation, std::string& evidence) {
 }
 
 bool Backend::VerifyFrontend(uint64_t generation, std::string& evidence) {
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || !state_->device) {
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || !state_->device) {
     evidence = "{\"reason\":\"frontend-generation-idle-or-device-unproved\",\"failed\":[\"owner\"]}";
     return false;
   }
@@ -1208,7 +1213,7 @@ bool Backend::VerifyFrontend(uint64_t generation, std::string& evidence) {
                            state_->device_lost);
     return false;
   }
-  evidence = FrontendReadyEvidence(generation, state_->epoch, GetCurrentThreadId());
+  evidence = FrontendReadyEvidence(generation, state_->epoch, rex::thread::current_thread_system_id());
   return true;
 }
 
@@ -1224,7 +1229,7 @@ bool Backend::CreateSurface(const SurfaceDesc& guest, std::string& evidence) {
     evidence = fmt::format("{{\"created\":false,\"reason\":\"{}\",\"key\":{}}}", reason, desc.key);
     return false;
   };
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned)
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || state_->operation_poisoned)
     return fail("native-surface-owner-or-state");
   if (!desc.key || !desc.width || !desc.height || desc.width > 8192 || desc.height > 8192)
     return fail("native-surface-description");
@@ -1257,7 +1262,7 @@ bool Backend::CreateSurface(const SurfaceDesc& guest, std::string& evidence) {
 bool Backend::Reconfigure(const RenderMode& requested, const PresentMode& present, std::string& evidence) {
   RenderMode render = requested;
   auto& s = *state_;
-  if (!s.ready || s.owner_thread != GetCurrentThreadId() || s.operation_poisoned || s.unproved_execution)
+  if (!s.ready || s.owner_thread != rex::thread::current_thread_system_id() || s.operation_poisoned || s.unproved_execution)
     return GraphicsError(evidence, "native-reconfigure-owner-or-state");
   if (!ValidLiveModes(s.render_mode, render, present)) return GraphicsError(evidence, "native-reconfigure-mode");
   render.msaa_samples = SupportedSamples(requested.msaa_samples, [&](uint32_t samples) {
@@ -1292,14 +1297,14 @@ bool Backend::Reconfigure(const RenderMode& requested, const PresentMode& presen
   const bool swap = present.vsync != old_present.vsync || present.allow_tearing != old_present.allow_tearing ||
                     present.buffers != old_present.buffers;
   s.present_mode = present;
-  if (swap && s.window) {
-    RECT rect{}; GetClientRect(s.window, &rect);
-    if (rect.right > 0 && rect.bottom > 0) {
-      if (!s.CreateSwapchain(rect.right, rect.bottom, evidence)) {
+  if (swap && s.window.kind != platform::NativeWindow::Kind::kNone) {
+    uint32_t width = 0, height = 0;
+    if (platform::ClientSize(s.window, width, height)) {
+      if (!s.CreateSwapchain(width, height, evidence)) {
         const auto error = evidence;
         s.present_mode = old_present;
         std::string rollback;
-        if (!s.CreateSwapchain(rect.right, rect.bottom, rollback)) s.operation_poisoned = true;
+        if (!s.CreateSwapchain(width, height, rollback)) s.operation_poisoned = true;
         if (targets) { s.surfaces.clear(); s.surfaces.swap(old_surfaces); s.render_mode = old_render; }
         evidence = error; return false;
       }
@@ -1316,7 +1321,7 @@ bool Backend::Reconfigure(const RenderMode& requested, const PresentMode& presen
 }
 
 bool Backend::EnsureSurface(const SurfaceDesc& desc, std::string& evidence) {
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId()) {
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id()) {
     evidence = "{\"ensured\":false,\"reason\":\"native-surface-owner\"}";
     return false;
   }
@@ -1338,7 +1343,7 @@ bool Backend::EnsureSurface(const SurfaceDesc& desc, std::string& evidence) {
 }
 
 bool Backend::DestroySurface(uint32_t key, std::string& evidence) {
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId()) {
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id()) {
     evidence = "{\"destroyed\":false,\"reason\":\"native-surface-owner\"}";
     return false;
   }
@@ -1368,7 +1373,7 @@ bool Backend::ClearSurfaces(const ClearRequest& request, uint64_t& fence, std::s
     evidence = fmt::format("{{\"cleared\":false,\"reason\":\"{}\",\"vk_result\":{}}}", reason, int32_t(result));
     return false;
   };
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned ||
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || state_->operation_poisoned ||
       state_->unproved_execution) return fail("native-clear-owner-or-state");
   std::vector<State::Surface*> colors;
   for (uint32_t key : request.color_keys) {
@@ -1433,7 +1438,7 @@ bool Backend::WaitIdle(std::string& evidence) { return Wait(true, evidence); }
 bool Backend::WaitSubmitted(std::string& evidence) { return Wait(false, evidence); }
 bool Backend::Wait(bool close, std::string& evidence) {
   profile::Timer profile(profile::kEngineWaitIdle);
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId()) {
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id()) {
     evidence = "{\"idle\":false,\"reason\":\"native-idle-owner\"}";
     return false;
   }
@@ -1461,13 +1466,13 @@ bool Backend::Wait(bool close, std::string& evidence) {
 // Frame lot of D3DDevice_Swap. Closes the open batch without waiting and has
 // the completion service set the host event when the last submission
 // completes, so every operation submitted so far is done when it fires.
-bool Backend::CloseFrame(void* event, uint64_t& target, std::string& evidence) {
+bool Backend::CloseFrame(FrameEvent event, uint64_t& target, std::string& evidence) {
   target = 0;
   auto fail = [&](const char* reason, VkResult result = VK_ERROR_UNKNOWN) {
     evidence = fmt::format("{{\"closed\":false,\"reason\":\"{}\",\"vk_result\":{}}}", reason, int32_t(result));
     return false;
   };
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || !event || state_->operation_poisoned ||
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || !event || state_->operation_poisoned ||
       state_->unproved_execution) return fail("native-frame-owner-or-state");
   const char* batch_reason = nullptr;
   VkResult result = VK_SUCCESS;
@@ -1475,7 +1480,7 @@ bool Backend::CloseFrame(void* event, uint64_t& target, std::string& evidence) {
   state_->pipeline_set.EndFrame();
   target = state_->next_sequence - 1;  // The last submission.
   const uint64_t completed = state_->completion->Completed();
-  if (!state_->completion->SetEventOnCompletion(target, static_cast<HANDLE>(event)))
+  if (!state_->completion->SetEventOnCompletion(target, std::move(event)))
     return fail("native-frame-event");
   evidence = fmt::format("{{\"closed\":true,\"target\":{},\"completed\":{},\"batches_closed\":{}}}", target,
                          completed, state_->batches_closed);
@@ -1518,7 +1523,7 @@ std::string Backend::PipelineSummary() {
 }
 
 bool Backend::LiveResources(ResourceKeys& keys, std::string& evidence) {
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId()) {
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id()) {
     evidence = "{\"released\":false,\"reason\":\"native-release-remaining-owner\"}";
     return false;
   }
@@ -1534,7 +1539,7 @@ bool Backend::LiveResources(ResourceKeys& keys, std::string& evidence) {
 }
 
 bool Backend::ReleaseTexture(uint32_t key, std::string& evidence) {
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId()) {
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id()) {
     evidence = "{\"released\":false,\"reason\":\"native-texture-release-owner\"}";
     return false;
   }
@@ -1564,7 +1569,7 @@ bool Backend::ReleaseTexture(uint32_t key, std::string& evidence) {
 }
 
 bool Backend::ReleaseSampled(uint32_t address, std::string& evidence) {
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId()) {
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id()) {
     evidence = "{\"released\":false,\"reason\":\"native-sampled-release-owner\"}";
     return false;
   }
@@ -1598,7 +1603,7 @@ bool Backend::ResolveSurface(const ResolveRequest& request, uint64_t& fence, std
     evidence = fmt::format("{{\"resolved\":false,\"reason\":\"{}\",\"vk_result\":{}}}", reason, int32_t(result));
     return false;
   };
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned ||
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || state_->operation_poisoned ||
       state_->unproved_execution) return fail("native-resolve-owner-or-state");
   auto source_it = state_->surfaces.find(request.source_key);
   if (source_it == state_->surfaces.end()) return fail("native-resolve-source-unknown");
@@ -1699,7 +1704,7 @@ bool Backend::UploadSampled(const DrawTexture& t, std::string& evidence) {
                            int32_t(result));
     return false;
   };
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned ||
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || state_->operation_poisoned ||
       state_->unproved_execution) return fail("native-upload-owner-or-state");
   const uint32_t subresources = t.levels * (t.cube ? 6 : 1);
   if (t.resolved || !t.width || !t.height || !t.levels || t.levels > 13 || t.width > 8192 || t.height > 8192 ||
@@ -1792,7 +1797,7 @@ bool Backend::UploadBuffer(const BufferUpload& u, std::string& evidence) {
                            int32_t(result));
     return false;
   };
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned ||
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || state_->operation_poisoned ||
       state_->unproved_execution) return fail("native-upload-owner-or-state");
   if (!u.key || !u.bytes || u.ranges.empty() || u.bytes > (uint32_t(64) << 20))
     return fail("native-upload-buffer-description");
@@ -1871,7 +1876,7 @@ bool Backend::UploadBuffer(const BufferUpload& u, std::string& evidence) {
 }
 
 bool Backend::ReleaseBuffer(uint64_t key, std::string& evidence) {
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId()) {
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id()) {
     evidence = "{\"released\":false,\"reason\":\"native-buffer-release-owner\"}";
     return false;
   }
@@ -1904,7 +1909,7 @@ bool Backend::ReadTexture(uint32_t key, std::vector<uint8_t>& rgba, uint32_t& wi
                            int32_t(result));
     return false;
   };
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned ||
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || state_->operation_poisoned ||
       state_->unproved_execution) return fail("native-read-owner-or-state");
   const char* reason = nullptr;
   VkResult result = VK_SUCCESS;
@@ -1942,7 +1947,7 @@ bool Backend::ReadSampled(uint32_t key, uint32_t level, std::vector<uint8_t>& ro
                            key, level, int32_t(result));
     return false;
   };
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned ||
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || state_->operation_poisoned ||
       state_->unproved_execution) return fail("native-read-owner-or-state");
   const char* reason = nullptr;
   VkResult result = VK_SUCCESS;
@@ -1981,7 +1986,7 @@ bool Backend::ReadSurface(uint32_t key, uint64_t after_fence, std::vector<uint8_
                            reason, key, after_fence, int32_t(result));
     return false;
   };
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned ||
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || state_->operation_poisoned ||
       state_->unproved_execution) return fail("native-read-surface-owner-or-state");
   const char* reason = nullptr;
   VkResult result = VK_SUCCESS;
@@ -2026,7 +2031,7 @@ uint32_t Backend::AllocateView() {
 
 #if defined(NATIVE_RENDERER_ENGINE_FAULT_TEST)
 bool Backend::SeedSampledForTest(uint32_t address, bool in_flight, std::string& evidence) {
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->sampled.count(address)) return false;
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || state_->sampled.count(address)) return false;
   VkResult result = VK_SUCCESS;
   const char* reason = nullptr;
   if (in_flight && !state_->OpenBatch(reason, result)) return false;
@@ -2058,7 +2063,7 @@ bool Backend::ReadBufferForTest(uint64_t key, std::vector<uint8_t>& bytes, std::
                            int32_t(result));
     return false;
   };
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId()) return fail("native-read-owner-or-state");
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id()) return fail("native-read-owner-or-state");
   const char* reason = nullptr;
   VkResult result = VK_SUCCESS;
   if (!state_->CloseBatch(reason, result)) return fail(reason, result);

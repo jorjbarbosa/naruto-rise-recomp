@@ -1,4 +1,5 @@
 // Frame trace of the D3D boundary (frame_trace.h).
+#include "gpu/common/platform.h"
 #include "gpu/diagnostics/frame_trace.h"
 #include "gpu/diagnostics/diagnostics.h"
 #include "gpu/d3d/frame.h"
@@ -9,7 +10,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <dxgiformat.h>
 #include <array>
 #include <chrono>
 #include <atomic>
@@ -25,9 +25,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <windows.h>
-#include <wrl/client.h>
-#include <dxcapi.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <rex/cvar.h>
@@ -63,7 +60,7 @@ uint64_t FrameTraceTarget() { FrameTraceInit(); return frame_trace.target.load()
 void FrameTraceNoteSwap(uint64_t n, uint64_t frame_draws) {
   FrameTraceInit();
   if (frame_trace.key_mode) {  // F10 arms the next frame.
-    const bool down = (GetAsyncKeyState(VK_F10) & 0x8000) != 0;
+    const bool down = platform::KeyDown(platform::Key::kF10);
     if (down && !frame_trace.key_down && !frame_trace.target.load() && frame_trace.key_traces < kKeyTraces) {
       ++frame_trace.key_traces;
       frame_trace.target.store(n + 1);

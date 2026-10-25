@@ -101,7 +101,7 @@ int main(int argc, char** argv) {
     PresentMode present;
     present.vsync = false;
     if (fxaa) present.post_effect = SwapPostEffect::kFxaa;
-    if (!check("attach", engine.AttachWindow(window, evidence, present), evidence)) return 6;
+    if (!check("attach", engine.AttachWindow(platform::WindowHandles(window), evidence, present), evidence)) return 6;
     check("surface", engine.CreateSurface(SurfaceDesc{kSurface, kWidth, kHeight}, evidence), evidence);
     ClearRequest clear;
     clear.color_keys[0] = kSurface;

@@ -58,16 +58,17 @@ void Completion::Submitted(uint64_t sequence, VkFence fence) {
   submitted_.notify_one();
 }
 
-bool Completion::SetEventOnCompletion(uint64_t sequence, HANDLE event) {
+bool Completion::SetEventOnCompletion(uint64_t sequence, FrameEvent event) {
   {
     std::lock_guard lock(mutex_);
     if (completed_.load(std::memory_order_relaxed) < sequence && !failed_) {
-      events_.emplace_back(sequence, event);
+      events_.emplace_back(sequence, std::move(event));
       return true;
     }
     ++events_set_;
   }
-  return SetEvent(event) != 0;
+  event->Set();
+  return true;
 }
 
 bool Completion::WaitFor(uint64_t sequence, std::chrono::milliseconds budget) {
@@ -139,16 +140,16 @@ void Completion::Run() {
       ++completed_count_;
       max_wait_ms_ = std::max(max_wait_ms_, Milliseconds(returned - since));
       progress = returned;
-      std::vector<HANDLE> ready;
+      std::vector<FrameEvent> ready;
       std::erase_if(events_, [&](const auto& entry) {
         if (entry.first > current.sequence) return false;
-        ready.push_back(entry.second);
+        ready.push_back(std::move(entry.second));
         return true;
       });
       events_set_ += ready.size();
       lock.unlock();
       progressed_.notify_all();
-      for (HANDLE event : ready) SetEvent(event);
+      for (const auto& event : ready) event->Set();
       lock.lock();
       continue;
     }
@@ -180,7 +181,7 @@ void Completion::Run() {
 void Completion::Fail(std::unique_lock<std::mutex>& lock, const Pending& pending, const char* reason, VkResult result,
                       double waited_ms) {
   failed_ = true;
-  std::vector<std::pair<uint64_t, HANDLE>> waiting;
+  std::vector<std::pair<uint64_t, FrameEvent>> waiting;
   waiting.swap(events_);
   events_set_ += waiting.size();
   const std::string evidence = fmt::format(
@@ -189,7 +190,7 @@ void Completion::Fail(std::unique_lock<std::mutex>& lock, const Pending& pending
       int32_t(result), reason, pending.sequence, completed_.load(), waited_ms, deadline_.count());
   lock.unlock();
   failures_->Retain({pending.sequence, kSource, evidence});
-  for (const auto& [sequence, event] : waiting) SetEvent(event);
+  for (const auto& [sequence, event] : waiting) event->Set();
 }
 
 }  // namespace gpu::vulkan

@@ -1,0 +1,45 @@
+diff --git a/src/system/kernel_state.cpp b/src/system/kernel_state.cpp
+index 697399c..9d1b9a9 100644
+--- a/src/system/kernel_state.cpp
++++ b/src/system/kernel_state.cpp
+@@ -16,6 +16,7 @@
+ 
+ #include <fmt/format.h>
+ #include <rex/assert.h>
++#include <rex/filesystem.h>
+ #include <rex/image_info.h>
+ #include <rex/logging.h>
+ #include <rex/math.h>
+@@ -56,6 +57,23 @@ KernelState* kernel_state() {
+   return shared_kernel_state_;
+ }
+ 
++namespace {
++
++// The shared library of a recompiled module. LoadLibrary adds the .dll itself
++// and searches the executable folder; dlopen takes the file as it is named,
++// next to the executable (lib<name>.so, as CMake builds it).
++std::filesystem::path RecompiledLibraryPath(const std::string& name) {
++#if REX_PLATFORM_WIN32
++  return std::filesystem::path(name);
++#elif REX_PLATFORM_MAC
++  return rex::filesystem::GetExecutableFolder() / fmt::format("lib{}.dylib", name);
++#else
++  return rex::filesystem::GetExecutableFolder() / fmt::format("lib{}.so", name);
++#endif
++}
++
++}  // namespace
++
+ KernelState::KernelState(Runtime* emulator)
+     : emulator_(emulator),
+       memory_(emulator->memory()),
+@@ -759,7 +777,7 @@ object_ref<UserModule> KernelState::LoadUserModule(const std::string_view raw_na
+     }
+ 
+     rex::platform::DynamicLibrary library_local;
+-    if (!library_local.Load(std::filesystem::path(recomp->shared_lib_name),
++    if (!library_local.Load(RecompiledLibraryPath(recomp->shared_lib_name),
+                             rex::platform::SymbolResolution::kImmediate)) {
+       REXSYS_ERROR("Failed to load shared library for module '{}'", recomp->pe_name);
+     } else {

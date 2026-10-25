@@ -1,6 +1,7 @@
 // The frame completion thread of the native mode.
 #include "gpu/host/internal.h"
 #include "gpu/backend/dispatcher.h"
+#include "gpu/common/platform.h"
 #include "gpu/d3d/d3d.h"
 #include "gpu/diagnostics/census.h"
 #include <deque>
@@ -11,6 +12,7 @@
 #include <rex/system/kernel_state.h>
 #include <rex/system/thread_state.h>
 #include <rex/system/xthread.h>
+#include <rex/thread.h>
 
 namespace gpu::host {
 // The frame completion source of the D3D boundary. The own Swap presents at
@@ -24,7 +26,7 @@ namespace gpu::host {
 namespace frame_completion {
 struct FrameEnd {
   uint32_t fence = 0;
-  HANDLE event = nullptr;
+  FrameEvent event;
   std::vector<gpu::host::OwnInterrupt> interrupts;  // Always empty.
   uint64_t swap = 0;
   int64_t queued_qpc = 0;
@@ -41,7 +43,7 @@ std::atomic<uint64_t> queued{0}, frame_ends{0};
 std::atomic<int64_t> max_publish_after_lot_qpc{0};
 std::mutex queue_mutex;
 std::deque<FrameEnd> frames;
-HANDLE doorbell = nullptr;  // Auto reset: a queued frame end or the stop.
+std::unique_ptr<rex::thread::Event> doorbell;  // Auto reset: a queued frame end or the stop.
 uint32_t device = 0;
 int64_t qpc_frequency = 0, qpc_start = 0;
 // Completion timings (pacing_mutex), QPC ticks; bounded.
@@ -51,7 +53,7 @@ std::vector<CompletionRecord> completion_records;
 // Stops new publications and wakes the thread.
 void Quiesce() {
   closing.store(true);
-  if (doorbell) SetEvent(doorbell);
+  if (doorbell) doorbell->Set();
 }
 std::string Summary() {
   size_t pending = 0;
@@ -69,11 +71,8 @@ std::string Summary() {
 constexpr uint8_t kCpu = 2;
 rex::system::object_ref<rex::system::XHostThread> owner;  // Lives until process exit.
 
-int64_t Qpc() {
-  LARGE_INTEGER t{};
-  QueryPerformanceCounter(&t);
-  return t.QuadPart;
-}
+// The host tick clock (the QPC on Windows), kept under its old names in the records.
+int64_t Qpc() { return platform::Ticks(); }
 // The own lot of this frame end completed on the own queue: its fence becomes
 // the completed value, unless the session's failure channel refuses it
 // (false: a failure was retained since the caller checked). A Present carried
@@ -118,14 +117,16 @@ int Run() {
       }
     }
     const bool lot_pending = frame && !frames_refused.load();
-    HANDLE handles[2] = {doorbell, lot_pending ? frame->event : nullptr};
-    const DWORD wait = WaitForMultipleObjects(lot_pending ? 2 : 1, handles, FALSE, 1000);
+    rex::thread::WaitHandle* handles[] = {doorbell.get(), lot_pending ? frame->event.get() : nullptr};
+    const auto wait =
+        rex::thread::WaitAny(handles, lot_pending ? 2 : 1, false, std::chrono::milliseconds(1000)).first;
     if (closing.load()) break;
-    if (wait == WAIT_FAILED) Stop("own-completion-wait", Context(), 0, GetLastError(), 88);
-    if (!lot_pending || WaitForSingleObject(frame->event, 0) != WAIT_OBJECT_0) continue;
+    if (wait == rex::thread::WaitResult::kFailed) Stop("own-completion-wait", Context(), 0, 0, 88);
+    if (!lot_pending ||
+        rex::thread::Wait(frame->event.get(), false, std::chrono::milliseconds(0)) != rex::thread::WaitResult::kSuccess)
+      continue;
     const int64_t completed_qpc = Qpc();
-    CloseHandle(frame->event);
-    frame->event = nullptr;
+    frame->event.reset();
     // Nothing is published once the session's failure channel holds a
     // failure: checked here, and again under the channel at the fence store.
     std::string failure;
@@ -152,19 +153,18 @@ int Run() {
 // (Run returns, XHostThread::Execute calls Exit).
 bool Join(uint32_t ms, std::string& fields) {
   auto* host = owner ? owner->thread() : nullptr;
-  const DWORD wait = host ? WaitForSingleObject(static_cast<HANDLE>(host->native_handle()), ms) : WAIT_FAILED;
+  const auto wait = host ? rex::thread::Wait(host, false, std::chrono::milliseconds(ms)) : rex::thread::WaitResult::kFailed;
   fields = fmt::format("\"started\":{},\"closing\":{},\"thread\":{},\"wait\":{},\"joined\":{}", started.load(),
-                       closing.load(), owner ? owner->thread_id() : 0, wait, wait == WAIT_OBJECT_0);
-  return wait == WAIT_OBJECT_0;
+                       closing.load(), owner ? owner->thread_id() : 0, int(wait), wait == rex::thread::WaitResult::kSuccess);
+  return wait == rex::thread::WaitResult::kSuccess;
 }
 bool Start(uint32_t device_address, uint32_t, std::string& fields) {
   if (started.load() || closing.load() || !Kernel() || !InitializerRegistration(device_address))
     return false;
   device = device_address;
-  LARGE_INTEGER frequency{};
-  if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0) return false;
-  qpc_frequency = frequency.QuadPart;
-  doorbell = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+  qpc_frequency = platform::TickFrequency();
+  if (qpc_frequency <= 0) return false;
+  doorbell = rex::thread::Event::CreateAutoResetEvent(false);
   if (!doorbell) return false;
   qpc_start = Qpc();
   owner = rex::system::object_ref<rex::system::XHostThread>(new rex::system::XHostThread(
@@ -180,15 +180,15 @@ bool Start(uint32_t device_address, uint32_t, std::string& fields) {
                        device, kCpu, qpc_frequency, owner->thread_id());
   return true;
 }
-bool QueueFrame(uint32_t fence, HANDLE event, std::vector<gpu::host::OwnInterrupt> interrupts, uint64_t swap,
+bool QueueFrame(uint32_t fence, FrameEvent event, std::vector<gpu::host::OwnInterrupt> interrupts, uint64_t swap,
                 std::shared_ptr<gpu::host::FramePresent> present) {
   if (!started.load() || closing.load() || !event) return false;
   {
     std::lock_guard lock(queue_mutex);
-    frames.push_back(FrameEnd{fence, event, std::move(interrupts), swap, Qpc(), std::move(present)});
+    frames.push_back(FrameEnd{fence, std::move(event), std::move(interrupts), swap, Qpc(), std::move(present)});
   }
   queued.fetch_add(1);
-  SetEvent(doorbell);
+  doorbell->Set();
   return true;
 }
 std::string PacingJson() {
@@ -210,10 +210,9 @@ std::string PacingJson() {
 bool StartInterrupts(uint32_t device, uint32_t scratch, std::string& fields) {
   return frame_completion::Start(device, scratch, fields);
 }
-bool QueueFrameEnd(uint32_t fence, void* lot_event, std::vector<OwnInterrupt> interrupts, uint64_t swap,
+bool QueueFrameEnd(uint32_t fence, FrameEvent lot_event, std::vector<OwnInterrupt> interrupts, uint64_t swap,
                    std::shared_ptr<FramePresent> present) {
-  return frame_completion::QueueFrame(fence, static_cast<HANDLE>(lot_event), std::move(interrupts), swap,
-                                    std::move(present));
+  return frame_completion::QueueFrame(fence, std::move(lot_event), std::move(interrupts), swap, std::move(present));
 }
 void QuiesceInterrupts() { frame_completion::Quiesce(); }
 bool JoinInterrupts(uint32_t ms, std::string& fields) {

@@ -154,8 +154,8 @@ class Backend final : public gpu::Backend {
   bool ClearSurfaces(const ClearRequest& request, uint64_t& fence, std::string& evidence) override;
   bool WaitIdle(std::string& evidence) override;
   bool WaitSubmitted(std::string& evidence) override;
-  bool CloseFrame(void* event, uint64_t& target, std::string& evidence) override;
-  bool AttachWindow(void* window, std::string& evidence, const PresentMode& mode) override;
+  bool CloseFrame(FrameEvent event, uint64_t& target, std::string& evidence) override;
+  bool AttachWindow(const platform::NativeWindow& window, std::string& evidence, const PresentMode& mode) override;
   bool DetachWindow(std::string& evidence) override;
   bool SetGammaRamp(const std::array<uint16_t, 768>& words, std::string& evidence) override;
   bool SetVsync(bool enabled, std::string& evidence) override;
@@ -1143,7 +1143,7 @@ bool Backend::Reconfigure(const RenderMode& requested, const PresentMode& presen
       present.max_frame_latency != old_present.max_frame_latency || present.allow_tearing != old_present.allow_tearing);
   bool applied = true;
   if (swap) {
-    void* window = s.window;
+    const auto window = platform::WindowHandles(s.window);
     s.present_rtv.Reset(); s.swapchain.reset();
     applied = AttachWindow(window, evidence, present);
     if (!applied) {
@@ -1351,7 +1351,7 @@ bool Backend::Wait(bool close, std::string& evidence) {
 // Frame lot of D3DDevice_Swap. Closes the open batch without waiting and
 // has the host event set when the highest Signal on the queue completes, so
 // every operation submitted so far is done when it fires.
-bool Backend::CloseFrame(void* event, uint64_t& target, std::string& evidence) {
+bool Backend::CloseFrame(FrameEvent event, uint64_t& target, std::string& evidence) {
   target = 0;
   auto fail = [&](const char* reason, HRESULT hr = E_FAIL) {
     evidence = fmt::format("{{\"closed\":false,\"reason\":\"{}\",\"hresult\":{}}}", reason, static_cast<uint32_t>(hr));
@@ -1368,8 +1368,8 @@ bool Backend::CloseFrame(void* event, uint64_t& target, std::string& evidence) {
   const uint64_t completed = fence->d3d->GetCompletedValue();
   if (completed == UINT64_MAX) return fail("native-frame-device-removed");
   if (completed >= target) {
-    if (!SetEvent(static_cast<HANDLE>(event))) return fail("native-frame-event", HRESULT_FROM_WIN32(GetLastError()));
-  } else if (FAILED(hr = fence->d3d->SetEventOnCompletion(target, static_cast<HANDLE>(event)))) {
+    event->Set();
+  } else if (FAILED(hr = fence->d3d->SetEventOnCompletion(target, static_cast<HANDLE>(event->native_handle())))) {
     return fail("native-frame-event-on-completion", hr);
   }
   evidence = fmt::format("{{\"closed\":true,\"target\":{},\"completed\":{},\"batches_closed\":{}}}", target,
@@ -1932,7 +1932,8 @@ bool Backend::State::DrawUi(ID3D12GraphicsCommandList* commands, D3D12_CPU_DESCR
   return true;
 }
 
-bool Backend::AttachWindow(void* window, std::string& evidence, const PresentMode& mode) {
+bool Backend::AttachWindow(const platform::NativeWindow& target, std::string& evidence, const PresentMode& mode) {
+  void* window = target.kind == platform::NativeWindow::Kind::kWin32 ? target.window : nullptr;
   auto fail = [&](const char* reason, HRESULT hr = E_FAIL) {
     evidence = fmt::format("{{\"attached\":false,\"reason\":\"{}\",\"hresult\":{}}}", reason, static_cast<uint32_t>(hr));
     return false;

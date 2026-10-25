@@ -38,7 +38,7 @@ std::atomic<bool> enabled{false};
 bool Enabled() { return enabled.load(); }
 bool Read(rex::memory::Memory* memory, uint32_t address, void* target, size_t size) {
   if (!address || uint64_t(address) + size > UINT32_MAX) return false;
-  return CopyFromGuest(target, memory->TranslateVirtual(address), size);  // guest_memory.h
+  return CopyFromGuest(memory, address, target, size);  // guest_memory.h
 }
 
 // The window close of the native mode, on the UI thread, before

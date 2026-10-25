@@ -106,9 +106,13 @@ if(NARUTORISE_NATIVE_VULKAN)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                  "${CMAKE_CURRENT_LIST_DIR}/../../app/cmake/extend-plume-vulkan.py")
+    set(plume_vulkan_wayland)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(plume_vulkan_wayland wayland)
+    endif()
     execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/../../app/cmake/extend-plume-vulkan.py"
                             "${plume_vulkan_dir}/plume_vulkan.cpp" "${CMAKE_BINARY_DIR}/plume-native-vulkan.cpp"
-                            COMMAND_ERROR_IS_FATAL ANY)
+                            ${plume_vulkan_wayland} COMMAND_ERROR_IS_FATAL ANY)
     add_library(native_renderer_plume_vulkan STATIC "${CMAKE_BINARY_DIR}/plume-native-vulkan.cpp")
     target_include_directories(native_renderer_plume_vulkan PUBLIC "${NATIVE_RENDERER_PLUME_SOURCE}"
         "${NATIVE_RENDERER_PLUME_SOURCE}/contrib/volk"
@@ -116,4 +120,9 @@ if(NARUTORISE_NATIVE_VULKAN)
         "${NATIVE_RENDERER_PLUME_SOURCE}/contrib/VulkanMemoryAllocator/include")
     target_compile_features(native_renderer_plume_vulkan PUBLIC cxx_std_17)
     target_compile_definitions(native_renderer_plume_vulkan PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+    # On Linux, Plume's own swap chain queries the window through Xlib.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        find_package(X11 REQUIRED)
+        target_link_libraries(native_renderer_plume_vulkan PUBLIC X11::X11)
+    endif()
 endif()

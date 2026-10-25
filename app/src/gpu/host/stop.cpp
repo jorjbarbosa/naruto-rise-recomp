@@ -2,12 +2,14 @@
 // released on its owner thread, the final records and the exit code.
 #include "gpu/host/internal.h"
 #include "gpu/backend/dispatcher.h"
+#include "gpu/common/platform.h"
 #include <cstdlib>
 #include <fmt/format.h>
 #include <rex/logging.h>
 #include <rex/string.h>
 #include <rex/system/thread_state.h>
 #include <rex/system/xthread.h>
+#include <rex/thread.h>
 
 namespace gpu::host {
 // One ordered stop per process. The first host thread to stop owns
@@ -18,12 +20,12 @@ namespace gpu::host {
 // close (XThread::CheckTitleTermination, the SDK's cooperative exit), so the
 // close can join it; any other parked thread stays until the process exits.
 namespace {
-std::atomic<DWORD> stop_owner{0};
+std::atomic<uint32_t> stop_owner{0};
 std::atomic<uint32_t> parked_stops{0};
 }  // namespace
 void ClaimStop(std::string_view name, PPCContext* ctx) {
-  DWORD owner = 0;
-  const DWORD self = GetCurrentThreadId();
+  uint32_t owner = 0;
+  const uint32_t self = rex::thread::current_thread_system_id();
   if (stop_owner.compare_exchange_strong(owner, self) || owner == self) return;
   {
     std::lock_guard lock(event_mutex);
@@ -31,14 +33,14 @@ void ClaimStop(std::string_view name, PPCContext* ctx) {
   }
   parked_stops.fetch_add(1);
   for (;;) {
-    Sleep(10);
+    rex::thread::Sleep(std::chrono::milliseconds(10));
     rex::system::XThread::CheckTitleTermination();
   }
 }
 // The stop claimed without parking (the UI thread of the close fallback).
 bool TryClaimStop() {
-  DWORD owner = 0;
-  const DWORD self = GetCurrentThreadId();
+  uint32_t owner = 0;
+  const uint32_t self = rex::thread::current_thread_system_id();
   return stop_owner.compare_exchange_strong(owner, self) || owner == self;
 }
 uint32_t ParkedStops() { return parked_stops.load(); }
@@ -118,13 +120,15 @@ void ReportProductStop(std::string_view name, int code, bool released, std::stri
     REXLOG_ERROR("[narutorise] Native renderer failed operation: {}", posted.substr(0, kEvidenceChars));
   rex::FlushLogging();
   std::string message = fmt::format("The native renderer stopped and the game will close.\n\nReason: {}", name);
-  if (FAILED(HRESULT(removed)))
+  if (int32_t(removed) < 0)  // A failed HRESULT.
     message += fmt::format("\nThe graphics card stopped responding (0x{:08X}).", removed);
+#ifdef _WIN32
   message += "\n\nThe details are in the log, in the logs folder next to narutorise.exe. "
              "If this happens again, the Xenos renderer can be chosen in the launcher.";
-  const auto wide = rex::string::to_utf16(message);
-  MessageBoxW(nullptr, reinterpret_cast<const wchar_t*>(wide.c_str()), L"narutorise",
-              MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
+#else
+  message += "\n\nThe details are in the log, in the logs folder next to the narutorise executable.";
+#endif
+  platform::ShowError("narutorise", message);
 }
 }  // namespace
 

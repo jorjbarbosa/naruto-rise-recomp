@@ -169,7 +169,7 @@ int main(int argc, char** argv) {
     PresentMode present;
     present.vsync = false;
     check(name + "-attach", dispatcher.Run([&](Engine& e, std::string& out) {
-      return e.AttachWindow(window, out, present) && e.CreateSurface(SurfaceDesc{kSurface, kWidth, kHeight}, out);
+      return e.AttachWindow(platform::WindowHandles(window), out, present) && e.CreateSurface(SurfaceDesc{kSurface, kWidth, kHeight}, out);
     }, evidence), evidence);
     ClearRequest clear;
     clear.color_keys[0] = kSurface;

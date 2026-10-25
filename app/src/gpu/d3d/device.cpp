@@ -7,11 +7,11 @@
 #include "gpu/diagnostics/diagnostics.h"
 #include "gpu/diagnostics/census.h"
 #include "gpu/d3d/hooks.h"
+#include <bit>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <dxgiformat.h>
 #include <array>
 #include <chrono>
 #include <atomic>
@@ -27,9 +27,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <windows.h>
-#include <wrl/client.h>
-#include <dxcapi.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <rex/cvar.h>
@@ -118,8 +115,8 @@ void ExportAfter(std::string_view name, PPCContext& ctx) {
   uint32_t type = 0, power = 0;
   ReadVirtual(ts->memory(), gamma_type_ptr, &type, 4);
   ReadVirtual(ts->memory(), gamma_power_ptr, &power, 4);
-  type = _byteswap_ulong(type);
-  power = _byteswap_ulong(power);
+  type = std::byteswap(type);
+  power = std::byteswap(power);
   float power_f;
   std::memcpy(&power_f, &power, 4);
   if (Diagnostics() && gamma_queries.fetch_add(1) < 4)

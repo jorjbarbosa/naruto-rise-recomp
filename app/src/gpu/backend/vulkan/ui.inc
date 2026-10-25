@@ -230,7 +230,7 @@ void Backend::State::ReleaseUi() {
 bool Backend::UploadUiTexture(uint32_t key, uint32_t width, uint32_t height, const std::vector<uint8_t>& rgba,
                               std::string& evidence) {
   auto& s = *state_;
-  if (!s.ready || s.owner_thread != GetCurrentThreadId() || s.operation_poisoned || s.unproved_execution)
+  if (!s.ready || s.owner_thread != rex::thread::current_thread_system_id() || s.operation_poisoned || s.unproved_execution)
     return GraphicsError(evidence, "native-ui-owner-or-state");
   const char* reason = nullptr; VkResult result = VK_SUCCESS;
   if (!s.OpenBatch(reason, result)) return GraphicsError(evidence, reason, result);
@@ -245,7 +245,7 @@ bool Backend::UploadUiTexture(uint32_t key, uint32_t width, uint32_t height, con
 
 bool Backend::ReleaseUiTexture(uint32_t key, std::string& evidence) {
   auto& s = *state_;
-  if (!s.ready || s.owner_thread != GetCurrentThreadId()) return GraphicsError(evidence, "native-ui-release-owner");
+  if (!s.ready || s.owner_thread != rex::thread::current_thread_system_id()) return GraphicsError(evidence, "native-ui-release-owner");
   // Key 0 (the white texture) belongs to the layer.
   auto it = key ? s.ui_textures.find(key) : s.ui_textures.end();
   if (it == s.ui_textures.end()) {
@@ -263,7 +263,7 @@ bool Backend::ReleaseUiTexture(uint32_t key, std::string& evidence) {
 
 bool Backend::SetUiFrame(UiFrame frame, std::string& evidence) {
   auto& s = *state_;
-  if (!s.ready || s.owner_thread != GetCurrentThreadId()) return GraphicsError(evidence, "native-ui-frame-owner");
+  if (!s.ready || s.owner_thread != rex::thread::current_thread_system_id()) return GraphicsError(evidence, "native-ui-frame-owner");
   s.ui_frame = std::move(frame);
   evidence = fmt::format("{{\"set\":true,\"vertices\":{},\"indices\":{},\"draws\":{}}}", s.ui_frame.vertices.size(),
                          s.ui_frame.indices.size(), s.ui_frame.draws.size());

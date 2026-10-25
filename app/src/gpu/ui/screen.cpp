@@ -25,10 +25,11 @@ bool Screen::Open(void* window, const RenderMode& mode, std::string& evidence) {
   clear.color_keys[0] = kBackground;
   clear.clear_color = true;
   clear.color = {0, 0, 0, 1};
+  const auto native_window = platform::WindowHandles(window);
   const bool ready = dispatcher->Initialize(evidence, mode) &&
                      dispatcher->Run([&](Engine& engine, std::string& out) {
                        uint64_t fence = 0;
-                       return engine.AttachWindow(window, out, present) &&
+                       return engine.AttachWindow(native_window, out, present) &&
                               engine.CreateSurface(SurfaceDesc{kBackground, 16, 9}, out) &&
                               engine.ClearSurfaces(clear, fence, out);
                      }, evidence);

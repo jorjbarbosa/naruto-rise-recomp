@@ -8,6 +8,11 @@
 #pragma once
 
 namespace narutorise {
+#ifdef _WIN32
 // Wine's version ("9.0", ...), or null on Windows.
 const char* WineVersion();
+#else
+// A native build runs without Wine.
+inline const char* WineVersion() { return nullptr; }
+#endif
 }  // namespace narutorise

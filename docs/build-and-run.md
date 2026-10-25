@@ -2,7 +2,7 @@
 
 [Documentation](README.md) · [Configuration](configuration.md) · [DLCs](dlc.md)
 
-This guide describes the project's **Windows x64 / Release** workflow. Run commands from the repository root in PowerShell 7.2+ with the Visual Studio x64 development environment loaded. Stop the sequence if any command fails.
+This guide describes the project's **Windows x64 / Release** workflow. Run commands from the repository root in PowerShell 7.2+ with the Visual Studio x64 development environment loaded. Stop the sequence if any command fails. The native Linux build has its own [section](#linux).
 
 ## 1. Prerequisites
 
@@ -210,6 +210,65 @@ $testData = Join-Path $env:TEMP ("narutorise-config-" + [guid]::NewGuid())
 .\app\out\build\win-amd64-release\narutorise_localization_test.exe
 ```
 
-## Other platforms
+## Linux
 
-Linux, macOS, and ARM64 presets are inherited from the SDK structure. Native file dialogs, shortcut creation, preparation scripts and restart handling still have Windows-specific dependencies. Proton/Game Mode and physical-controller acceptance remain unverified for the new distribution. These presets alone do not guarantee a working build on other platforms.
+The game builds natively on Linux x86_64, without Wine or Proton: the native renderer on Vulkan, with the window on Wayland or X11 through SDL3. The Linux renderer was tested on Ubuntu 26.04 with Clang 21 and CMake 4.2, building in WSL and running on a desktop with Mesa's RADV. Acceptance of the integrated menus and DLC modules on Linux remains pending; settings can also be edited in `narutorise.toml`.
+
+### Prerequisites
+
+The packages installed on the test system:
+
+```bash
+sudo apt install clang cmake ninja-build git pkg-config python3 spirv-tools nasm \
+  libssl-dev libgtk-3-dev libsdl2-dev libasound2-dev libpulse-dev libwayland-dev \
+  libxkbcommon-dev libxrandr-dev libxcursor-dev libxi-dev libxinerama-dev libxss-dev \
+  libudev-dev libvulkan-dev
+```
+
+Running the game needs only a Vulkan driver (Mesa, or the NVIDIA driver) and the Vulkan loader, which desktop distributions install by default. DXC for Linux comes with the XenosRecomp submodule, so the shaders are translated and compiled on Linux without another compiler.
+
+### Build
+
+Prepare the game files as in [section 3](#3-prepare-the-game-files), then, from the repository root:
+
+```bash
+git submodule update --init --recursive
+bash patches/apply_sdk_patches.sh
+
+cmake --preset linux-amd64 -S sdk -B sdk/out/build/linux-amd64
+cmake --build sdk/out/build/linux-amd64 --config Release
+cmake --install sdk/out/build/linux-amd64 --config Release
+
+git clone https://github.com/renderbag/plume.git out/plume
+git -C out/plume checkout d72379344dacd3dbf9f810f92ddc87e6de1845b1
+git -C out/plume submodule update --init contrib/volk contrib/Vulkan-Headers contrib/VulkanMemoryAllocator
+
+./sdk/out/install/linux-amd64/bin/rexglue codegen app/narutorise_manifest.toml
+cmake --preset linux-amd64-release -S app -B app/out/build/linux-amd64-release \
+  -DCMAKE_PREFIX_PATH="$PWD/sdk/out/install/linux-amd64" \
+  -DNARUTORISE_NATIVE_RENDERER_BOOTSTRAP=ON \
+  -DNATIVE_RENDERER_PLUME_SOURCE="$PWD/out/plume" \
+  -DNARUTORISE_GAME_DIR="$PWD/game_root"
+cmake --build app/out/build/linux-amd64-release
+```
+
+`apply_sdk_patches.sh` is the shell version of `apply_sdk_patches.ps1`: it applies `patches/sdk/` in name order and skips the patches already applied. The native renderer is required on Linux (`NARUTORISE_NATIVE_RENDERER_BOOTSTRAP=ON`) and builds with Vulkan only; Plume needs only its Volk, Vulkan Headers and Vulkan Memory Allocator submodules there. After a change to the installed SDK's CMake files, rerun the application's configure step: the install keeps their source timestamps, so the build does not notice the change.
+
+### Run
+
+`app/out/build/linux-amd64-release/` holds `narutorise`, the SDK runtime `librexruntime.so`, the `libnarutorise_ai2c*.so` modules, and `narutorise.toml`. Copy them together; the executable finds the libraries next to itself.
+
+```bash
+./app/out/build/linux-amd64-release/narutorise --game_data_root="$PWD/game_root"
+```
+
+Without `--game_data_root`, the game looks for `game/` or `game_root/` next to the executable. Saves go to `~/.local/share/narutorise` (`$XDG_DATA_HOME/narutorise`; `REX_USER_DATA_ROOT` points them elsewhere), and the logs to `logs/` next to the executable. `F11` or `Alt+Enter` toggle fullscreen. SDL picks Wayland or X11; `SDL_VIDEO_DRIVER=x11` forces X11, and the log names the one in use (`SDL video driver`).
+
+### Known limitations
+
+- Bink videos play at about 10 FPS, with stuttering audio. The cause is not established yet.
+- The first launch builds the pipelines with a cold driver cache, which took about a minute on RADV; the game is slower meanwhile. Later launches use the driver's disk cache.
+- The diagnostics that depend on Windows (minidumps, the stack sampler, heap watch) are not available. The crash report in the log works.
+- Native file dialogs, shortcut creation and restart handling still have Windows-specific dependencies. Proton/Game Mode and physical-controller acceptance remain unverified for the integrated menus.
+
+macOS and ARM64 presets are inherited from the SDK structure; they are not tested.

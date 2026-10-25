@@ -9,6 +9,14 @@
 
 namespace gpu {
 
+// Sets a variable of the process environment for the engine under test.
+inline void SetTestEnvironment(const char* name, const char* value) {
+#if defined(_WIN32)
+  _putenv_s(name, value);
+#else
+  setenv(name, value, 1);
+#endif
+}
 inline RenderMode TestRenderMode() {
   RenderMode mode;
   const char* api = std::getenv("REX_NATIVE_TEST_API");

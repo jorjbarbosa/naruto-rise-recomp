@@ -16,6 +16,7 @@
 // without itself, and the threads run at the lowest priority.
 #pragma once
 
+#include "gpu/common/platform.h"
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -117,7 +118,7 @@ class PipelineSet {
   Taken TakeSkip(uint64_t key, uint64_t triple);
   void Finish(uint64_t key, uint64_t triple, bool created, Pipeline pipeline);
   void StartThreads(bool lowest);  // Under mutex_.
-  void Work(int base_priority);
+  void Work(platform::ThreadPriority base_priority);
 
   Creator creator_;
   std::mutex mutex_;

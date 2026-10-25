@@ -9,10 +9,11 @@
 #include <windows.h>
 #include <d3d12.h>
 #include <dxgi.h>
+#endif
 #if defined(NARUTORISE_MENU_NATIVE_VULKAN)
+#include <SDL3/SDL_loadso.h>
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
-#endif
 #endif
 
 const std::vector<std::string>& GraphicsDevices(bool vulkan) {
@@ -20,9 +21,14 @@ const std::vector<std::string>& GraphicsDevices(bool vulkan) {
   if (vulkan) {
     static const std::vector<std::string> devices = [] {
       std::vector<std::string> names;
-      HMODULE loader = LoadLibraryW(L"vulkan-1.dll");
+#ifdef _WIN32
+      const char* library = "vulkan-1.dll";
+#else
+      const char* library = "libvulkan.so.1";
+#endif
+      auto* loader = SDL_LoadObject(library);
       if (!loader) return names;
-      auto proc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(GetProcAddress(loader, "vkGetInstanceProcAddr"));
+      auto proc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(SDL_LoadFunction(loader, "vkGetInstanceProcAddr"));
       auto create = proc ? reinterpret_cast<PFN_vkCreateInstance>(proc(nullptr, "vkCreateInstance")) : nullptr;
       VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO}; app.apiVersion = VK_API_VERSION_1_2;
       VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO}; info.pApplicationInfo = &app;
@@ -42,7 +48,7 @@ const std::vector<std::string>& GraphicsDevices(bool vulkan) {
         }
         destroy(instance, nullptr);
       }
-      FreeLibrary(loader); return names;
+      SDL_UnloadObject(loader); return names;
     }();
     return devices;
   }

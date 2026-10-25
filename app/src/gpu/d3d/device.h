@@ -13,11 +13,11 @@
 #include "gpu/diagnostics/profile.h"
 #include "gpu/diagnostics/diagnostics.h"
 #include "gpu/common/guest_memory.h"
+#include <bit>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <dxgiformat.h>
 #include <array>
 #include <chrono>
 #include <atomic>
@@ -33,9 +33,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <windows.h>
-#include <wrl/client.h>
-#include <dxcapi.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <rex/cvar.h>
@@ -577,7 +574,7 @@ class DeviceOwner final {
   static constexpr uint32_t kScratchBytes = 32;
   static constexpr size_t kGatesMax = 8;  // Pending frame ends (the Swap keeps at most two).
   static constexpr auto kGateTimeout = std::chrono::seconds(2);
-  static uint32_t Swap(uint32_t v) { return _byteswap_ulong(v); }
+  static uint32_t Swap(uint32_t v) { return std::byteswap(v); }
   // Fence order relative to the counter 10908, as the console compares them.
   static bool NotAfter(uint32_t counter, uint32_t a, uint32_t b) { return counter - a >= counter - b; }
   static bool Done(uint32_t counter, uint32_t fence, uint32_t completed) { return NotAfter(counter, fence, completed); }
@@ -604,7 +601,7 @@ class DeviceOwner final {
   // A plain store (CopyToGuest, guest_memory.h).
   bool WriteVerify(uint32_t address, const uint8_t* bytes, size_t size) {
     return address && uint64_t(address) + size <= UINT32_MAX &&
-        CopyToGuest(memory_->TranslateVirtual(address), bytes, size);
+        CopyToGuest(memory_, address, bytes, size);
   }
   // Same SDK lock as the original 82143590 store; no contention is admitted.
   bool OrFlagsUnderLock(PPCContext& ctx, uint8_t* base, uint8_t expected, uint8_t replacement) {

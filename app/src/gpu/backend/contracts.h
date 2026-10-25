@@ -11,6 +11,8 @@
 #include <array>
 #include <cstdint>
 #include <vector>
+#include "gpu/common/frame_event.h"
+#include "gpu/common/platform.h"
 #include "gpu/settings.h"
 
 namespace gpu {

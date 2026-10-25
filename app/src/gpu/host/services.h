@@ -1,6 +1,7 @@
 #pragma once
 
 #include <rex/ppc/context.h>
+#include "gpu/common/frame_event.h"
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -46,7 +47,7 @@ struct FramePresent {
   uint64_t swap = 0;
   bool capture = false;  // Back buffer read back (the Swap read its front buffer too).
 };
-bool QueueFrameEnd(uint32_t fence, void* lot_event, std::vector<OwnInterrupt> interrupts, uint64_t swap,
+bool QueueFrameEnd(uint32_t fence, FrameEvent lot_event, std::vector<OwnInterrupt> interrupts, uint64_t swap,
                    std::shared_ptr<FramePresent> present);
 void QuiesceInterrupts();
 bool InterruptsClosing();

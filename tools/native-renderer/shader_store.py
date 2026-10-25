@@ -43,10 +43,16 @@ def files_identity(paths) -> str:
 
 
 def dxc_identity(dxc: Path) -> str:
-    """dxc.exe and the compiler and validator it loads from its folder."""
+    """DXC and the compiler and validator it loads: from its folder on Windows
+    (dxcompiler.dll, dxil.dll), from dxc-bin's lib/<arch> on Linux (libdxcompiler.so,
+    libdxil.so)."""
     dxc = Path(dxc)
-    return files_identity([dxc] + [dxc.parent / name for name in ('dxcompiler.dll', 'dxil.dll')
-                                   if (dxc.parent / name).exists()])
+    if dxc.suffix == '.exe':
+        libraries = [dxc.parent / name for name in ('dxcompiler.dll', 'dxil.dll')]
+    else:
+        libraries = [dxc.parent.parent.parent / 'lib' / dxc.parent.name / name
+                     for name in ('libdxcompiler.so', 'libdxil.so')]
+    return files_identity([dxc] + [path for path in libraries if path.exists()])
 
 
 def fork_identity(common: Path) -> str:

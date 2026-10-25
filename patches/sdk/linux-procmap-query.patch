@@ -1,0 +1,111 @@
+diff --git a/src/core/memory_posix.cpp b/src/core/memory_posix.cpp
+index b52bf39..fa6b1ad 100644
+--- a/src/core/memory_posix.cpp
++++ b/src/core/memory_posix.cpp
+@@ -9,6 +9,7 @@
+  * @modified    Tom Clay & Rien Gupta, 2026 - Adapted for ReXGlue runtime (POSIX + macOS)
+  */
+ 
++#include <atomic>
+ #include <cerrno>
+ #include <cstddef>
+ #include <cstdio>
+@@ -35,6 +36,10 @@
+ #include <rex/platform.h>
+ #include <rex/string.h>
+ 
++#if REX_PLATFORM_LINUX
++#include <sys/ioctl.h>
++#endif  // REX_PLATFORM_LINUX
++
+ // macOS off_t is 64-bit with no *64 large-file variants; Linux keeps the
+ // explicit *64 forms for legacy 32-bit off_t distributions.
+ #if defined(__APPLE__)
+@@ -170,9 +175,87 @@ static bool ParseProcMapsLine(const std::string& line, LinuxMapEntry& out) {
+   return out.start < out.end;
+ }
+ 
++// PROCMAP_QUERY (Linux 6.11) returns the mapping that contains one address
++// without reading the whole of /proc/self/maps. Declared here so that older
++// kernel headers still build; the layout is fixed kernel ABI.
++struct ProcmapQuery {
++  uint64_t size;
++  uint64_t query_flags;
++  uint64_t query_addr;
++  uint64_t vma_start;
++  uint64_t vma_end;
++  uint64_t vma_flags;
++  uint64_t vma_page_size;
++  uint64_t vma_offset;
++  uint64_t inode;
++  uint32_t dev_major;
++  uint32_t dev_minor;
++  uint32_t vma_name_size;
++  uint32_t build_id_size;
++  uint64_t vma_name_addr;
++  uint64_t build_id_addr;
++};
++static_assert(sizeof(ProcmapQuery) == 104);
++constexpr unsigned long kProcmapQuery = _IOWR('f', 17, ProcmapQuery);
++constexpr uint64_t kProcmapQueryVmaReadable = 0x01;
++constexpr uint64_t kProcmapQueryVmaWritable = 0x02;
++constexpr uint64_t kProcmapQueryVmaExecutable = 0x04;
++constexpr uint64_t kProcmapQueryVmaShared = 0x08;
++
++enum class MapQueryResult { kFound, kNotMapped, kUnsupported };
++
++// The write watch splits guest memory into thousands of mappings, and the
++// fault handler looks one up per write fault while holding the global lock, so
++// a full read of /proc/self/maps there stalls every other guest thread. open,
++// ioctl and close are also async-signal-safe, unlike the stream reader.
++static MapQueryResult QueryEntryForAddress(uintptr_t address, LinuxMapEntry& out_entry) {
++  static std::atomic<bool> unsupported{false};
++  if (unsupported.load(std::memory_order_relaxed)) {
++    return MapQueryResult::kUnsupported;
++  }
++  const int saved_errno = errno;
++  const int fd = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
++  if (fd < 0) {
++    errno = saved_errno;
++    return MapQueryResult::kUnsupported;
++  }
++  ProcmapQuery query = {};
++  query.size = sizeof(query);
++  query.query_addr = address;
++  const int ret = ioctl(fd, kProcmapQuery, &query);
++  const int query_errno = errno;
++  close(fd);
++  errno = saved_errno;
++  if (ret != 0) {
++    if (query_errno == ENOENT) {
++      return MapQueryResult::kNotMapped;
++    }
++    if (query_errno == ENOTTY || query_errno == EINVAL) {
++      unsupported.store(true, std::memory_order_relaxed);
++    }
++    return MapQueryResult::kUnsupported;
++  }
++  out_entry = LinuxMapEntry{};
++  out_entry.start = static_cast<uintptr_t>(query.vma_start);
++  out_entry.end = static_cast<uintptr_t>(query.vma_end);
++  out_entry.perms[0] = (query.vma_flags & kProcmapQueryVmaReadable) ? 'r' : '-';
++  out_entry.perms[1] = (query.vma_flags & kProcmapQueryVmaWritable) ? 'w' : '-';
++  out_entry.perms[2] = (query.vma_flags & kProcmapQueryVmaExecutable) ? 'x' : '-';
++  out_entry.perms[3] = (query.vma_flags & kProcmapQueryVmaShared) ? 's' : 'p';
++  return MapQueryResult::kFound;
++}
++
+ // Find the mapping entry in /proc/self/maps that contains the given address
+ static bool FindEntryForAddress(void* address, LinuxMapEntry& out_entry) {
+   const uintptr_t addr = reinterpret_cast<uintptr_t>(address);
++  switch (QueryEntryForAddress(addr, out_entry)) {
++    case MapQueryResult::kFound:
++      return true;
++    case MapQueryResult::kNotMapped:
++      return false;
++    case MapQueryResult::kUnsupported:
++      break;
++  }
+   std::ifstream maps("/proc/self/maps");
+   if (!maps.is_open())
+     return false;

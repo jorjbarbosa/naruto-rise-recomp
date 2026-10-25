@@ -16,7 +16,7 @@
 #include "gpu/backend/dispatcher.h"
 #include "gpu/backend/tests/test_backend.h"
 #include "gpu/backend/failure_channel.h"
-#include <windows.h>
+#include <rex/thread.h>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -41,7 +41,7 @@ constexpr const char* kAsyncEvidence = "{\"native\":{\"api\":\"test\",\"result\"
 // A frame lot: a clear of the surface, then CloseFrame with its event; true
 // when the event fired within the bound.
 bool FrameLot(Dispatcher& d, uint32_t key, std::string& evidence) {
-  HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  const FrameEvent event = CreateFrameEvent();
   if (!event) return false;
   const bool closed = d.Run([key, event](Engine& engine, std::string& out) {
     ClearRequest clear;
@@ -51,16 +51,14 @@ bool FrameLot(Dispatcher& d, uint32_t key, std::string& evidence) {
     uint64_t fence = 0, target = 0;
     return engine.ClearSurfaces(clear, fence, out) && engine.CloseFrame(event, target, out);
   }, evidence);
-  const bool completed = closed && WaitForSingleObject(event, 5000) == WAIT_OBJECT_0;
-  CloseHandle(event);
-  return completed;
+  return closed && rex::thread::Wait(event.get(), false, std::chrono::milliseconds(5000)) == rex::thread::WaitResult::kSuccess;
 }
 }  // namespace
 
 int main(int argc, char** argv) {
   if (argc != 2 || std::filesystem::exists(argv[1])) return 2;
   // The debug layer is off by default (backend/d3d12); the host test asks for it.
-  if (!std::getenv("REX_NATIVE_D3D12_DEBUG")) _putenv_s("REX_NATIVE_D3D12_DEBUG", "1");
+  if (!std::getenv("REX_NATIVE_D3D12_DEBUG")) SetTestEnvironment("REX_NATIVE_D3D12_DEBUG", "1");
   std::ofstream output(argv[1]);
   if (!output) return 3;
   bool all = true;

@@ -3,11 +3,13 @@
 gpu_plugin = "xenos"
 # Renderer: "native" (the default) or "xenos" (the emulated GPU),
 # in builds with the native renderer; builds without it always use Xenos.
+# Linux builds have only the native renderer.
 renderer = "native"
 # Native graphics API: "d3d12" or "vulkan" when included in the build.
-# Omit to use D3D12, or Vulkan in a Vulkan-only build. Fixed for the session.
+# Omit to use D3D12, or Vulkan in a Vulkan-only build (Linux). Fixed for the
+# session.
 # native_backend = "d3d12"
-# Graphics card by its name as Windows lists it, for both renderers;
+# Graphics card by its name as the system lists it, for both renderers;
 # empty = automatic.
 graphics_device = ""
 d3d12_readback_resolve = true

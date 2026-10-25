@@ -26,7 +26,7 @@ int main(int argc, char** argv) {
   auto mode = TestRenderMode();
   if (!check("initialize", engine.Initialize(evidence, mode), evidence)) return 3;
   PresentMode present; present.vsync = false;
-  if (!check("attach", engine.AttachWindow(window, evidence, present), evidence)) return 4;
+  if (!check("attach", engine.AttachWindow(platform::WindowHandles(window), evidence, present), evidence)) return 4;
   SurfaceDesc color{0x1000, 64, 36, 0, 4}, depth = color;
   depth.key = 0x2000; depth.format = SurfaceFormat::DepthStencil;
   check("color", engine.CreateSurface(color, evidence), evidence);

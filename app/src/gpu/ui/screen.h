@@ -21,8 +21,8 @@ class Screen {
  public:
   explicit Screen(Layer& layer);
   ~Screen();
-  // window: an HWND. The engine of mode (its API and adapter); nothing stays
-  // open when it fails (evidence).
+  // window: the SDK's native window handle. The engine of mode (its API and
+  // adapter); nothing stays open when it fails (evidence).
   bool Open(void* window, const RenderMode& mode, std::string& evidence);
   void Close();
   bool IsOpen() const { return dispatcher_ != nullptr; }

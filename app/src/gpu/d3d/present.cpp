@@ -17,7 +17,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <dxgiformat.h>
 #include <array>
 #include <chrono>
 #include <atomic>
@@ -33,9 +32,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <windows.h>
-#include <wrl/client.h>
-#include <dxcapi.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <rex/cvar.h>
@@ -57,56 +53,14 @@ rex::ui::Window* DisplayWindow() {
   auto* runtime = rex::Runtime::instance();
   return runtime ? runtime->display_window() : nullptr;
 }
-HWND DisplayHwnd() {
+platform::NativeWindow DisplayNativeWindow() {
   auto* window = DisplayWindow();
-  return window ? static_cast<HWND>(window->GetNativeWindowHandle()) : nullptr;
+  return platform::WindowHandles(window ? window->GetNativeWindowHandle() : nullptr);
 }
 bool InUiThread(std::function<void()> function) {
   auto* runtime = rex::Runtime::instance();
   auto* app = runtime ? runtime->app_context() : nullptr;
   return app && app->CallInUIThreadSynchronous(std::move(function));
-}
-std::pair<uint32_t, uint32_t> ClientSize(HWND hwnd) {
-  RECT r{};
-  if (!hwnd || !GetClientRect(hwnd, &r)) return {0, 0};
-  return {uint32_t(r.right - r.left), uint32_t(r.bottom - r.top)};
-}
-// Waits (bounded) until the client area has this size.
-bool WaitClient(HWND hwnd, uint32_t w, uint32_t h, int ms) {
-  for (int i = 0; i < ms / 10; ++i) {
-    if (ClientSize(hwnd) == std::pair<uint32_t, uint32_t>{w, h}) return true;
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  return ClientSize(hwnd) == std::pair<uint32_t, uint32_t>{w, h};
-}
-// Resizes the window on the UI thread so its client area has w x h pixels.
-bool SetClientSize(HWND hwnd, uint32_t w, uint32_t h) {
-  bool set = false;
-  const bool called = InUiThread([&] {
-    RECT window{}, client{};
-    if (!GetWindowRect(hwnd, &window) || !GetClientRect(hwnd, &client)) return;
-    const LONG fw = (window.right - window.left) - (client.right - client.left);
-    const LONG fh = (window.bottom - window.top) - (client.bottom - client.top);
-    set = SetWindowPos(hwnd, nullptr, 0, 0, LONG(w) + fw, LONG(h) + fh,
-                       SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE) != 0;
-  });
-  return called && set && WaitClient(hwnd, w, h, 2000);
-}
-std::string WindowFacts(HWND hwnd) {
-  HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-  MONITORINFOEXW info{};
-  info.cbSize = sizeof(info);
-  DEVMODEW mode{};
-  mode.dmSize = sizeof(mode);
-  const bool have = monitor && GetMonitorInfoW(monitor, &info);
-  const bool settings = have && EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode);
-  const auto [w, h] = ClientSize(hwnd);
-  const auto awareness = GetAwarenessFromDpiAwarenessContext(GetWindowDpiAwarenessContext(hwnd));
-  return fmt::format("\"client\":[{},{}],\"visible\":{},\"dpi\":{},\"dpi_awareness\":{},\"monitor\":[{},{},{},{}],"
-                     "\"refresh_hz\":{}", w, h, IsWindowVisible(hwnd) != 0, GetDpiForWindow(hwnd), int(awareness),
-                     have ? info.rcMonitor.left : 0, have ? info.rcMonitor.top : 0,
-                     have ? info.rcMonitor.right - info.rcMonitor.left : 0,
-                     have ? info.rcMonitor.bottom - info.rcMonitor.top : 0, settings ? mode.dmDisplayFrequency : 0);
 }
 std::string PresentFile(const std::string& name, const std::vector<uint8_t>& bytes) {
   const char* dir = std::getenv("REX_NATIVE_FRAME_DIR");
@@ -127,34 +81,33 @@ uint64_t PresentCaptures() {
   static const uint64_t value = [] {
     if (!Diagnostics()) return uint64_t(0);
     const char* text = std::getenv("REX_NATIVE_PRESENT_CAPTURES");
-    return text && *text ? std::strtoull(text, nullptr, 10) : 0;
+    return text && *text ? uint64_t(std::strtoull(text, nullptr, 10)) : uint64_t(0);
   }();
   return value;
 }
 std::atomic<uint64_t> presents_posted{0}, presents_done{0}, gamma_posts{0};
 // REX_NATIVE_CLOSE_AFTER_SWAPS=N: at its own Swap N the render thread
-// posts WM_CLOSE to the SDK window, the message of its close box, so a boot
+// posts the close of the SDK window's close box (platform::PostWindowClose), so a boot
 // exercises the window close without a person. Unset or 0: off.
 uint64_t CloseAfterSwaps() {
   static const uint64_t value = [] {
     if (!Diagnostics()) return uint64_t(0);
     const char* text = std::getenv("REX_NATIVE_CLOSE_AFTER_SWAPS");
-    return text && *text ? std::strtoull(text, nullptr, 10) : 0;
+    return text && *text ? uint64_t(std::strtoull(text, nullptr, 10)) : uint64_t(0);
   }();
   return value;
 }
 void MaybePostClose(uint64_t swap) {
   if (!CloseAfterSwaps() || swap != CloseAfterSwaps()) return;
-  HWND hwnd = DisplayHwnd();
-  const bool posted = hwnd && PostMessageW(hwnd, WM_CLOSE, 0, 0);
-  host::Record("native-close-posted", fmt::format("\"swap\":{},\"posted\":{},\"message\":\"WM_CLOSE\"",
+  const bool posted = platform::PostWindowClose(DisplayNativeWindow());
+  host::Record("native-close-posted", fmt::format("\"swap\":{},\"posted\":{},\"message\":\"close-box\"",
                                                               swap, posted));
 }
 std::atomic<bool> window_attached{false};
 // First own Swap: the swapchain on the SDK window, before the first frame end.
 void AttachPresentation(PPCContext& ctx) {
-  HWND hwnd = DisplayHwnd();
-  if (!hwnd) StopInOrder(ctx, "present-window-missing", 88);
+  const platform::NativeWindow window = DisplayNativeWindow();
+  if (window.kind == platform::NativeWindow::Kind::kNone) StopInOrder(ctx, "present-window-missing", 88);
   std::string evidence;
   auto* dispatcher = host::ActiveDispatcher();
   // VSync, tearing, buffers and frame latency of the configuration.
@@ -168,10 +121,10 @@ void AttachPresentation(PPCContext& ctx) {
   mode.cas_sharpness = settings.cas_additional_sharpness;
   mode.fsr_sharpness_reduction = settings.fsr_sharpness_reduction;
   mode.fsr_passes = settings.fsr_max_passes;
-  const bool attached = dispatcher && dispatcher->Run([hwnd, mode](Engine& engine, std::string& out) {
-    return engine.AttachWindow(hwnd, out, mode); }, evidence);
+  const bool attached = dispatcher && dispatcher->Run([window, mode](Engine& engine, std::string& out) {
+    return engine.AttachWindow(window, out, mode); }, evidence);
   host::Record("native-present-attach", fmt::format("\"attached\":{},\"engine\":{},{}", attached,
-                           evidence.empty() ? "null" : evidence, WindowFacts(hwnd)));
+                           evidence.empty() ? "null" : evidence, platform::WindowFacts(window)));
   if (!attached) StopInOrder(ctx, "present-attach-failed", 88);
   window_attached.store(true);
 }

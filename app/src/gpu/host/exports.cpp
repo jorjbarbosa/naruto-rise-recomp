@@ -5,6 +5,7 @@
 #include "gpu/host/app.h"
 #include "gpu/host/internal.h"
 #include "gpu/d3d/d3d.h"
+#include <bit>
 #include <fmt/format.h>
 #include <rex/system/function_dispatcher.h>
 #include <rex/system/kernel_state.h>
@@ -56,7 +57,7 @@ void CheckUserProcedureLookup(PPCContext& ctx) {
   auto* ts = rex::runtime::ThreadState::Get();
   uint32_t raw = 0;
   const bool read = Read(ts->memory(), user_lookup.out, &raw, 4);
-  const uint32_t status = ctx.r3.u32, pointer = _byteswap_ulong(raw);
+  const uint32_t status = ctx.r3.u32, pointer = std::byteswap(raw);
   auto* dispatcher = Kernel()->function_dispatcher();
   auto* function = dispatcher ? dispatcher->GetFunction(user_lookup.target) : nullptr;
   const bool thunk = pointer != user_lookup.target;

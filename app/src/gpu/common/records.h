@@ -7,9 +7,9 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#include <windows.h>
 #include <fmt/format.h>
 #include <rex/system/thread_state.h>
+#include "gpu/common/guest_memory.h"
 #include "gpu/host/services.h"
 
 namespace gpu {
@@ -37,9 +37,7 @@ inline std::string GuestHex(uint8_t* base, uint32_t address, uint32_t size) {
 inline std::string PhysicalHex(uint8_t* base, uint32_t physical, uint32_t size) {
   if (physical >= 0x20000000u || size > 0x10000u || size > 0x20000000u - physical) return "";
   std::vector<uint8_t> bytes(size);
-  SIZE_T copied = 0;
-  if (!ReadProcessMemory(GetCurrentProcess(), base + 0x100000000ull + physical, bytes.data(), size, &copied) ||
-      copied != size) return "";
+  if (!ReadPhysical(base, physical, size, bytes.data())) return "";
   std::string out;
   for (uint8_t b : bytes) out += fmt::format("{:02x}", b);
   return out;

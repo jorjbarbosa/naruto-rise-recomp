@@ -5,6 +5,7 @@
 // reads of the physical mapping (base + 4 GB), the guest thread of the caller,
 // calls of original CPU-only guest functions and the Xenos endian swaps.
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <atomic>
 #include <cstdint>
@@ -12,16 +13,17 @@
 #include <cstring>
 #include <string_view>
 #include <vector>
-#include <windows.h>
+#include <rex/memory/utils.h>
 #include <rex/ppc/context.h>
 #include <rex/system/thread_state.h>
+#include <rex/system/xmemory.h>
 #include "gpu/d3d/d3d.h"
 
 namespace gpu {
-inline uint32_t Get32(uint8_t* base, uint32_t a) { return _byteswap_ulong(*reinterpret_cast<uint32_t*>(base + a)); }
-inline uint16_t Get16(uint8_t* base, uint32_t a) { return _byteswap_ushort(*reinterpret_cast<uint16_t*>(base + a)); }
+inline uint32_t Get32(uint8_t* base, uint32_t a) { return std::byteswap(*reinterpret_cast<uint32_t*>(base + a)); }
+inline uint16_t Get16(uint8_t* base, uint32_t a) { return std::byteswap(*reinterpret_cast<uint16_t*>(base + a)); }
 inline uint8_t Get8(uint8_t* base, uint32_t a) { return base[a]; }
-inline void Put32(uint8_t* base, uint32_t a, uint32_t v) { *reinterpret_cast<uint32_t*>(base + a) = _byteswap_ulong(v); }
+inline void Put32(uint8_t* base, uint32_t a, uint32_t v) { *reinterpret_cast<uint32_t*>(base + a) = std::byteswap(v); }
 inline void Put8(uint8_t* base, uint32_t a, uint8_t v) { base[a] = v; }
 inline float GetFloat(uint8_t* base, uint32_t a) { const uint32_t v = Get32(base, a); float f; std::memcpy(&f, &v, 4); return f; }
 inline void PutFloat(uint8_t* base, uint32_t a, float f) { uint32_t v; std::memcpy(&v, &f, 4); Put32(base, a, v); }
@@ -59,29 +61,37 @@ inline rex::memory::Memory* GuestMemory() {
   return AttachedGuestMemory().load();
 }
 inline uint32_t GuestPhysicalAlias(uint32_t address) { return (((address >> 20) + 0x200) & 0x1000) + (address & 0x1FFFFFFF); }
-// Plain copies from and into guest memory, as the title's own loads and
-// stores; ReadProcessMemory and WriteProcessMemory would make a system call
-// at every access. An address without memory faults into the __except and
-// fails.
-inline bool CopyFromGuest(void* out, const uint8_t* host, size_t size) {
-  __try {
-    std::memcpy(out, host, size);
-    return true;
-  } __except (EXCEPTION_EXECUTE_HANDLER) {
-    return false;
-  }
+// Plain copies from and into the virtual side of guest memory, as the title's
+// own loads and stores (ReadProcessMemory and WriteProcessMemory would make a
+// system call at every access). The SDK's page table of the heap decides
+// first: a range that is not committed whole, or not writable for a store,
+// fails instead of faulting (its host pages have no access). The page
+// protection alone does not tell: a reserved or decommitted page keeps it.
+inline bool VirtualRangeAccessible(rex::memory::Memory* memory, uint32_t address, size_t size, bool write) {
+  if (!memory || !size || uint64_t(address) + size - 1 > UINT32_MAX) return false;
+  auto* heap = memory->LookupHeap(address);
+  if (!heap) return false;
+  const auto access = heap->QueryCommittedRangeAccess(address, uint32_t(address + size - 1));
+  const auto needed = write ? rex::memory::PageAccess::kReadWrite : rex::memory::PageAccess::kReadOnly;
+  return (uint32_t(access) & uint32_t(needed)) == uint32_t(needed);
 }
-inline bool CopyToGuest(uint8_t* host, const uint8_t* bytes, size_t size) {
-  __try {
-    std::memcpy(host, bytes, size);
-    return std::memcmp(host, bytes, size) == 0;
-  } __except (EXCEPTION_EXECUTE_HANDLER) {
-    return false;
-  }
+inline bool CopyFromGuest(rex::memory::Memory* memory, uint32_t address, void* out, size_t size) {
+  if (!VirtualRangeAccessible(memory, address, size, false)) return false;
+  std::memcpy(out, memory->TranslateVirtual(address), size);
+  return true;
 }
+inline bool CopyToGuest(rex::memory::Memory* memory, uint32_t address, const uint8_t* bytes, size_t size) {
+  if (!VirtualRangeAccessible(memory, address, size, true)) return false;
+  uint8_t* host = memory->TranslateVirtual<uint8_t*>(address);
+  std::memcpy(host, bytes, size);
+  return std::memcmp(host, bytes, size) == 0;
+}
+// The physical side (base + 4 GB) is committed whole by the SDK, so a read
+// inside its 512 MB does not fault.
 inline bool ReadPhysical(uint8_t* base, uint32_t physical, uint32_t size, void* out) {
   if (physical >= 0x20000000u || size > 0x20000000u - physical) return false;
-  return CopyFromGuest(out, base + 0x100000000ull + physical, size);
+  std::memcpy(out, base + 0x100000000ull + physical, size);
+  return true;
 }
 inline uint32_t GuestThread() {
   auto* ts = rex::runtime::ThreadState::Get();

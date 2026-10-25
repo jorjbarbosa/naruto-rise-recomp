@@ -11,26 +11,29 @@
 // above the last one. Equal addresses in a row are counted (a recursion shows
 // as one address times its depth).
 //
-// Reads of guest memory check the host page first. A __try does not guard a
-// plain load in this build (clang without -fasync-exceptions covers only the
-// calls inside it): on 2026-10-18 the walk read the guard page above a stack
-// and the process ended inside the handler, before the return addresses.
+// Reads of guest memory check the host page first (platform::ReadableRegion).
+// A __try does not guard a plain load in this build (clang without
+// -fasync-exceptions covers only the calls inside it): on 2026-10-18 the walk
+// read the guard page above a stack and the process ended inside the handler,
+// before the return addresses.
 
 #include "crash_report.h"
 
-#include <windows.h>
-
 #include <atomic>
+#include <bit>
 #include <cstdint>
 #include <cstring>
 #include <string>
 
 #include <fmt/format.h>
+#include <rex/exception_handler.h>
 #include <rex/hook.h>
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
 #include <rex/system/thread_state.h>
 #include <rex/system/xmemory.h>
+
+#include "gpu/common/platform.h"
 
 extern "C" void __imp__sub_8266AE68(PPCContext& __restrict, uint8_t*);
 extern "C" void __imp__sub_8264C358(PPCContext& __restrict, uint8_t*);
@@ -55,7 +58,7 @@ std::atomic<uint32_t> reports{0};
 thread_local bool reporting = false;
 
 uint32_t Load32(const uint8_t* base, uint32_t address) {
-  return _byteswap_ulong(*reinterpret_cast<const uint32_t*>(base + address));
+  return std::byteswap(*reinterpret_cast<const uint32_t*>(base + address));
 }
 
 // Guest reads that cannot fault: the host page must be committed and
@@ -74,11 +77,10 @@ class Reader {
   bool Readable(const uint8_t* host, size_t size) {
     const uintptr_t begin = reinterpret_cast<uintptr_t>(host), end = begin + size;
     if (begin >= begin_ && end <= end_) return true;
-    MEMORY_BASIC_INFORMATION info{};
-    if (!VirtualQuery(host, &info, sizeof(info)) || info.State != MEM_COMMIT) return false;
-    if (!info.Protect || (info.Protect & (PAGE_NOACCESS | PAGE_GUARD))) return false;
-    begin_ = reinterpret_cast<uintptr_t>(info.BaseAddress);
-    end_ = begin_ + info.RegionSize;
+    if (!gpu::platform::ReadableRegion(host, begin_, end_)) {
+      begin_ = end_ = 0;
+      return false;
+    }
     return end <= end_;
   }
   const uint8_t* base_;
@@ -220,32 +222,40 @@ void Report(const char* kind, uint32_t code, uint64_t host_fault) {
   rex::FlushLogging();
 }
 
-// After the SDK's handler (first in the order), which resumes the faults it
-// handles (the write watch, the MMIO windows) and leaves the rest to the
-// search, so the report sees only those. A fault of the report itself passes.
-LONG WINAPI Handler(EXCEPTION_POINTERS* pointers) {
-  if (!pointers || !pointers->ExceptionRecord) return EXCEPTION_CONTINUE_SEARCH;
-  const EXCEPTION_RECORD& record = *pointers->ExceptionRecord;
+// In the SDK's handler chain (rex::arch::ExceptionHandler: a vectored handler on
+// Windows, the signal handlers elsewhere), after its own handlers, which
+// resume the faults they handle (the write watch, the MMIO windows); the
+// report sees only the rest and never handles the fault. A fault of the
+// report itself passes on Windows; elsewhere the signal is blocked while its
+// handler runs, so the system ends the process there. The report formats and
+// logs, which takes memory: a fault inside the allocator can hang it. The
+// chain gives access violations and illegal instructions; the report keeps
+// their Windows codes on every system.
+bool Handler(rex::arch::Exception* ex, void*) {
+  if (!ex) return false;
   const char* kind = nullptr;
-  switch (record.ExceptionCode) {
-    case EXCEPTION_ACCESS_VIOLATION:
-      kind = record.ExceptionInformation[0] == 1 ? "write" : record.ExceptionInformation[0] == 0 ? "read" : "access";
+  uint32_t code = 0;
+  switch (ex->code()) {
+    case rex::arch::Exception::Code::kAccessViolation:
+      switch (ex->access_violation_operation()) {
+        case rex::arch::Exception::AccessViolationOperation::kRead: kind = "read"; break;
+        case rex::arch::Exception::AccessViolationOperation::kWrite: kind = "write"; break;
+        default: kind = "access"; break;
+      }
+      code = 0xC0000005;  // EXCEPTION_ACCESS_VIOLATION
       break;
-    case EXCEPTION_ILLEGAL_INSTRUCTION:
+    case rex::arch::Exception::Code::kIllegalInstruction:
       kind = "illegal instruction";
+      code = 0xC000001D;  // EXCEPTION_ILLEGAL_INSTRUCTION
       break;
-    case EXCEPTION_INT_DIVIDE_BY_ZERO:
-      kind = "integer division by zero";
-      break;
-    default:  // A host stack overflow has no stack for the report.
-      return EXCEPTION_CONTINUE_SEARCH;
+    default:
+      return false;
   }
-  if (reporting || reports.fetch_add(1) >= kMaxReports) return EXCEPTION_CONTINUE_SEARCH;
+  if (reporting || reports.fetch_add(1) >= kMaxReports) return false;
   reporting = true;
-  Report(kind, record.ExceptionCode,
-         record.ExceptionCode == EXCEPTION_ACCESS_VIOLATION ? uint64_t(record.ExceptionInformation[1]) : 0);
+  Report(kind, code, ex->code() == rex::arch::Exception::Code::kAccessViolation ? ex->fault_address() : 0);
   reporting = false;
-  return EXCEPTION_CONTINUE_SEARCH;
+  return false;
 }
 
 // The chain a transform update follows (8266AE68): an object not yet activated
@@ -284,7 +294,7 @@ void Install() {
   static bool installed = false;
   if (installed) return;
   installed = true;
-  AddVectoredExceptionHandler(0, Handler);  // Last.
+  rex::arch::ExceptionHandler::Install(Handler, nullptr);  // After the SDK's own.
 }
 }  // namespace narutorise::crash_report
 

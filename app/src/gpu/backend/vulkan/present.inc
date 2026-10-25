@@ -103,11 +103,50 @@ void Backend::State::ReleaseOutput() {
   for (auto set : output_sets) if (set) vkDestroyDescriptorSetLayout(vulkan->vk, set, nullptr);
   output_layouts = {}; output_sets = {};
   if (window_surface) vkDestroySurfaceKHR(static_cast<plume::VulkanInterface*>(render.get())->instance, window_surface, nullptr);
-  window_surface = VK_NULL_HANDLE; window = nullptr;
+  window_surface = VK_NULL_HANDLE; window = {};
 }
-bool Backend::AttachWindow(void* window, std::string& evidence, const PresentMode& mode) {
+// The surface of a native window, by the WSI of its kind. Wayland's types are
+// not in Plume's headers (it builds for Xlib on Linux); the instance enables
+// VK_KHR_wayland_surface when the loader has it (extend-plume-vulkan.py).
+VkResult CreateWindowSurface(VkInstance instance, const platform::NativeWindow& window, VkSurfaceKHR& surface) {
+  switch (window.kind) {
+#if defined(VK_USE_PLATFORM_WIN32_KHR)
+    case platform::NativeWindow::Kind::kWin32: {
+      VkWin32SurfaceCreateInfoKHR info{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
+      info.hinstance = static_cast<HINSTANCE>(window.display);
+      info.hwnd = static_cast<HWND>(window.window);
+      return vkCreateWin32SurfaceKHR(instance, &info, nullptr, &surface);
+    }
+#endif
+#if defined(VK_USE_PLATFORM_XLIB_KHR)
+    case platform::NativeWindow::Kind::kXlib: {
+      VkXlibSurfaceCreateInfoKHR info{VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR};
+      info.dpy = static_cast<Display*>(window.display);
+      info.window = static_cast<::Window>(reinterpret_cast<uintptr_t>(window.window));
+      return vkCreateXlibSurfaceKHR(instance, &info, nullptr, &surface);
+    }
+#endif
+#if defined(__linux__)
+    case platform::NativeWindow::Kind::kWayland: {
+      const auto create = reinterpret_cast<PFN_vkCreateWaylandSurfaceKHR>(
+          vkGetInstanceProcAddr(instance, "vkCreateWaylandSurfaceKHR"));
+      if (!create) return VK_ERROR_EXTENSION_NOT_PRESENT;
+      VkWaylandSurfaceCreateInfoKHR info{VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR};
+      info.display = static_cast<wl_display*>(window.display);
+      info.surface = static_cast<wl_surface*>(window.window);
+      return create(instance, &info, nullptr, &surface);
+    }
+#endif
+    default:
+      return VK_ERROR_EXTENSION_NOT_PRESENT;
+  }
+}
+bool Backend::AttachWindow(const platform::NativeWindow& window, std::string& evidence, const PresentMode& mode) {
   auto& s = *state_;
-  if (!s.ready || s.owner_thread != GetCurrentThreadId() || s.window || !IsWindow(HWND(window)))
+  uint32_t width = 0, height = 0;
+  const bool sized = platform::ClientSize(window, width, height);
+  if (!s.ready || s.owner_thread != rex::thread::current_thread_system_id() || s.Attached() ||
+      window.kind == platform::NativeWindow::Kind::kNone)
     return GraphicsError(evidence, "native-attach-owner-or-window");
   VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT maintenance{
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT};
@@ -115,17 +154,14 @@ bool Backend::AttachWindow(void* window, std::string& evidence, const PresentMod
   vkGetPhysicalDeviceFeatures2(s.vulkan->physicalDevice, &features);
   if (!maintenance.swapchainMaintenance1)
     return GraphicsError(evidence, "native-vulkan-swapchain-maintenance1-required", VK_ERROR_FEATURE_NOT_PRESENT);
-  VkWin32SurfaceCreateInfoKHR info{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
-  info.hinstance = GetModuleHandleW(nullptr); info.hwnd = HWND(window);
-  VkResult result = vkCreateWin32SurfaceKHR(static_cast<plume::VulkanInterface*>(s.render.get())->instance,
-      &info, nullptr, &s.window_surface);
+  VkResult result = CreateWindowSurface(static_cast<plume::VulkanInterface*>(s.render.get())->instance, window,
+                                        s.window_surface);
   if (result != VK_SUCCESS) return GraphicsError(evidence, "native-vulkan-window-surface", result);
   VkBool32 supported = VK_FALSE;
   result = vkGetPhysicalDeviceSurfaceSupportKHR(s.vulkan->physicalDevice, s.vulkan->queueFamilyIndices[0], s.window_surface, &supported);
   if (result != VK_SUCCESS || !supported) return GraphicsError(evidence, "native-vulkan-window-present-support", result);
-  s.window = HWND(window); s.present_mode = mode;
-  RECT rect{}; GetClientRect(s.window, &rect);
-  if (rect.right > 0 && rect.bottom > 0 && !s.CreateSwapchain(rect.right, rect.bottom, evidence)) return false;
+  s.window = window; s.present_mode = mode;
+  if (sized && !s.CreateSwapchain(width, height, evidence)) return false;
   if (!s.EnsureOutput(evidence)) return false;
   evidence = fmt::format("{{\"attached\":true,\"backend\":\"vulkan\",\"retirement\":\"swapchain_maintenance1 (KHR/EXT)\","
       "\"present_mode\":{},\"buffers\":{},\"effective_frame_latency\":1,\"generation\":{}}}",
@@ -134,25 +170,25 @@ bool Backend::AttachWindow(void* window, std::string& evidence, const PresentMod
 }
 bool Backend::DetachWindow(std::string& evidence) {
   auto& s = *state_;
-  if (!s.ready || s.owner_thread != GetCurrentThreadId()) return GraphicsError(evidence, "native-detach-owner");
+  if (!s.ready || s.owner_thread != rex::thread::current_thread_system_id()) return GraphicsError(evidence, "native-detach-owner");
   if (!WaitIdle(evidence) || !s.RetireSwapchain(evidence)) return false;
   s.ReleaseOutput();
   evidence = "{\"detached\":true,\"presentation_retired\":true}";
   return true;
 }
 bool Backend::SetGammaRamp(const std::array<uint16_t, 768>& words, std::string& evidence) {
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId()) return GraphicsError(evidence, "native-gamma-owner");
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id()) return GraphicsError(evidence, "native-gamma-owner");
   for (size_t i = 0; i < words.size(); ++i) state_->gamma[i] = words[i] >> 6;
   evidence = "{\"gamma\":true}"; return true;
 }
 bool Backend::SetVsync(bool enabled, std::string& evidence) {
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId()) return GraphicsError(evidence, "native-vsync-owner");
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id()) return GraphicsError(evidence, "native-vsync-owner");
   if (state_->present_mode.vsync != enabled) state_->recreate_swapchain = true;
   state_->present_mode.vsync = enabled; evidence = fmt::format("{{\"vsync\":{}}}", enabled); return true;
 }
 bool Backend::StageFront(uint32_t key, uint32_t& slot, std::string& evidence) {
   slot = UINT32_MAX; auto& s = *state_;
-  if (!s.ready || s.owner_thread != GetCurrentThreadId() || !s.window) return GraphicsError(evidence, "native-stage-owner-or-window");
+  if (!s.ready || s.owner_thread != rex::thread::current_thread_system_id() || !s.Attached()) return GraphicsError(evidence, "native-stage-owner-or-window");
   VkImage image{}; SyncState* sync = nullptr; uint64_t* last = nullptr; uint32_t width = 0, height = 0;
   if (auto it = s.textures.find(key); it != s.textures.end() && it->second.texture) {
     auto& t = it->second;
