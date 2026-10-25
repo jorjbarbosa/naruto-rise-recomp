@@ -1,5 +1,4 @@
-; Inno Setup Script para Naruto: Rise of a Ninja (PC Recompilation Port)
-; Requisitos: Inno Setup 6.4+ (ExecAndLogOutput).
+; Compatibility bridge for launcher-based installations. The primary release is a ZIP.
 
 #define MyAppName "Naruto: Rise of a Ninja"
 #ifndef MyAppVersion
@@ -8,14 +7,8 @@
 #ifndef PackageDir
   #define PackageDir "..\dist\naruto-rise-recomp-win-amd64"
 #endif
-#ifndef HelperPath
-  #define HelperPath "..\app\out\build\win-amd64-release\narutorise_setup_helper.exe"
-#endif
 #ifndef SetupAppId
   #define SetupAppId "{{E8B610A5-927A-412E-9C64-42841FA6DE51}"
-#endif
-#ifndef PortBytes
-  #define PortBytes FileSize(PackageDir + "\narutorise.exe") + FileSize(PackageDir + "\narutorise_ai2c.dll") + FileSize(PackageDir + "\rexruntime.dll") + FileSize(PackageDir + "\rexgpu-xenos.dll") + FileSize(PackageDir + "\narutorise_launcher.exe")
 #endif
 #ifndef LegacyUninstallKey
   #define LegacyUninstallKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\NarutoRiseRecomp"
@@ -24,8 +17,18 @@
   #define DefaultInstallDir "{localappdata}\NarutoRisePC"
 #endif
 #define MyAppPublisher "naruto-rise-recomp"
-#define MyAppExeName "narutorise_launcher.exe"
+#define MyAppExeName "narutorise.exe"
 #define MyAppGameExe "narutorise.exe"
+
+#ifndef DesktopRoot
+  #define DesktopRoot "{autodesktop}"
+#endif
+#ifndef StartMenuRoot
+  #define StartMenuRoot "{group}"
+#endif
+#ifndef LegacyStartMenuRoot
+  #define LegacyStartMenuRoot "{userprograms}\Naruto Rise of a Ninja"
+#endif
 
 [Setup]
 AppId={#SetupAppId}
@@ -41,8 +44,8 @@ DisableDirPage=no
 AppendDefaultDirName=no
 DisableWelcomePage=yes
 PrivilegesRequired=lowest
-SetupIconFile=..\launcher\assets\narutorise.ico
-UninstallDisplayIcon={app}\assets\narutorise.ico
+SetupIconFile=..\app\ui\narutorise.ico
+UninstallDisplayIcon={app}\narutorise.exe
 DefaultGroupName=NarutoRisePC
 DisableProgramGroupPage=yes
 OutputDir=..\dist
@@ -81,7 +84,6 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 ; Binários e DLLs da distribuição
 Source: "{#PackageDir}\narutorise.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#PackageDir}\narutorise_launcher.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PackageDir}\narutorise_ai2c.dll"; DestDir: "{app}"; Flags: ignoreversion
 ; Each character DLC engine revision needs its corresponding native module.
 Source: "{#PackageDir}\narutorise_ai2c1.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
@@ -94,26 +96,23 @@ Source: "{#PackageDir}\rexruntime.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PackageDir}\amd_fidelityfx_dx12.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PackageDir}\README.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PackageDir}\shader_cache\555307E5.*"; DestDir: "{app}\shader_cache"; Flags: ignoreversion
-Source: "..\launcher\assets\cover.jpg"; DestDir: "{app}\assets"; Flags: ignoreversion
-Source: "..\launcher\assets\narutorise.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
-Source: "..\launcher\assets\fonts\*"; DestDir: "{app}\assets\fonts"; Flags: ignoreversion
 Source: "{#PackageDir}\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion
 ; Bundled translation: install on new copies and refresh on updates.
 ; Only these owned files are replaced; community packages are left untouched.
 Source: "{#PackageDir}\mods\pt-br\mod.toml"; DestDir: "{app}\mods\pt-br"; Flags: ignoreversion
 Source: "{#PackageDir}\mods\pt-br\texts.json"; DestDir: "{app}\mods\pt-br"; Flags: ignoreversion
 Source: "{#PackageDir}\narutorise.toml"; DestDir: "{app}"; Flags: onlyifdoesntexist uninsneveruninstall
-Source: "..\tools\extract-xiso\extract-xiso.exe"; Flags: dontcopy
-Source: "{#HelperPath}"; Flags: dontcopy
-Source: "{tmp}\narutorise_iso\*"; DestDir: "{app}\{code:GetImportStageName}"; Flags: external ignoreversion recursesubdirs createallsubdirs uninsneveruninstall; Check: IsoExtracted
 
 [Dirs]
 Name: "{app}\game"; Flags: uninsneveruninstall
 
 [Icons]
-Name: "{group}\Naruto - Rise of a Ninja"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\assets\narutorise.ico"
-Name: "{group}\{cm:UninstallProgram,NarutoRisePC}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\Naruto - Rise of a Ninja"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\assets\narutorise.ico"; Tasks: desktopicon
+Name: "{#StartMenuRoot}\Naruto - Rise of a Ninja"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\narutorise.exe"
+Name: "{#StartMenuRoot}\{cm:UninstallProgram,NarutoRisePC}"; Filename: "{uninstallexe}"
+Name: "{#DesktopRoot}\Naruto - Rise of a Ninja"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\narutorise.exe"; Check: ShouldCreateDesktop
+
+; Replace the old portable install.ps1 link only when it belongs to this copy.
+Name: "{#LegacyStartMenuRoot}\Naruto - Rise of a Ninja"; Filename: "{app}\narutorise.exe"; WorkingDir: "{app}"; IconFilename: "{app}\narutorise.exe"; Check: HasLegacyStartMenuLink
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
@@ -138,66 +137,24 @@ italian.ConfirmUninstall=Rimuovere %1?%n%nI file di gioco, la configurazione e i
 russian.ConfirmUninstall=Удалить %1?%n%nФайлы игры, настройки и другие личные файлы будут сохранены.
 
 [CustomMessages]
-english.IsoTitle=Select Game ISO
-english.IsoDescription=Choose your original Naruto: Rise of a Ninja Xbox 360 ISO.
-english.IsoHint=Setup can extract your ISO into the game folder. Leave this field empty to use already extracted files. You can run Setup again to import an ISO later. Game files are not included.
-english.IsoLabel=ISO file:
-english.IsoFilter=ISO images (*.iso)|*.iso|All files (*.*)|*.*
-english.IsoMissing=The selected ISO file does not exist.
-english.IsoSkipped=(skipped - use extracted files or run Setup again later)
-english.ExtractTitle=Extracting game files
-english.ExtractDescription=Please wait while your ISO is extracted. This may take several minutes.
-english.ExtractFailed=Could not extract the ISO. Check the image and available disk space. Existing game files have not been changed.
-english.IsoConflict=The destination contains game data or other files in game. To protect them, leave the ISO field empty or choose another installation folder.
-english.CheckTitle=Checking game ISO
-english.CheckDescription=Checking the game identity and reading the file list...
-english.WrongGame=This image is not Naruto: Rise of a Ninja for Xbox 360 (Title ID 555307E5).
-english.InvalidIso=The image is not a readable Xbox 360 ISO. Check your original game dump.
-english.ImportCanceled=ISO import canceled. No existing game files have been changed. You can retry or install without an ISO.
-english.Canceling=Canceling ISO import. Please wait...
-english.SpaceError=Not enough free space, or available space could not be determined. Check the installation and temporary drives.
-english.SpaceSummary=Game data: %1 MB. Additional space is required for temporary extraction and copying.
-english.Preserved=Game files and configuration will be preserved when uninstalling.
-english.ExistingXex=Found default.xex in the destination. Existing game files will not be replaced.
-english.ExistingOther=The destination has files in game, but no default.xex. They will not be deleted automatically.
-english.EmptyFolder=An empty game folder exists. You can import your ISO here.
-brazilianportuguese.IsoTitle=Selecionar ISO do jogo
-brazilianportuguese.IsoDescription=Escolha sua ISO original de Naruto: Rise of a Ninja para Xbox 360.
-brazilianportuguese.IsoHint=O instalador pode extrair sua ISO para a pasta game. Deixe o campo vazio para usar arquivos já extraídos. Você pode executar o instalador novamente para importar uma ISO depois. Os arquivos do jogo não estão incluídos.
-brazilianportuguese.IsoLabel=Arquivo ISO:
-brazilianportuguese.IsoFilter=Imagens ISO (*.iso)|*.iso|Todos os arquivos (*.*)|*.*
-brazilianportuguese.IsoMissing=O arquivo ISO selecionado não existe.
-brazilianportuguese.IsoSkipped=(ignorada - usar arquivos extraídos ou executar o instalador novamente)
-brazilianportuguese.ExtractTitle=Extraindo arquivos do jogo
-brazilianportuguese.ExtractDescription=Aguarde enquanto sua ISO é extraída. Isso pode levar vários minutos.
-brazilianportuguese.ExtractFailed=Não foi possível extrair a ISO. Verifique a imagem e o espaço livre em disco. Os arquivos existentes do jogo não foram alterados.
-brazilianportuguese.IsoConflict=O destino contém dados do jogo ou outros arquivos em game. Para protegê-los, deixe o campo ISO vazio ou escolha outra pasta de instalação.
-brazilianportuguese.CheckTitle=Verificar ISO do jogo
-brazilianportuguese.CheckDescription=Verificando a identidade do jogo e lendo a lista de arquivos...
-brazilianportuguese.WrongGame=Esta imagem não é Naruto: Rise of a Ninja para Xbox 360 (Title ID 555307E5).
-brazilianportuguese.InvalidIso=A imagem não é uma ISO Xbox 360 legível. Verifique o dump do seu jogo original.
-brazilianportuguese.ImportCanceled=Importação da ISO cancelada. Os arquivos existentes não foram alterados. Você pode tentar novamente ou instalar sem uma ISO.
-brazilianportuguese.Canceling=Cancelando a importação da ISO. Aguarde...
-brazilianportuguese.SpaceError=Não há espaço livre suficiente ou não foi possível consultá-lo. Verifique as unidades de instalação e de arquivos temporários.
-brazilianportuguese.SpaceSummary=Dados do jogo: %1 MB. Também é necessário espaço para extração temporária e cópia.
-brazilianportuguese.Preserved=Os arquivos do jogo e a configuração serão preservados na desinstalação.
-brazilianportuguese.ExistingXex=Foi encontrado default.xex no destino. Os arquivos existentes do jogo não serão substituídos.
-brazilianportuguese.ExistingOther=O destino contém arquivos em game, mas não default.xex. Eles não serão apagados automaticamente.
-brazilianportuguese.EmptyFolder=Existe uma pasta game vazia. Você pode importar sua ISO aqui.
-english.StageExists=Import staging destination already exists: %1
-english.StageCreateFailed=Cannot create import staging destination: %1
+english.LauncherBusy=Close the old launcher and try again. The launcher file could not be reserved for the update.
+brazilianportuguese.LauncherBusy=Feche o launcher antigo e tente novamente. Não foi possível reservar o arquivo do launcher para a atualização.
+french.LauncherBusy=Fermez l'ancien lanceur et réessayez. Son fichier n'a pas pu être réservé pour la mise à jour.
+german.LauncherBusy=Schließe den alten Launcher und versuche es erneut. Seine Datei konnte nicht für das Update reserviert werden.
+spanish.LauncherBusy=Cierra el launcher anterior e inténtalo de nuevo. No se pudo reservar su archivo para la actualización.
+italian.LauncherBusy=Chiudi il vecchio launcher e riprova. Non è stato possibile riservare il suo file per l'aggiornamento.
+russian.LauncherBusy=Закройте старый лаунчер и повторите попытку. Не удалось зарезервировать его файл для обновления.
 english.ConfigReadFailed=Cannot read runtime configuration: %1
 english.ConfigWriteFailed=Cannot write runtime configuration: %1
 english.ActionTitle=Install or update
 english.ActionDescription=Choose how to install version {#MyAppVersion}.
 english.ActionHint=Updates preserve your game files, configuration, saves and DLCs. Close the game and launcher before continuing.
 english.UpdateOption=Update an existing installation
-english.InstallOption=Install a new copy or import an ISO
+english.InstallOption=Install a new copy
 english.UpdateFolderTitle=Select the existing installation
-english.UpdateFolderDescription=Select the folder containing narutorise.exe and narutorise_launcher.exe.
-english.UpdateFolderHint=The files of the PC port will be updated in this folder. You do not need to import your ISO again.
-english.UpdateMissing=No existing installation was found in this folder. Select the folder containing narutorise.exe and narutorise_launcher.exe, or choose a new installation.
-english.UpdateNoIso=Updating does not import an ISO. Remove /GAMEISO or choose a new installation to import game files.
+english.UpdateFolderDescription=Select the folder containing narutorise.exe and rexruntime.dll.
+english.UpdateFolderHint=The files of the PC port will be updated in this folder. The game reads your ISO directly.
+english.UpdateMissing=No existing installation was found in this folder. Select the folder containing narutorise.exe and rexruntime.dll, or choose a new installation.
 english.UpdateSummary=Update existing installation: %1 -> %2
 english.VersionUnknown=unknown version
 english.VersionNewer=This folder contains version %1, which is newer than %2. Use a newer installer to update it.
@@ -205,20 +162,17 @@ english.VersionWriteFailed=Cannot write the installed version: %1
 english.InvalidMode=Invalid setup mode. Use /MODE=update or /MODE=install.
 english.UpdateFinishedTitle=Update complete
 english.UpdateFinished=Version %1 has been installed. Your game files, configuration, saves and DLCs have been preserved.
-brazilianportuguese.StageExists=A pasta temporária de importação já existe: %1
-brazilianportuguese.StageCreateFailed=Não foi possível criar a pasta temporária de importação: %1
 brazilianportuguese.ConfigReadFailed=Não foi possível ler a configuração: %1
 brazilianportuguese.ConfigWriteFailed=Não foi possível gravar a configuração: %1
 brazilianportuguese.ActionTitle=Instalar ou atualizar
 brazilianportuguese.ActionDescription=Escolha como instalar a versão {#MyAppVersion}.
 brazilianportuguese.ActionHint=A atualização preserva os arquivos do jogo, configurações, saves e DLCs. Feche o jogo e o launcher antes de continuar.
 brazilianportuguese.UpdateOption=Atualizar instalação existente
-brazilianportuguese.InstallOption=Instalar uma nova cópia ou importar uma ISO
+brazilianportuguese.InstallOption=Instalar uma nova cópia
 brazilianportuguese.UpdateFolderTitle=Selecionar a instalação existente
-brazilianportuguese.UpdateFolderDescription=Selecione a pasta que contém narutorise.exe e narutorise_launcher.exe.
-brazilianportuguese.UpdateFolderHint=Os arquivos do port para PC serão atualizados nesta pasta. Você não precisa importar sua ISO novamente.
-brazilianportuguese.UpdateMissing=Nenhuma instalação existente foi encontrada nesta pasta. Selecione a pasta que contém narutorise.exe e narutorise_launcher.exe ou escolha uma nova instalação.
-brazilianportuguese.UpdateNoIso=A atualização não importa uma ISO. Remova /GAMEISO ou escolha uma nova instalação para importar os arquivos do jogo.
+brazilianportuguese.UpdateFolderDescription=Selecione a pasta que contém narutorise.exe e rexruntime.dll.
+brazilianportuguese.UpdateFolderHint=Os arquivos do port para PC serão atualizados nesta pasta. O jogo lê sua ISO diretamente.
+brazilianportuguese.UpdateMissing=Nenhuma instalação existente foi encontrada nesta pasta. Selecione a pasta que contém narutorise.exe e rexruntime.dll ou escolha uma nova instalação.
 brazilianportuguese.UpdateSummary=Atualizar instalação existente: %1 -> %2
 brazilianportuguese.VersionUnknown=versão desconhecida
 brazilianportuguese.VersionNewer=Esta pasta contém a versão %1, mais recente que %2. Use um instalador mais recente para atualizá-la.
@@ -235,28 +189,29 @@ brazilianportuguese.UpdateFinished=A versão %1 foi instalada. Os arquivos do jo
 [Code]
 var
   ActionPage: TInputOptionWizardPage;
-  RequestedMode: String;
-  DefaultDirHint: String;
-  IsoPage: TInputFileWizardPage;
-  ExtractPage: TOutputProgressWizardPage;
-  Extracted: Boolean;
-  HelperRunning: Boolean;
-  CancelRequested: Boolean;
-  CancelImportButton: TNewButton;
-  IsoBytes: Int64;
-  IsoFiles: Integer;
-  HelperError: String;
-  HelperPhase: String;
-  ExistingDataLabel: TNewStaticText;
+  RequestedMode, DefaultDirHint: String;
   HadConfig: Boolean;
-  ImportStageName: String;
-  ImportStageOwned: Boolean;
-  ImportPublished: Boolean;
+  LauncherHandle: Integer;
+
+function ReserveLauncherFile(FileName: String; Access, Share: Cardinal;
+  Security: Integer; Creation, Attributes: Cardinal; Template: Integer): Integer;
+  external 'CreateFileW@kernel32.dll stdcall';
+function CloseLauncherFile(Handle: Integer): Boolean;
+  external 'CloseHandle@kernel32.dll stdcall';
+
+procedure ReleaseLauncher;
+begin
+  if LauncherHandle <> -1 then
+  begin
+    CloseLauncherFile(LauncherHandle);
+    LauncherHandle := -1;
+  end;
+end;
 
 function IsExistingInstallation(const Folder: String): Boolean;
 begin
   Result := FileExists(AddBackslash(Folder) + '{#MyAppGameExe}') and
-    FileExists(AddBackslash(Folder) + '{#MyAppExeName}');
+    FileExists(AddBackslash(Folder) + 'rexruntime.dll');
 end;
 
 function SameFolder(const Left, Right: String): Boolean;
@@ -375,60 +330,9 @@ begin
       Result := FmtMessage(CustomMessage('VersionNewer'), [PreviousVersion, '{#MyAppVersion}']);
 end;
 
-function ShouldSkipPage(PageID: Integer): Boolean;
-begin
-  Result := (PageID = IsoPage.ID) and IsUpdate;
-end;
-
-function IsoExtracted: Boolean;
-begin
-  Result := Extracted;
-end;
-
-function GetImportStageName(Param: String): String;
-begin
-  Result := ImportStageName;
-end;
-
-function GetFileAttributesW(Name: String): Cardinal;
-  external 'GetFileAttributesW@kernel32.dll stdcall';
-
-function GameRootIsOccupied: Boolean;
-var
-  Root: String;
-  Find: TFindRec;
-begin
-  Root := ExpandConstant('{app}\game');
-  Result := FileExists(Root);
-  if not DirExists(Root) then Exit;
-  { Never follow an existing junction or symbolic link, even if empty. }
-  if (GetFileAttributesW(Root) and $400) <> 0 then
-  begin
-    Result := True;
-    Exit;
-  end;
-  if FindFirst(Root + '\*', Find) then
-  begin
-    try
-      repeat
-        if (Find.Name <> '.') and (Find.Name <> '..') then Result := True;
-      until Result or not FindNext(Find);
-    finally
-      FindClose(Find);
-    end;
-  end;
-end;
-
-procedure CancelImport(Sender: TObject);
-begin
-  CancelRequested := True;
-  SaveStringToFile(ExpandConstant('{tmp}\cancel-iso'), 'cancel', False);
-  CancelImportButton.Enabled := False;
-  ExtractPage.SetText(CustomMessage('Canceling'), '');
-end;
-
 procedure InitializeWizard;
 begin
+  LauncherHandle := -1;
   RequestedMode := Lowercase(ExpandConstant('{param:MODE|auto}'));
   DefaultDirHint := WizardForm.SelectDirLabel.Caption;
   ActionPage := CreateInputOptionPage(wpWelcome, CustomMessage('ActionTitle'),
@@ -439,26 +343,6 @@ begin
     ((RequestedMode = 'auto') and IsExistingInstallation(WizardDirValue)) then
     ActionPage.SelectedValueIndex := 0
   else ActionPage.SelectedValueIndex := 1;
-  ImportStageName := '.narutorise-import-' + ExtractFileName(ExpandConstant('{tmp}'));
-  IsoPage := CreateInputFilePage(wpSelectDir, CustomMessage('IsoTitle'),
-    CustomMessage('IsoDescription'), CustomMessage('IsoHint'));
-  IsoPage.Add(CustomMessage('IsoLabel'), CustomMessage('IsoFilter'), '.iso');
-  ExtractPage := CreateOutputProgressPage(CustomMessage('ExtractTitle'),
-    CustomMessage('ExtractDescription'));
-  CancelImportButton := TNewButton.Create(WizardForm);
-  CancelImportButton.Parent := ExtractPage.Surface;
-  CancelImportButton.Caption := SetupMessage(msgButtonCancel);
-  CancelImportButton.SetBounds(ExtractPage.SurfaceWidth - ScaleX(90),
-    ExtractPage.ProgressBar.Top + ExtractPage.ProgressBar.Height + ScaleY(20),
-    ScaleX(90), ScaleY(25));
-  CancelImportButton.OnClick := @CancelImport;
-  IsoPage.Values[0] := ExpandConstant('{param:GAMEISO|}');
-  ExistingDataLabel := TNewStaticText.Create(WizardForm);
-  ExistingDataLabel.Parent := IsoPage.Surface;
-  ExistingDataLabel.AutoSize := False;
-  ExistingDataLabel.WordWrap := True;
-  ExistingDataLabel.SetBounds(0, IsoPage.Edits[0].Top + IsoPage.Edits[0].Height + ScaleY(16),
-    IsoPage.SurfaceWidth, ScaleY(60));
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
@@ -478,55 +362,36 @@ begin
     WizardForm.FinishedHeadingLabel.Caption := CustomMessage('UpdateFinishedTitle');
     WizardForm.FinishedLabel.Caption := FmtMessage(CustomMessage('UpdateFinished'), ['{#MyAppVersion}']);
   end;
-  if CurPageID = IsoPage.ID then
-  begin
-    ExistingDataLabel.Caption := '';
-    if FileExists(ExpandConstant('{app}\game\default.xex')) then
-      ExistingDataLabel.Caption := CustomMessage('ExistingXex')
-    else if GameRootIsOccupied then
-      ExistingDataLabel.Caption := CustomMessage('ExistingOther')
-    else if DirExists(ExpandConstant('{app}\game')) then
-      ExistingDataLabel.Caption := CustomMessage('EmptyFolder');
+end;
+
+{ Resolve only our known shortcuts, and preserve shortcuts to other copies. }
+function OwnsShortcut(const Path: String): Boolean;
+var
+  Shell, Link: Variant;
+  Target: String;
+begin
+  Result := False;
+  if not FileExists(Path) then Exit;
+  try
+    Shell := CreateOleObject('WScript.Shell');
+    Link := Shell.CreateShortcut(Path);
+    Target := Link.TargetPath;
+    Result := SameFolder(Target, ExpandConstant('{app}\narutorise_launcher.exe')) or
+      SameFolder(Target, ExpandConstant('{app}\narutorise.exe'));
+  except
+    Log('Could not inspect shortcut: ' + Path);
   end;
 end;
 
-procedure HelperOutput(const S: String; const Error, FirstLine: Boolean);
-var
-  Fields: TStringList;
-  Done, Total: Integer;
+function ShouldCreateDesktop: Boolean;
 begin
-  Log(S);
-  Fields := TStringList.Create;
-  try
-    Fields.Delimiter := '|';
-    Fields.StrictDelimiter := True;
-    Fields.DelimitedText := S;
-    if Fields.Count >= 2 then
-    begin
-      if Fields[0] = 'BYTES' then IsoBytes := StrToInt64Def(Fields[1], 0);
-      if Fields[0] = 'FILES' then IsoFiles := StrToIntDef(Fields[1], 0);
-      if Fields[0] = 'ERROR' then HelperError := Fields[1];
-      if (Fields[0] = 'PROGRESS') and (Fields.Count >= 4) then
-      begin
-        Done := StrToIntDef(Fields[1], 0);
-        Total := StrToIntDef(Fields[2], 0);
-        if not CancelRequested then
-          ExtractPage.SetText(HelperPhase, Fields[3]);
-        if Total > 0 then
-        begin
-          ExtractPage.ProgressBar.Style := npbstNormal;
-          ExtractPage.SetProgress(Done, Total + 1)
-        end
-        else
-        begin
-          ExtractPage.ProgressBar.Style := npbstMarquee;
-          ExtractPage.SetProgress(0, 0);
-        end;
-      end;
-    end;
-  finally
-    Fields.Free;
-  end;
+  Result := WizardIsTaskSelected('desktopicon') or
+    OwnsShortcut(ExpandConstant('{#DesktopRoot}\Naruto - Rise of a Ninja.lnk'));
+end;
+
+function HasLegacyStartMenuLink: Boolean;
+begin
+  Result := OwnsShortcut(ExpandConstant('{#LegacyStartMenuRoot}\Naruto - Rise of a Ninja.lnk'));
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -536,34 +401,15 @@ var
   Lines: TArrayOfString;
   I: Integer;
   FoundLanguage: Boolean;
-  StagePath, GamePath: String;
 begin
-  if (CurStep = ssInstall) and Extracted then
-  begin
-    StagePath := ExpandConstant('{app}\') + ImportStageName;
-    if DirExists(StagePath) or FileExists(StagePath) then
-      RaiseException(FmtMessage(CustomMessage('StageExists'), [StagePath]));
-    if not ForceDirectories(StagePath) then
-      RaiseException(FmtMessage(CustomMessage('StageCreateFailed'), [StagePath]));
-    ImportStageOwned := True;
-  end;
   if CurStep = ssPostInstall then
   begin
-    if Extracted then
-    begin
-      StagePath := ExpandConstant('{app}\') + ImportStageName;
-      GamePath := ExpandConstant('{app}\game');
-      if GameRootIsOccupied then RaiseException(CustomMessage('IsoConflict'));
-      if not FileExists(StagePath + '\default.xex') then
-        RaiseException(CustomMessage('ExtractFailed'));
-      { Only an empty destination may be removed. Publish by same-volume rename,
-        never expose partial game data while copying or during cancellation. }
-      if DirExists(GamePath) then
-        if not RemoveDir(GamePath) then RaiseException(CustomMessage('IsoConflict'));
-      if not RenameFile(StagePath, GamePath) then
-        RaiseException(CustomMessage('ExtractFailed'));
-      ImportPublished := True;
-    end;
+    { Remove only the obsolete executable, after the new files were installed. }
+    ConfigPath := ExpandConstant('{app}\narutorise_launcher.exe');
+    if FileExists(ConfigPath) then
+      if not DeleteFile(ConfigPath) then
+        RaiseException('Cannot remove the old launcher. Close it and run the bridge again.');
+    ReleaseLauncher;
     if not HadConfig then
     begin
       ConfigPath := ExpandConstant('{app}\narutorise.toml');
@@ -609,81 +455,12 @@ begin
   end;
 end;
 
-procedure DeinitializeSetup;
-begin
-  { This unique staging folder was created by this setup invocation only. }
-  if ImportStageOwned and not ImportPublished then
-    DelTree(ExpandConstant('{app}\') + ImportStageName, True, True, True);
-end;
-
-function RunHelper(Params, Title, Description: String): Boolean;
-var
-  ExitCode: Integer;
-begin
-  Result := False;
-  HelperError := '';
-  CancelRequested := False;
-  DeleteFile(ExpandConstant('{tmp}\cancel-iso'));
-  ExtractTemporaryFile('extract-xiso.exe');
-  ExtractTemporaryFile('narutorise_setup_helper.exe');
-  ExtractPage.Caption := Title;
-  ExtractPage.Description := Description;
-  HelperPhase := Description;
-  CancelImportButton.Enabled := True;
-  ExtractPage.SetText(Description, '');
-  ExtractPage.SetProgress(0, 0);
-  ExtractPage.ProgressBar.Style := npbstMarquee;
-  ExtractPage.Show;
-  HelperRunning := True;
-  try
-    Result := ExecAndLogOutput(ExpandConstant('{tmp}\narutorise_setup_helper.exe'),
-      Params, ExpandConstant('{tmp}'), SW_SHOWNORMAL, ewWaitUntilTerminated,
-      ExitCode, @HelperOutput);
-    Result := Result and (ExitCode = 0) and not CancelRequested;
-    if ExitCode = 2 then CancelRequested := True;
-  finally
-    HelperRunning := False;
-    ExtractPage.Hide;
-  end;
-end;
-
-function ImportError: String;
-begin
-  if CancelRequested then Result := CustomMessage('ImportCanceled')
-  else if HelperError = 'WRONG_GAME' then Result := CustomMessage('WrongGame')
-  else if HelperError = 'INVALID_ISO' then Result := CustomMessage('InvalidIso')
-  else Result := CustomMessage('ExtractFailed');
-end;
-
-function CheckIso: Boolean;
-begin
-  IsoBytes := 0;
-  IsoFiles := 0;
-  Result := RunHelper('--check "' + IsoPage.Values[0] + '" "' +
-    ExpandConstant('{tmp}\cancel-iso') + '"', CustomMessage('CheckTitle'),
-    CustomMessage('CheckDescription'));
-  Result := Result and (IsoBytes > 0) and (IsoFiles > 0);
-end;
-
-procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);
-begin
-  if HelperRunning then
-  begin
-    CancelImport(WizardForm);
-    Cancel := False;
-    Confirm := False;
-  end;
-end;
-
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
   Error: String;
 begin
   Result := True;
-  { Silent installs validate in PrepareToInstall, which returns an error
-    without leaving automation waiting at an interactive wizard page. }
   if WizardSilent then Exit;
-  if (CurPageID = ActionPage.ID) and IsUpdate then IsoPage.Values[0] := '';
   if CurPageID = wpSelectDir then
   begin
     Error := DestinationError;
@@ -691,107 +468,40 @@ begin
     begin
       MsgBox(Error, mbError, MB_OK);
       Result := False;
-      Exit;
     end;
-  end;
-  if (CurPageID = IsoPage.ID) and (IsoPage.Values[0] <> '') then
-  begin
-    if not FileExists(IsoPage.Values[0]) then
-    begin
-      MsgBox(CustomMessage('IsoMissing'), mbError, MB_OK);
-      Result := False;
-    end
-    else if GameRootIsOccupied then
-    begin
-      MsgBox(CustomMessage('IsoConflict'), mbError, MB_OK);
-      Result := False;
-    end
-    else if not CheckIso then
-    begin
-      MsgBox(ImportError, mbError, MB_OK);
-      Result := False;
-    end;
-  end;
-  if (CurPageID = IsoPage.ID) and (IsoPage.Values[0] = '') then
-  begin
-    IsoBytes := 0;
-    IsoFiles := 0;
   end;
 end;
 
 function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo,
   MemoTypeInfo, MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
 var
-  IsoSummary: String;
   PreviousVersion: String;
 begin
-  if IsUpdate then
-  begin
-    PreviousVersion := InstalledVersion(WizardDirValue);
-    if PreviousVersion = '' then PreviousVersion := CustomMessage('VersionUnknown');
-    Result := FmtMessage(CustomMessage('UpdateSummary'), [PreviousVersion, '{#MyAppVersion}']) +
-      NewLine + NewLine + MemoDirInfo + NewLine + NewLine + CustomMessage('ActionHint');
-    if MemoTasksInfo <> '' then Result := Result + NewLine + NewLine + MemoTasksInfo;
-    Exit;
-  end;
-  IsoSummary := IsoPage.Values[0];
-  if IsoSummary = '' then IsoSummary := CustomMessage('IsoSkipped');
-  Result := MemoDirInfo + NewLine + NewLine + CustomMessage('IsoLabel') +
-    NewLine + Space + IsoSummary;
+  PreviousVersion := InstalledVersion(WizardDirValue);
+  if PreviousVersion = '' then PreviousVersion := CustomMessage('VersionUnknown');
+  Result := FmtMessage(CustomMessage('UpdateSummary'), [PreviousVersion, '{#MyAppVersion}']) +
+    NewLine + NewLine + MemoDirInfo + NewLine + NewLine + CustomMessage('ActionHint');
   if MemoTasksInfo <> '' then Result := Result + NewLine + NewLine + MemoTasksInfo;
-  if IsoBytes > 0 then Result := Result + NewLine + NewLine +
-    FmtMessage(CustomMessage('SpaceSummary'), [IntToStr((IsoBytes + 1048575) div 1048576)]);
-  Result := Result + NewLine + NewLine + CustomMessage('Preserved');
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
-var
-  ExtractDir: String;
-  DestPath: String;
-  TempFree, TempTotal, DestFree, DestTotal, Required: Int64;
 begin
   Result := DestinationError;
-  Extracted := False;
   if Result <> '' then Exit;
+  ReleaseLauncher;
   HadConfig := FileExists(ExpandConstant('{app}\narutorise.toml'));
-  if IsUpdate then
+  if FileExists(ExpandConstant('{app}\narutorise_launcher.exe')) and (LauncherHandle = -1) then
   begin
-    if IsoPage.Values[0] <> '' then Result := CustomMessage('UpdateNoIso');
-    Exit;
+    { Write access refuses a mapped executable; retaining it prevents a new
+      launcher process from mapping the file while installation is in flight.
+      Share delete allows our postinstall removal while this handle is open. }
+    LauncherHandle := ReserveLauncherFile(ExpandConstant('{app}\narutorise_launcher.exe'),
+      $40010000, 7, 0, 3, 0, 0);
+    if LauncherHandle = -1 then Result := CustomMessage('LauncherBusy');
   end;
-  if IsoPage.Values[0] = '' then Exit;
-  if GameRootIsOccupied then
-  begin
-    Result := CustomMessage('IsoConflict');
-    Exit;
-  end;
-  if not CheckIso then
-  begin
-    Result := ImportError;
-    Exit;
-  end;
-  DestPath := ExpandConstant('{app}');
-  while (not DirExists(DestPath)) and (ExtractFileDir(DestPath) <> DestPath) do
-    DestPath := ExtractFileDir(DestPath);
-  { Conservative requirement on BOTH drives also covers a shared volume:
-    two copies of game data, port files and a 256 MB safety margin. }
-  Required := IsoBytes * 2 + {#PortBytes} + 268435456;
-  if (not GetSpaceOnDisk64(ExpandConstant('{tmp}'), TempFree, TempTotal)) or
-     (not GetSpaceOnDisk64(DestPath, DestFree, DestTotal)) or
-     (TempFree < Required) or (DestFree < Required) then
-  begin
-    Result := CustomMessage('SpaceError');
-    Exit;
-  end;
-  ExtractDir := ExpandConstant('{tmp}\narutorise_iso');
-  DelTree(ExtractDir, True, True, True);
-  ExtractPage.ProgressBar.Style := npbstNormal;
-  Extracted := RunHelper('--extract "' + IsoPage.Values[0] + '" "' + ExtractDir +
-    '" "' + ExpandConstant('{tmp}\cancel-iso') + '" ' + IntToStr(IsoFiles),
-    CustomMessage('ExtractTitle'), CustomMessage('ExtractDescription'));
-  if not Extracted then
-  begin
-    DelTree(ExtractDir, True, True, True);
-    Result := ImportError;
-  end;
+end;
+
+procedure DeinitializeSetup;
+begin
+  ReleaseLauncher;
 end;

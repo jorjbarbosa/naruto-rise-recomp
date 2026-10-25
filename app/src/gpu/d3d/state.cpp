@@ -1,5 +1,6 @@
 // State translation of the D3D boundary (state.h).
 #include "gpu/d3d/state.h"
+#include "gpu/common/constant_delta.h"
 #include "gpu/common/guest_memory.h"
 #include <algorithm>
 #include <cmath>
@@ -62,7 +63,7 @@ void RefreshConstants(uint8_t* base, uint32_t at, uint32_t mask_hi, uint32_t mas
 // register, uint16 count, the registers), merged into runs. Taken at the
 // end of the capture, after its guards; a draw the translation skips gives
 // them back (ReturnConstants), so its groups stay pending.
-void TakeConstants(ConstantShadow& s, bool whole, std::vector<uint8_t>& block, std::vector<uint8_t>& delta) {
+void TakeConstants(ConstantShadow& s, bool whole, ConstantBytes& block, ConstantBytes& delta) {
   block.clear();
   delta.clear();
   if (whole || s.pending == ~0ull) {
@@ -71,19 +72,10 @@ void TakeConstants(ConstantShadow& s, bool whole, std::vector<uint8_t>& block, s
     ++constant_whole_requests;
     return;
   }
-  unsigned g = 0;
-  while (g < 64) {
-    if (!((s.pending >> (63 - g)) & 1)) { ++g; continue; }
-    unsigned e = g;
-    while (e < 64 && ((s.pending >> (63 - e)) & 1)) ++e;
-    const uint16_t first = uint16_t(4 * g), count = uint16_t(4 * (e - g));
-    const size_t at = delta.size();
-    delta.resize(at + 4 + size_t(count) * 16);
-    std::memcpy(&delta[at], &first, 2);
-    std::memcpy(&delta[at + 2], &count, 2);
-    std::memcpy(&delta[at + 4], &s.bytes[size_t(first) * 16], size_t(count) * 16);
-    g = e;
-  }
+  // One allocation for the final packet: 64 bytes per dirty group, plus a
+  // four-byte header for each contiguous run. Growing per run copied earlier
+  // runs again and made several heap allocations for fragmented masks.
+  PackConstantDelta(s.bytes, s.pending, delta);
   s.pending = 0;
   if (!delta.empty()) { ++constant_delta_requests; constant_delta_bytes += delta.size(); }
 }
@@ -99,7 +91,7 @@ void ReturnConstants(ConstantShadow& s, uint64_t pending_before, bool whole, siz
   }
 }
 // The carry of a skipped draw in front of the next request's constants.
-void JoinConstants(ConstantCarry& carry, std::vector<uint8_t>& block, std::vector<uint8_t>& delta) {
+void JoinConstants(ConstantCarry& carry, ConstantBytes& block, ConstantBytes& delta) {
   if (!carry.any()) return;
   if (block.size() == 4096) {
     // The whole block of this draw replaces everything carried.

@@ -2,8 +2,9 @@
 // The own Plume swapchain lives in the engine, on the SDK window that
 // ReXApp::SetupPresentation opens in the native mode (presentation-absent: no
 // SDK presenter). The Swap copies the front buffer into a stage slot and posts
-// its Present right after the frame lot; the gamma ramp of the title
-// (+14988) is applied in the final pass.
+// its Present right after the frame lot, after what the UI layer changed
+// (ui/layer.h); the gamma ramp of the title (+14988) is applied in the final
+// pass, under the UI.
 #include "gpu/d3d/present.h"
 #include "gpu/diagnostics/diagnostics.h"
 #include "gpu/d3d/hooks.h"
@@ -11,6 +12,7 @@
 #include "gpu/common/guest_memory.h"
 #include "gpu/common/sha256.h"
 #include "gpu/settings.h"
+#include "gpu/ui/layer.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -214,11 +216,15 @@ bool PresentFrame(const std::shared_ptr<host::FramePresent>& present) {
   if (!present || !window_attached.load()) return true;
   auto* dispatcher = host::ActiveDispatcher();
   const uint64_t n = presents_posted.fetch_add(1) + 1;
+  // What the UI layer changed since the last Swap, ahead of the Present (FIFO).
+  if (dispatcher) ui::UiLayer().Deliver(*dispatcher);
   return dispatcher && dispatcher->Post([present, n](Engine& engine, std::string& out) {
     std::vector<uint8_t> bgra;
     uint32_t w = 0, h = 0;
     const bool capture = n <= PresentCaptures() || present->capture;
-    const bool ok = engine.Present(present->slot, capture, bgra, w, h, out);
+    bool presented = false;
+    const bool ok = engine.Present(present->slot, capture, bgra, w, h, out, &presented);
+    ui::UiLayer().NotifyPresented(ok, presented);
     const uint64_t done = presents_done.fetch_add(1) + 1;
     if (!ok || capture || (Diagnostics() && (done <= 8 || done % 300 == 0)))
       host::Record("native-present-frame", fmt::format(

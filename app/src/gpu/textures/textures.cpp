@@ -672,6 +672,14 @@ bool BindTexture(uint8_t* base, const ShaderSampler& sampler, bool vertex, bool 
     return false;
   }
   auto& b = texture_bindings[reg];
+  static int32_t filtering = -2;
+  const int32_t requested_filter = CurrentSettings().anisotropic_override;
+  if (filtering != requested_filter) {
+    // Both caches contain decoded sampler state, including the override.
+    texture_bindings = {};
+    texture_translations.map.clear();
+    filtering = requested_filter;
+  }
   const uint64_t generation = texture_registry.Generation(), resolves = texture_content.ResolveGeneration();
   if (!b.valid || b.vertex != vertex || b.fetch_version != fetch_shadow.version[reg] ||
       b.registry_generation != generation || b.resolve_generation != resolves) {

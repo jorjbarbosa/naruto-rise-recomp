@@ -24,6 +24,8 @@ bool IsVersion(const std::string& text) {
   });
 }
 
+}  // namespace
+
 std::string Version() {
   std::ifstream file(rex::filesystem::GetExecutableFolder() / "narutorise.version");
   std::string line;
@@ -39,8 +41,6 @@ std::string Version() {
   return {};
 #endif
 }
-
-}  // namespace
 
 std::string WindowTitle() {
   const std::string version = Version();

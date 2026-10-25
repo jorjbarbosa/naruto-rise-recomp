@@ -92,7 +92,7 @@ class Dispatcher final {
   bool Deferred() const;
   bool OnTranslator() const;  // The calling thread is the translator.
   // Queues a task of the stage; the caller waits while kStageMax tasks are
-  // pending (the title waits when the translator falls behind). False when the
+  // queued (the consumer may own a small local batch). False when the
   // stage is off or closed: the task is dropped. Not for the translator.
   static constexpr size_t kStageMax = 8192;
   bool Enqueue(std::unique_ptr<StageTask> task);

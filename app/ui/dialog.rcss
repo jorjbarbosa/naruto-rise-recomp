@@ -1,0 +1,9 @@
+body { position: absolute; width: 100%; height: 100%; background-color: #0e122080; }
+#dialog { display: block; position: absolute; left: 50%; top: 50%; width: 600dp; max-width: 92%; box-sizing: border-box; transform: translate(-50%, -50%); padding: 24dp 32dp 26.667dp; background-color: #0e1220f7; border: 1.333dp #2a3150; border-left: 3.333dp #c8322b; }
+#dialog-title { display: block; font-family: "Roboto Condensed"; font-size: 28dp; line-height: 32dp; font-weight: bold; text-transform: uppercase; color: #ffffff; margin-bottom: 12dp; }
+#dialog-message { display: block; font-family: Roboto; font-size: 16.667dp; line-height: 25.333dp; color: #c9cfdb; }
+#dialog-actions { display: flex; margin-top: 30.667dp; }
+button { position: relative; display: block; height: 36dp; padding: 0; margin-right: 16dp; border-width: 0; background-color: transparent; tab-index: auto; focus: auto; nav: horizontal; }
+.button-plate { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background-color: #1f2640; transform: skewX(-15deg); }
+.button-label { position: relative; display: block; line-height: 36dp; text-align: center; font-family: "Roboto Condensed"; font-size: 17.333dp; font-weight: bold; text-transform: uppercase; color: #e9ecf4; }
+button:focus .button-plate { background-color: #f2701f; } button:focus .button-label { color: #0e1220; }

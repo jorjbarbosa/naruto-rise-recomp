@@ -1,5 +1,5 @@
 """The SPIR-V of the passes of the native renderer besides the game's shaders, for its
-Vulkan backend: the presentation with the gamma ramp and the resolves
+Vulkan backend: the presentation with the gamma ramp, the UI layer and the resolves
 (app/src/gpu/backend/*.hlsl), FXAA (backend/fxaa) and the output effects of the SDK
 (backend/sdk_shaders/vulkan_spirv).
 
@@ -52,6 +52,8 @@ LAYOUTS = {
                  push_constants=dict(compute=(0, 16))),
     'effect': dict(bindings={0: ('sampled-image', None), 1: ('sampler', 'linear-clamp')},
                    push_constants=dict(vertex=(0, 16), fragment=(16, 48))),
+    'ui': dict(bindings={0: ('sampled-image', None), 1: ('sampler', 'linear-clamp')},
+               push_constants=dict(vertex=(0, 8))),
 }
 SDK_HEADERS = 'sdk_shaders/vulkan_spirv'
 FXAA_SOURCES = ['fxaa/fxaa.hlsli', 'fxaa/FXAA3_11.h']
@@ -78,6 +80,8 @@ PASSES = [
     hlsl('sample_resolve_ps', 'resolve', 'ps', 'sample_resolve.hlsl', 'ps_main'),
     hlsl('fxaa_cs', 'fxaa', 'cs', 'fxaa/fxaa.cs.hlsl', 'main', includes=FXAA_SOURCES),
     hlsl('fxaa_extreme_cs', 'fxaa', 'cs', 'fxaa/fxaa_extreme.cs.hlsl', 'main', includes=FXAA_SOURCES),
+    hlsl('ui_vs', 'ui', 'vs', 'ui_pass.hlsl', 'vs_main'),
+    hlsl('ui_ps', 'ui', 'ps', 'ui_pass.hlsl', 'ps_main'),
     sdk('guest_output_triangle_strip_rect_vs', 'vs'),
     sdk('guest_output_bilinear_ps', 'ps'),
     sdk('guest_output_ffx_cas_sharpen_ps', 'ps'),

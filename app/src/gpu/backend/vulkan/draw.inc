@@ -85,7 +85,7 @@ bool Backend::PrecompilePipeline(const PipelineDesc& desc, bool& present, std::s
   present = false;
   if (!state_->draw_layout || !desc.elements) return GraphicsError(evidence, "native-precompile-not-prepared");
   PipelineDesc d = desc;
-  d.state[8] = state_->render_mode.Samples(d.state[8]);
+  d.state[8] = state_->PipelineSamples(d.state[8]);
   const auto result = state_->pipeline_set.Precompile(VulkanPipelineKey(d), d, present);
   if (!result.ok) return GraphicsError(evidence, result.reason, VkResult(result.code));
   evidence = fmt::format("{{\"precompiled\":true,\"present\":{}}}", present);
@@ -93,7 +93,7 @@ bool Backend::PrecompilePipeline(const PipelineDesc& desc, bool& present, std::s
 }
 bool Backend::PostPipeline(const PipelineDesc& desc) {
   if (!state_->draw_layout || !desc.elements) return false;
-  PipelineDesc d = desc; d.state[8] = state_->render_mode.Samples(d.state[8]);
+  PipelineDesc d = desc; d.state[8] = state_->PipelineSamples(d.state[8]);
   const uint64_t key = VulkanPipelineKey(d);
   return state_->pipeline_set.Post(key, std::move(d), true, false);
 }

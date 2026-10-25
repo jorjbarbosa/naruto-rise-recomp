@@ -38,7 +38,7 @@ mnk_mouse = true
 mnk_sensitivity = 1.0
 # Keys of each controller input: alternatives separated by commas, with the
 # SDK's key names (LMB, RMB and MMB for the mouse buttons). Shift, Control and
-# Alt can be keys of their own. The launcher maps them under Controls.
+# Alt can be keys of their own. Configure them under Settings > Controls.
 keybind_a = "Space"
 keybind_b = "E,Backspace"
 keybind_x = "LMB,J"
@@ -112,7 +112,9 @@ launcher_language = "en"
 # update_data_root = "C:/Games/Naruto - Rise of a Ninja/title_update"
 
 # -----------------------------------------------------------------------------
-# Optional: Custom game data folder (used by the launcher).
+# Optional: Custom game data: the folder with the extracted files, or the disc
+# image itself (.iso, read in place).
 # If empty, the executable auto-detects "game/" or "game_root/" next to it.
 # -----------------------------------------------------------------------------
 # custom_game_root = "C:/Games/Naruto - Rise of a Ninja/game"
+# custom_game_root = "C:/Games/Naruto - Rise of a Ninja.iso"

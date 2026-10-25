@@ -1,4 +1,5 @@
 #pragma once
+#include <span>
 
 // Evidence of the START lot (start_evidence.cpp), a diagnostic of the title
 // screen: its census and occurrence stop, the live inputs and the isolated
@@ -118,7 +119,7 @@ void LoadStartPolicy();
 std::string StartPolicyJson();
 std::vector<uint8_t> BigEndianBytes(const uint32_t* words, size_t count);
 uint32_t HostWord(const std::array<uint8_t, 4096>& host, size_t index);
-uint32_t HostWord(const std::vector<uint8_t>& host, size_t index);
+uint32_t HostWord(std::span<const uint8_t> host, size_t index);
 int StartVariationMode();  // 0 none, 1 B1, -1 not recognized.
 // At the entry of every own draw while B1 is asked, before the original commit.
 StartVariationDraw ApplyStartVariation(PPCContext& ctx, uint8_t* base, uint32_t dev, bool candidate,

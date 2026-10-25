@@ -1,0 +1,15 @@
+body { position: absolute; width: 100%; height: 100%; pointer-events: none; }
+#hint { display: none; position: absolute; left: 50%; margin-left: -19dp; top: 16dp; transform: translateX(-50%); padding: 10.667dp 11.333dp; height: 40dp; box-sizing: border-box; white-space: pre; background-color: #0e1220eb; border-left: 3.333dp #f2701f; }
+body.hint #hint { display: block; }
+#hint-text { font-family: Roboto; font-size: 16dp; line-height: 18.667dp; color: #e9ecf4; }
+#notice { display: none; position: absolute; right: 26.667dp; top: 73.333dp; width: 360dp; min-height: 64dp; box-sizing: border-box; padding: 12.667dp 12dp; background-color: #0e1220eb; border-left: 3.333dp #c8322b; }
+body.notice #notice { display: block; }
+#notice-title { display: block; font-family: "Roboto Condensed"; font-size: 16dp; font-weight: bold; letter-spacing: 1.333dp; text-transform: uppercase; line-height: 18.667dp; color: #f2701f; }
+#notice-text { display: block; margin-top: 2.667dp; font-family: Roboto; font-size: 14.667dp; line-height: 17.333dp; color: #e9ecf4; }
+#notice-action { display: none; position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: auto; border-width: 0; background-color: transparent; }
+body.action #notice-action { display: block; }
+#shaders { display: none; position: absolute; left: 13.333dp; bottom: 13.333dp; width: 266.667dp; height: 53.333dp; box-sizing: border-box; padding: 9.333dp 13.333dp; background-color: #0e1220eb; }
+body.compiling #shaders { display: block; }
+#shader-text { display: block; font-family: "Roboto Condensed"; font-size: 14.667dp; font-weight: bold; text-transform: uppercase; letter-spacing: 1.333dp; line-height: 17.333dp; color: #e9ecf4; }
+#shader-track { display: block; position: relative; width: 240dp; height: 4dp; margin-top: 6.667dp; background-color: #2a3150; }
+#shader-progress { display: block; height: 4dp; background-color: #f2701f; }

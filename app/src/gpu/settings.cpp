@@ -3,6 +3,8 @@
 // runs, the presenter cvars of rexruntime.dll read by name, and the journal
 // fields of the options in use.
 #include "gpu/settings.h"
+#include "gpu/backend/dispatcher.h"
+#include "gpu/host/services.h"
 #include "wine.h"
 #include <algorithm>
 #include <cctype>
@@ -12,8 +14,10 @@
 #include <functional>
 #include <string_view>
 #include <vector>
+#include <mutex>
 #include <fmt/format.h>
 #include <rex/cvar.h>
+#include <rex/logging.h>
 
 // Options of the native renderer without an SDK counterpart: the swapchain
 // latency and buffer count. The defaults: two buffers, frame latency 1.
@@ -71,6 +75,10 @@ REXCVAR_DEFINE_STRING(native_backend, "d3d12", "narutorise/Graphics", "Native re
 namespace gpu {
 namespace {
 Settings settings;
+Settings requested_settings;
+std::mutex settings_mutex;
+uint64_t requested_revision = 0;
+SettingsResult last_result;
 std::string evidence;
 
 // The options that the SDK defines in the Xenos plugin (command_processor.cpp,
@@ -262,7 +270,7 @@ void LoadSettings() {
   s.cas_additional_sharpness = PresenterFloat("present_cas_additional_sharpness", 0.0f, 0.0f, 1.0f);
   s.fsr_sharpness_reduction = PresenterFloat("present_fsr_sharpness_reduction", 0.2f, 0.0f, 2.0f);
   s.fsr_max_passes = uint32_t(PresenterFloat("present_fsr_max_upsampling_passes", 4.0f, 1.0f, 4.0f));
-  settings = s;
+  { std::lock_guard lock(settings_mutex); settings = requested_settings = s; }
 
   std::string sources;
   for (const auto name : kOptions)
@@ -278,6 +286,52 @@ void LoadSettings() {
       s.resolution_scale.y, s.max_frame_latency, s.triple_buffering, s.brightness, s.fsr_max_passes, s.msaa_samples,
       s.transparency_antialiasing, s.frame_rate, Quoted(s.graphics_device), sources);
 }
-const Settings& CurrentSettings() { return settings; }
+Settings CurrentSettings() { std::lock_guard lock(settings_mutex); return settings; }
+Settings RequestedSettings() { std::lock_guard lock(settings_mutex); return requested_settings; }
+uint64_t RequestSettings(Settings next) {
+  std::lock_guard lock(settings_mutex);
+  // The API and adapter belong to the session, even after a saved restart edit.
+  next.native_backend = settings.native_backend;
+  next.graphics_device = settings.graphics_device;
+  requested_settings = std::move(next);
+  return ++requested_revision;
+}
+SettingsResult LastSettingsResult() { std::lock_guard lock(settings_mutex); return last_result; }
+void ApplyPendingSettings(Dispatcher& dispatcher) {
+  Settings next;
+  uint64_t revision;
+  {
+    std::lock_guard lock(settings_mutex);
+    if (requested_revision == last_result.revision) return;
+    revision = requested_revision;
+    next = requested_settings;
+  }
+  PresentMode present;
+  present.vsync = next.vsync; present.allow_tearing = next.allow_tearing;
+  present.buffers = next.triple_buffering ? 3 : 2;
+  present.max_frame_latency = next.max_frame_latency;
+  present.brightness = next.brightness; present.effect = next.present_effect;
+  present.post_effect = next.swap_post_effect; present.cas_sharpness = next.cas_additional_sharpness;
+  present.fsr_sharpness_reduction = next.fsr_sharpness_reduction; present.fsr_passes = next.fsr_max_passes;
+  RenderMode render{next.resolution_scale, next.msaa_samples, next.graphics_device, dispatcher.Api()};
+  std::string detail;
+  const bool applied = dispatcher.Run([render, present, next](Engine& engine, std::string& out) {
+    if (!engine.Reconfigure(render, present, out)) return false;
+    // Publish before the stage may translate any operation after this Run.
+    std::lock_guard lock(settings_mutex);
+    settings = next;
+    return true;
+  }, detail);
+  {
+    std::lock_guard lock(settings_mutex);
+    if (!applied && requested_revision == revision) requested_settings = settings;
+    last_result = {revision, applied, detail};
+  }
+  host::Record("native-live-settings", fmt::format("\"revision\":{},\"applied\":{},\"frame_rate\":{},"
+      "\"anisotropic_override\":{},\"transparency_antialiasing\":{},\"engine\":{}", revision, applied,
+      next.frame_rate, next.anisotropic_override, next.transparency_antialiasing, detail.empty() ? "null" : detail));
+  REXLOG_INFO("[narutorise] Live settings revision {}: applied={}, frame_rate={}, anisotropy={}, transparency_aa={}, {}",
+      revision, applied, next.frame_rate, next.anisotropic_override, next.transparency_antialiasing, detail);
+}
 std::string SettingsEvidence() { return evidence; }
 }  // namespace gpu

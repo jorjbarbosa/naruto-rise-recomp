@@ -80,6 +80,42 @@ UTF-16LE units are covered by the host tests; font coverage remains a separate
 limit. Local captures: [Xenos](../out/translation-fixes-20261020-082055/mixed-xenos/options.png)
 and [native](../out/translation-fixes-20261020-082055/mixed-native/options.png).
 
+## Russian terminology and subtitle references
+
+The initial Russian project glossary is in [`localization/ru`](../localization/ru).
+It uses the user-provided **Alex & Julia** Russian subtitles for Naruto episodes
+**1–81**. Each supported entry includes selected excerpts with episode, ASS line
+number, timestamp and source-file hash. `subtitle-sources.json` identifies all 81
+input files; the full subtitle corpus remains local.
+
+Online research for the seven initially unresolved entries is recorded separately
+in `web-research.json`, including source URLs, access method, corroborated names
+and editorial decisions. Official game/translator sources are distinguished from
+community references for Russian spelling. Palm Healing remains unresolved as a
+specific named-technique equivalence; the literal game label itself is verified.
+
+The glossary distinguishes preferred wording, contextual equivalents and unresolved
+candidates. Subtitle wording does not by itself establish correspondence with an
+English game technique. Notes record composed game labels, source variants and
+conflicts, including the Lotus names. Interface terms are explicitly marked as
+project conventions. These choices do not claim an official Russian localization.
+
+Rebuild the local subtitle index and the spreadsheet/AI exports with:
+
+```powershell
+python -I tools/localization/extract-subtitle-corpus.py "path/to/Russian ASS subtitles" out/ru-subtitles --first 1 --last 81
+python -I tools/localization/export-glossary.py --locale ru
+```
+
+The subtitle index supports terminology review; it does not automatically translate
+or align English and Russian dialogue. Translate from the English game export and
+preserve engine commands and arguments as described above. Cyrillic encoding is
+supported by the TXU codec, but the 2026-10-20 Xenos menu probe displayed only the
+Latin prefix of the supplied Russian label. Cyrillic font coverage and text fit
+must be addressed before claiming a playable Russian package. Local evidence:
+[capture](../out/translation-ru-20261020/glyph-xenos/options.png) and
+[preparation report](../out/translation-ru-20261020/preparation-report.json).
+
 ## Validate a complete translation
 
 Compare the finished dictionary with the original ID/text export before packaging:

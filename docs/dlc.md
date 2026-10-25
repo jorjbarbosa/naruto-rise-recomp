@@ -4,15 +4,17 @@
 
 The project implements installation and enumeration of additional content for Title ID **`555307E5`**, including STFS packages and already extracted folders. Content files must be supplied by the user.
 
-## 1. Install through the launcher
+## 1. Install through the game menu
 
-1. Close the game and open `narutorise_launcher.exe`.
-2. Open the **DLC** tab and select the folder containing your packages or extracted content.
-3. Launch the game to complete installation.
+1. Open **DLC** on the setup screen, or press **F1** / **Back+Start** during play and select **DLC**.
+2. Select the folder containing your packages or extracted content.
+3. For staged STFS packages, start or reopen the game to complete installation.
 
-The launcher recursively searches for packages with `CON `, `LIVE`, or `PIRS` signatures, even without a recognized extension. When packages are found, it copies them to `dlc/` next to `narutorise.exe`. The runtime installs them on the next launch and writes content metadata. If no STFS packages are found, it treats the selection as a folder of already extracted files.
+The DLC page recursively searches for packages with `CON `, `LIVE`, or `PIRS` signatures, even without a recognized extension. When packages are found, it copies them to `dlc/` next to `narutorise.exe`. The runtime installs them on the next launch and writes content metadata. If no STFS packages are found, it treats the selection as a folder of already extracted files.
 
-The base game can run without DLC. Each **character DLC** requires its matching recompiled engine module; copying content packages alone does not create these DLLs.
+Staged packages show the name from their metadata, with the filename as a fallback when no name is available. Once the extracted content and runtime header exist in the user data folder, the page lists the DLC once as installed, even while the source package remains in `dlc/`.
+
+The page uses the effective user data folder, including `user_data_root` and CLI/environment overrides. The base game can run without DLC. Each **character DLC** requires its matching recompiled engine module; copying content packages alone does not create these DLLs.
 
 | Character DLC | Guest engine | Recompiled module | XEX entry point |
 | --- | --- | --- | --- |
@@ -47,7 +49,7 @@ You can also place packages directly in `dlc/` and launch the game. `dlc_source_
 
 Already installed packages are recognized by their content and corresponding header. The runtime also repairs content from earlier versions, long folder names, and missing headers. Check the log to confirm the result rather than treating the existence of a folder alone as proof of successful installation.
 
-`tools/install-content.ps1` helps copy **already extracted files** and Title Updates; it does not extract STFS packages. The launcher + runtime workflow described above performs that extraction.
+`tools/install-content.ps1` helps copy **already extracted files** and Title Updates; it does not extract STFS packages. The menu + runtime workflow described above performs that extraction.
 
 ## 3. Build with the DLC module
 

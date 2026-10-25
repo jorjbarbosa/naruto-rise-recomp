@@ -17,10 +17,10 @@ Xbox 360 files + manifest + seeds
                   │
     Native EXE + DLLs + runtime
                   │
-       Launcher → game execution
+       narutorise.exe → setup or game
 ```
 
-PowerPC code is translated ahead of time into C++. The ReXGlue runtime provides the services required by the original game, including guest memory, kernel, content, audio, input, and Xenos GPU support. The game draws through one of two renderers, chosen at launch: the native renderer in `app/src/gpu/` (the default), which draws the game's Direct3D calls with Direct3D 12 through Plume, or the SDK's Xenos GPU emulation (with the D3D12 backend on Windows). The launcher has its own D3D11 renderer.
+PowerPC code is translated ahead of time into C++. The ReXGlue runtime provides the services required by the original game, including guest memory, kernel, content, audio, input, and Xenos GPU support. The game draws through the native renderer in `app/src/gpu/` (the default), with Direct3D 12 or Vulkan through Plume, or the SDK's Xenos GPU emulation (D3D12 on Windows). Embedded RmlUi menus share the native renderer; no separate launcher is built.
 
 ## Structure
 
@@ -28,13 +28,12 @@ PowerPC code is translated ahead of time into C++. The ReXGlue runtime provides 
 | --- | --- |
 | `app/src/` | Runtime integration, ultrawide, intros, DLCs, overlay, graphics card selection, save thumbnail guard, and input recording for tests |
 | `app/src/gpu/` | Native renderer (built with `NARUTORISE_NATIVE_RENDERER_BOOTSTRAP=ON`); see [Native renderer](#native-renderer) |
+| `app/src/menu/`, `app/ui/` | Setup and in-game UI, configuration/content models, localization, update notices and embedded assets |
 | `app/narutorise_manifest.toml` | Entrypoint and modules to recompile |
 | `app/*-seeds.toml` | Adjustments and information for analysis/code generation |
 | `app/narutorise.toml` | Default runtime configuration |
 | `app/generated/rexglue.cmake` | Generated CMake/SDK integration |
 | `app/generated/default/`, `ai2c/`, `ai2c1/`, `ai2c2/`, `ai2c3/` | Local code generation outputs |
-| `launcher/src/` | SDL3/ImGui UI (one file per tab in `pages/`), configuration, data discovery, and content management |
-| `launcher/assets/` | Launcher cover art, icon, and fonts |
 | `sdk/` | ReXGlue and dependencies |
 | `patches/sdk/` | Reapplicable local SDK changes |
 | `tools/` | ISO extractor and content utility |
@@ -84,7 +83,8 @@ The shader cache is generated at build time from the local `xeshader.sdb` by `to
 | `codegen-alt-version-dll-modules.patch` | Code generation for alternative module versions, required by the DLC workflow |
 | `d3d12-queue-fence-result-check.patch` | Checks the results of the fence signal and wait separately in the D3D12 command processor's submission wait |
 | `guest-frame-stats.patch` | Enables the guest frame rate measurement in Release builds, feeding the F1/F3 overlays |
-| `mnk-input-driver.patch` | Keyboard and mouse driver: Shift, Control and Alt can be keys of their own without silencing the other keys while held, and the mouse can turn a game camera hooked by the app instead of standing in for the right stick |
+| `mnk-input-driver.patch` | Keyboard/mouse driver: standalone modifiers, immutable per-port host profiles, mapped mouse directions, and direct camera deltas scoped to J1; retains the previous camera integration |
+| `z-controls-v4.patch` | Device identity shared with the native controls UI, metadata refresh, actual SDL capabilities, and extra keyboard/mouse names. Applied after the MnK patch; both recognize an already applied SDK |
 | `obdosdevices-relative-paths.patch` | Relative device path handling |
 | `physical-memory-trace.patch` | Physical memory diagnostics |
 | `ultrawide-presenter.patch` | Anamorphic presentation in the graphics backend |
@@ -121,4 +121,4 @@ The launcher saves the TOML file and starts the game with `--game_data_root`. Fo
 
 Edit seeds, the manifest, and application hooks instead of manually fixing generated C++. Keep disc data and derived sources out of version control, as specified by `.gitignore`. When modifying the SDK, update its corresponding patch and check the result in a clean checkout.
 
-For installer changes, see the [verification guide](installer-status.md). Runtime reports should include data revision, DLC/TU usage, renderer and frame rate, aspect ratio, scale, GPU/driver, and logs to help distinguish content, runtime, and presentation failures.
+For installer changes, see the [bridge tests](../packaging/README.md). Runtime reports should include data revision, DLC/TU usage, renderer and frame rate, aspect ratio, scale, GPU/driver, and logs to help distinguish content, runtime, and presentation failures.

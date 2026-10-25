@@ -674,6 +674,7 @@ REX_HOOK_RAW(sub_82138A20) {
         front, front_physical, width, height, pending, flags, display_record, persist_record, fence_fields,
         previous_fields, device_owner->FenceSummary(), discarded, front_record, dropped_sync_interrupts,
         LimiterSummary()));
+  if (auto* dispatcher = host::ActiveDispatcher()) ApplyPendingSettings(*dispatcher);
   PaceSwap(ctx, base, dev);  // Last, after the present.
   MeterSwap();  // The frame-time meter of the window title.
 }

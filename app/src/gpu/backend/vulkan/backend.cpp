@@ -10,8 +10,10 @@
 // command list goes to the queue only through FailureChannel::Authorize.
 //
 // Draws and resolves are in draw.inc/resolve.inc; presentation and its WSI
-// retirement are in present.inc/output.inc. They share this batch lifetime.
+// retirement are in present.inc/output.inc, and the UI layer of the Present in
+// ui.inc. They share this batch lifetime.
 #include "gpu/backend/backend.h"
+#include "gpu/backend/reconfigure.h"
 #include "gpu/backend/lifecycle.h"
 #include "gpu/backend/pipeline_set.h"
 #include "gpu/backend/regions.h"
@@ -274,9 +276,14 @@ class Backend final : public gpu::Backend {
   bool DetachWindow(std::string& evidence) override;
   bool SetGammaRamp(const std::array<uint16_t, 768>&, std::string& evidence) override;
   bool SetVsync(bool, std::string& evidence) override;
+  bool Reconfigure(const RenderMode&, const PresentMode&, std::string& evidence) override;
   bool StageFront(uint32_t, uint32_t& slot, std::string& evidence) override;
   bool Present(uint32_t, bool, std::vector<uint8_t>& bgra, uint32_t& width, uint32_t& height,
-               std::string& evidence) override;
+               std::string& evidence, bool& presented) override;
+  bool UploadUiTexture(uint32_t key, uint32_t width, uint32_t height, const std::vector<uint8_t>& rgba,
+                       std::string& evidence) override;
+  bool ReleaseUiTexture(uint32_t key, std::string& evidence) override;
+  bool SetUiFrame(UiFrame frame, std::string& evidence) override;
   std::string ResourceCounts() override;
   bool ReleaseTexture(uint32_t key, std::string& evidence) override;
   bool ReleaseSampled(uint32_t address, std::string& evidence) override;
@@ -334,6 +341,10 @@ struct Backend::State {
   DWORD owner_thread = 0;
   uint64_t epoch = 0;
   RenderMode render_mode;
+  std::atomic<uint32_t> pipeline_msaa{0};
+  uint32_t PipelineSamples(uint32_t guest) const {
+    const uint32_t count = pipeline_msaa.load(); return guest > 1 && count ? count : guest;
+  }
   void Observe(VkResult result) { device_lost = device_lost || result == VK_ERROR_DEVICE_LOST; }
 
   // Submits a recorded command buffer (none: only the fence, the readiness) as
@@ -442,6 +453,7 @@ struct Backend::State {
 
   struct Surface {
     SurfaceDesc desc;
+    SurfaceDesc guest;
     std::unique_ptr<plume::RenderTexture> texture;
     std::unique_ptr<plume::RenderFramebuffer> framebuffer;  // The surface alone: its clears.
     SyncState state;
@@ -556,6 +568,34 @@ struct Backend::State {
   bool OutputEffects(OutputImage& source, BackImage& back, uint32_t x, uint32_t y, uint32_t width, uint32_t height,
                      VkBuffer ramp, VkDeviceSize ramp_offset, std::string& evidence);
   void ReleaseOutput();
+  // The UI layer of the Present (ui.inc): RGBA8 textures by key, each with its
+  // view and descriptor set (key 0 the white texture), the frame of SetUiFrame
+  // and the pipeline of ui_pass.hlsl. A replaced or released texture waits for
+  // the sequence of its last use.
+  struct UiTexture {
+    std::shared_ptr<VmaImage> image;
+    std::shared_ptr<GraphicsResources> objects;  // Its view and the pool of its set.
+    VkDescriptorSet set{};
+    uint32_t width = 0, height = 0;
+    SyncState state;
+    uint64_t last_use = 0;
+  };
+  std::unordered_map<uint32_t, UiTexture> ui_textures;
+  std::vector<UiTexture> retired_ui_textures;
+  UiFrame ui_frame;
+  VkSampler ui_sampler{};
+  VkDescriptorSetLayout ui_set{};
+  VkPipelineLayout ui_layout{};
+  PipelineSet::Pipeline ui_pipeline;
+  // Draws whose texture was released after their frame was set are skipped.
+  uint64_t ui_texture_uploads = 0, ui_frames_drawn = 0, ui_draws_skipped = 0;
+  bool UiFrameVisible() const {
+    return ui_frame.width > 0 && ui_frame.height > 0 && !ui_frame.draws.empty() && !ui_frame.indices.empty();
+  }
+  bool EnsureUiLayer(std::string& evidence);
+  bool WriteUiTexture(uint32_t key, uint32_t width, uint32_t height, const uint8_t* rgba, std::string& evidence);
+  bool DrawUi(BackImage& back, std::string& evidence);
+  void ReleaseUi();
   std::map<std::string, PipelineSet::Pipeline> resolve_pipelines;
   std::array<uint8_t, 4096> vs_block{}, ps_block{};
   bool EnsureGraphics(std::string& evidence);
@@ -585,6 +625,7 @@ struct Backend::State {
 #include "gpu/backend/vulkan/resolve.inc"
 #include "gpu/backend/vulkan/present.inc"
 #include "gpu/backend/vulkan/output.inc"
+#include "gpu/backend/vulkan/ui.inc"
 
 #if defined(NATIVE_RENDERER_ENGINE_FAULT_TEST)
 class Backend::State::Hooks final : public CompletionTestHooks {
@@ -765,6 +806,7 @@ void Backend::State::Reclaim(uint64_t completed) {
     ++buffers_released;
     return true;
   });
+  std::erase_if(retired_ui_textures, [&](const UiTexture& t) { return t.last_use <= completed; });
 }
 
 bool Backend::State::OpenBatch(const char*& reason, VkResult& result) {
@@ -999,6 +1041,7 @@ bool Backend::Initialize(std::string& evidence, const RenderMode& mode) {
     return true;
   };
   state_->render_mode.msaa_samples = SupportedSamples(mode.msaa_samples, msaa_supported);
+  state_->pipeline_msaa.store(state_->render_mode.msaa_samples);
   VkPhysicalDeviceTimelineSemaphoreFeatures timeline{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
   VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &timeline};
   VkPhysicalDeviceDriverProperties driver{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
@@ -1103,6 +1146,7 @@ bool Backend::Shutdown(std::string& evidence) {
   state_->retired_sampled.clear();
   state_->retired_buffers.clear();
   state_->pipeline_set.Clear();
+  state_->ReleaseUi();
   state_->ReleaseGraphics();
   state_->surfaces.clear();
   state_->textures.clear();
@@ -1193,6 +1237,7 @@ bool Backend::CreateSurface(const SurfaceDesc& guest, std::string& evidence) {
       desc.samples == 2 ? plume::RenderSampleCount::COUNT_2 : plume::RenderSampleCount::COUNT_1);
   State::Surface surface;
   surface.desc = desc;
+  surface.guest = guest;
   surface.texture = state_->device->createTexture(depth ?
       plume::RenderTextureDesc::DepthTarget(desc.width, desc.height, plume::RenderFormat::D32_FLOAT_S8_UINT, samples) :
       plume::RenderTextureDesc::ColorTarget(desc.width, desc.height, plume::RenderFormat::R8G8B8A8_UNORM, samples));
@@ -1206,6 +1251,67 @@ bool Backend::CreateSurface(const SurfaceDesc& guest, std::string& evidence) {
   evidence = fmt::format("{{\"created\":true,\"key\":{},\"width\":{},\"height\":{},\"guest_format\":{},"
       "\"host_format\":\"{}\",\"samples\":{},\"live_surfaces\":{}}}", desc.key, desc.width, desc.height,
       desc.guest_format, depth ? "D32_SFLOAT_S8_UINT" : "R8G8B8A8_UNORM", desc.samples, state_->surfaces.size());
+  return true;
+}
+
+bool Backend::Reconfigure(const RenderMode& requested, const PresentMode& present, std::string& evidence) {
+  RenderMode render = requested;
+  auto& s = *state_;
+  if (!s.ready || s.owner_thread != GetCurrentThreadId() || s.operation_poisoned || s.unproved_execution)
+    return GraphicsError(evidence, "native-reconfigure-owner-or-state");
+  if (!ValidLiveModes(s.render_mode, render, present)) return GraphicsError(evidence, "native-reconfigure-mode");
+  render.msaa_samples = SupportedSamples(requested.msaa_samples, [&](uint32_t samples) {
+    for (const auto& [format, usage] : {
+      std::pair{VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT},
+      std::pair{VK_FORMAT_D32_SFLOAT_S8_UINT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT}}) {
+    VkImageFormatProperties props{};
+    if (vkGetPhysicalDeviceImageFormatProperties(s.vulkan->physicalDevice, format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
+        usage | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 0, &props) != VK_SUCCESS ||
+        !(props.sampleCounts & samples)) return false;
+    }
+    return true;
+  });
+  const bool targets = render.scale.x != s.render_mode.scale.x || render.scale.y != s.render_mode.scale.y ||
+                       render.msaa_samples != s.render_mode.msaa_samples;
+  for (const auto& [key, surface] : s.surfaces) {
+    const auto desc = render.Host(surface.guest);
+    if (!desc.width || !desc.height || desc.width > 8192 || desc.height > 8192)
+      return GraphicsError(evidence, "native-reconfigure-surface-size");
+  }
+  if (!WaitIdle(evidence)) return false;
+  const auto old_render = s.render_mode;
+  const auto old_present = s.present_mode;
+  decltype(s.surfaces) old_surfaces;
+  if (targets) {
+    old_surfaces.swap(s.surfaces); s.render_mode = render;
+    for (const auto& [key, surface] : old_surfaces) if (!CreateSurface(surface.guest, evidence)) {
+      s.surfaces.clear(); s.surfaces.swap(old_surfaces); s.render_mode = old_render;
+      return false;
+    }
+  }
+  const bool swap = present.vsync != old_present.vsync || present.allow_tearing != old_present.allow_tearing ||
+                    present.buffers != old_present.buffers;
+  s.present_mode = present;
+  if (swap && s.window) {
+    RECT rect{}; GetClientRect(s.window, &rect);
+    if (rect.right > 0 && rect.bottom > 0) {
+      if (!s.CreateSwapchain(rect.right, rect.bottom, evidence)) {
+        const auto error = evidence;
+        s.present_mode = old_present;
+        std::string rollback;
+        if (!s.CreateSwapchain(rect.right, rect.bottom, rollback)) s.operation_poisoned = true;
+        if (targets) { s.surfaces.clear(); s.surfaces.swap(old_surfaces); s.render_mode = old_render; }
+        evidence = error; return false;
+      }
+    } else s.recreate_swapchain = true;
+  }
+  s.render_mode = render;
+  s.pipeline_msaa.store(render.msaa_samples);
+  evidence = fmt::format("{{\"applied\":true,\"targets_rebuilt\":{},\"surfaces\":{},\"resolved_textures_retained\":{},"
+      "\"scale\":[{},{}],\"msaa_samples\":{},\"vsync\":{},\"brightness\":{},\"buffers\":{},\"effective_frame_latency\":1,"
+      "\"effect\":{},\"post_effect\":{}}}", targets, s.surfaces.size(), s.textures.size(), render.scale.x,
+      render.scale.y, render.msaa_samples, present.vsync, present.brightness, present.buffers,
+      uint32_t(present.effect), uint32_t(present.post_effect));
   return true;
 }
 
@@ -1384,7 +1490,9 @@ std::string Backend::ResourceCounts() {
                      "\"sampled_released\":{},\"sampled_retired\":{},\"views_allocated\":{},\"views_free\":{},"
                      "\"stage_slots\":{},\"swapchain\":{},\"buffers\":{},\"retired_buffers\":{},"
                      "\"buffers_created\":{},\"buffers_released\":{},\"buffers_retired\":{},\"buffer_uploads\":{},"
-                     "\"readbacks\":{},\"batches_in_flight\":{},\"depth_resolves\":{}}}",
+                     "\"readbacks\":{},\"batches_in_flight\":{},\"depth_resolves\":{},\"ui_textures\":{},"
+                     "\"retired_ui_textures\":{},\"ui_texture_uploads\":{},\"ui_frames_drawn\":{},"
+                     "\"ui_draws_skipped\":{}}}",
                      textures, state_->textures.size(), state_->sampled.size(), state_->surfaces.size(),
                      state_->retired_surfaces.size(), state_->retired_textures.size(), state_->textures_released,
                      state_->textures_retired, state_->retired_sampled.size(), state_->sampled_released,
@@ -1393,7 +1501,9 @@ std::string Backend::ResourceCounts() {
                      state_->swapchain != VK_NULL_HANDLE,
                      state_->buffers.size(), state_->retired_buffers.size(), state_->buffers_created,
                      state_->buffers_released, state_->buffers_retired, state_->buffer_uploads,
-                     state_->readbacks.size(), state_->batches_in_flight.size(), state_->depth_resolves);
+                     state_->readbacks.size(), state_->batches_in_flight.size(), state_->depth_resolves,
+                     state_->ui_textures.size() - state_->ui_textures.count(0), state_->retired_ui_textures.size(),
+                     state_->ui_texture_uploads, state_->ui_frames_drawn, state_->ui_draws_skipped);
 }
 
 std::string Backend::PipelineSummary() {

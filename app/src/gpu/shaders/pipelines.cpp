@@ -13,6 +13,7 @@
 // which compile them at the highest priority while the loading screen is up
 // (PrefetchWorldPipelines). REX_NATIVE_PSO_WORLD=0 turns that off.
 #include "gpu/shaders/pipelines.h"
+#include "gpu/common/shader_activity.h"
 #include "gpu/common/title_loading.h"
 #include "gpu/diagnostics/shader_keys.h"
 #include "gpu/d3d/draw.h"
@@ -181,6 +182,7 @@ bool DescribeEntry(size_t i, PipelineDesc& desc, uint32_t& linked, bool& variant
 // One entry of the list on a pool thread: its description, then the engine's
 // PrecompilePipeline.
 void PrecompileEntry(size_t i, Engine& engine) {
+  ShaderBatchEntry counted;
   PipelineDesc desc;
   uint32_t linked = 0;
   bool variant = false;
@@ -237,7 +239,9 @@ void StartPipelinePrecompile() {
   p.threads = std::max(2u, std::thread::hardware_concurrency() * 2 / 3);
   p.started = std::chrono::steady_clock::now();
   p.pool_started.store(true, std::memory_order_release);
+  BeginShaderBatch(uint32_t(kPipelineCache.size()));
   const bool started = dispatcher->StartPool(kPipelineCache.size(), p.threads, PrecompileEntry, [](bool stopped) {
+    EndShaderBatch();
     auto& p = pipeline_precompile;
     std::string failure;
     {
@@ -257,6 +261,7 @@ void StartPipelinePrecompile() {
     // The product has no journal: how long the list took goes to the SDK log.
     if (!host::Journaled()) REXLOG_INFO("[narutorise] Pipeline precompile: {{{}}}", summary);
   });
+  if (!started) EndShaderBatch();
   host::Record("native-d3d-pipeline-precompile-start", fmt::format(
       "\"started\":{},\"list\":{},\"layouts\":{},\"worlds\":{},\"threads\":{},\"identity\":\"{}\",\"swap\":{}",
       started, kPipelineCache.size(), shared.size(), kPipelineWorlds.empty() ? 0 : kPipelineWorlds.size() - 1,

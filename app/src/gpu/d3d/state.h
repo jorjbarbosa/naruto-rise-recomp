@@ -39,7 +39,7 @@ struct ConstantShadow {
 extern ConstantShadow vs_shadow, ps_shadow;  // Render thread only.
 extern std::atomic<uint64_t> state_refreshes, state_reuses;
 void RefreshConstants(uint8_t* base, uint32_t at, uint32_t mask_hi, uint32_t mask_lo, bool full, ConstantShadow& s);
-void TakeConstants(ConstantShadow& s, bool whole, std::vector<uint8_t>& block, std::vector<uint8_t>& delta);
+void TakeConstants(ConstantShadow& s, bool whole, ConstantBytes& block, ConstantBytes& delta);
 // A draw the translation skipped gives back what its take carried: the
 // groups pending before it (pending_before) and the counts of the take (a
 // whole block, or delta_bytes of delta records).
@@ -50,10 +50,10 @@ void ReturnConstants(ConstantShadow& s, uint64_t pending_before, bool whole, siz
 // over a carried delta; a carried whole block takes the delta records) and
 // empties the carry.
 struct ConstantCarry {
-  std::vector<uint8_t> block, delta;
+  ConstantBytes block, delta;
   bool any() const { return !block.empty() || !delta.empty(); }
 };
-void JoinConstants(ConstantCarry& carry, std::vector<uint8_t>& block, std::vector<uint8_t>& delta);
+void JoinConstants(ConstantCarry& carry, ConstantBytes& block, ConstantBytes& delta);
 // After an out-of-band draw replaced the engine's blocks (the isolated START
 // run), the next request carries the whole blocks again.
 void ForceFullConstants();

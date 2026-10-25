@@ -592,7 +592,7 @@ class DeferredGuardSink final : public GuardSink {
 // the next request (the inline route gives them back to the shadow instead).
 ConstantCarry carry_vs, carry_ps;  // Translator only.
 // A capture on the stage, translated and posted by the translator.
-class CaptureTask final : public StageTask {
+class CaptureTask final : public StageTask, public DrawStorageAllocated<CaptureTask> {
  public:
   explicit CaptureTask(DrawCapture&& capture) : capture_(std::move(capture)) {}
   bool Discardable() const override { return true; }
@@ -614,7 +614,7 @@ class CaptureTask final : public StageTask {
 // The quad of BeginVertices on the stage: its capture is translated into
 // the build (the request kept for the take); the take, with the vertices the
 // title wrote (read on the title at the take, as before), posts it.
-class QuadCaptureTask final : public StageTask {
+class QuadCaptureTask final : public StageTask, public DrawStorageAllocated<QuadCaptureTask> {
  public:
   QuadCaptureTask(std::shared_ptr<InlineBuild> build, DrawCapture&& capture)
       : build_(std::move(build)), capture_(std::move(capture)) {}
@@ -1634,7 +1634,7 @@ std::string QuadTraceFields(const PendingDraw& d, const InlineBuild& build, cons
       vertices += fmt::format("{}{}", i ? "," : "", JsonFloat(f));
     }
   }
-  auto registers = [](const std::vector<uint8_t>& block, uint32_t first, uint32_t count, bool nonzero) {
+  auto registers = [](std::span<const uint8_t> block, uint32_t first, uint32_t count, bool nonzero) {
     if (block.size() != 4096) return std::string("\"not-whole\"");
     std::string out;
     for (uint32_t reg = first; reg < first + count; ++reg) {

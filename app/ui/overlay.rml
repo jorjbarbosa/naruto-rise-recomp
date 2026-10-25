@@ -1,0 +1,2 @@
+<rml><head><title>Game menu</title><link type="text/rcss" href="theme.rcss"/><link type="text/rcss" href="overlay.rcss"/></head>
+<body><div id="bar"><div id="bar-tabs"><button class="tab settings" id="overlay-settings"/><button class="tab dlc" id="overlay-dlc"/><button class="tab exit" id="overlay-exit"/></div><span id="overlay-close-hint"/><button id="overlay-close"><span class="cross-one"/><span class="cross-two"/></button></div></body></rml>

@@ -360,13 +360,13 @@ std::vector<uint8_t> GuestConstantBytes(const uint8_t* host, size_t size) {
   return out;
 }
 std::vector<uint8_t> GuestConstantBytes(const std::array<uint8_t, 4096>& host) { return GuestConstantBytes(host.data(), host.size()); }
-std::vector<uint8_t> GuestConstantBytes(const std::vector<uint8_t>& host) { return GuestConstantBytes(host.data(), host.size()); }
+std::vector<uint8_t> GuestConstantBytes(std::span<const uint8_t> host) { return GuestConstantBytes(host.data(), host.size()); }
 uint32_t HostWord(const std::array<uint8_t, 4096>& host, size_t index) {
   uint32_t v = 0;
   std::memcpy(&v, &host[4 * index], 4);
   return v;
 }
-uint32_t HostWord(const std::vector<uint8_t>& host, size_t index) {
+uint32_t HostWord(std::span<const uint8_t> host, size_t index) {
   uint32_t v = 0;
   if (4 * index + 4 <= host.size()) std::memcpy(&v, &host[4 * index], 4);
   return v;

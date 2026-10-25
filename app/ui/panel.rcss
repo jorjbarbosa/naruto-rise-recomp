@@ -1,0 +1,63 @@
+/* The v4 window at 1.5 reference pixels per dp. Column widths are resolved
+   by Panel::Layout, so long labels cannot collapse percentage-sized rows. */
+body { position: absolute; width: 100%; height: 100%; }
+#veil { display: none; position: absolute; left: 0; top: 0; width: 100%; height: 100%; background-color: #0e122059; }
+body.dim #veil { display: block; }
+body.setup #veil { background-color: #0e1220b3; }
+#panel { box-sizing: border-box; display: block; position: absolute; background-color: #0e1220f7; border: 1.333dp #2a3150; }
+#tab-background { position: absolute; left: -1.333dp; top: -1.333dp; width: 100%; height: 50.667dp; background-color: #161b2e; border-bottom: 2dp #f2701f; }
+#tabs { position: absolute; left: 17.333dp; top: 9.333dp; display: flex; height: 30.667dp; }
+button { font-family: "Roboto Condensed"; border-width: 0; background-color: transparent; color: #e9ecf4; tab-index: auto; focus: auto; }
+.tab { position: relative; display: block; height: 30.667dp; margin-right: 5.333dp; padding: 0; nav: horizontal; }
+.tab-plate { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background-color: #1f2640; transform: skewX(-15deg); }
+.tab-label { display: block; position: relative; font-size: 17.333dp; line-height: 30.667dp; font-weight: bold; text-transform: uppercase; color: #9aa3b5; text-align: center; }
+.tab.selected .tab-plate, .tab:focus .tab-plate { background-color: #f2701f; }
+.tab.selected .tab-label, .tab:focus .tab-label { color: #0e1220; }
+#panel-title { display: none; position: absolute; left: 24dp; top: 10.667dp; font-size: 22.667dp; font-weight: bold; }
+body.untabbed #panel-title { display: block; }
+#panel-close { position: absolute; right: 16dp; top: 12dp; width: 28dp; height: 28dp; nav: horizontal; }
+.cross-one, .cross-two { position: absolute; left: 4dp; top: 13dp; width: 20dp; height: 1.333dp; background-color: #9aa3b5; transform: rotate(45deg); }
+.cross-two { transform: rotate(-45deg); }
+#panel-close:focus .cross-one, #panel-close:focus .cross-two { background-color: #f2701f; }
+#divider { position: absolute; top: 51.333dp; bottom: -1.333dp; width: 1.333dp; background-color: #2a3150; }
+#options { display: block; position: absolute; left: 17.333dp; top: 68dp; overflow-y: auto; overflow-x: hidden; }
+#detail { display: block; position: absolute; top: 68dp; overflow-y: auto; overflow-x: hidden; }
+.group { display: flex; align-items: center; height: 24dp; margin-top: 2.667dp; margin-bottom: 5.333dp; }
+.group-title { font-size: 14.667dp; font-weight: bold; letter-spacing: 2dp; text-transform: uppercase; color: #f2701f; flex-shrink: 0; }
+.group-rule { flex-grow: 1; height: 1dp; margin-left: 14dp; background-color: #2a3150; }
+.row { display: block; position: relative; height: 40dp; padding: 0; margin-bottom: 5.333dp; box-sizing: border-box; border-left: 3.333dp transparent; background-color: #161b2e; nav: vertical; text-align: left; }
+.row:focus { border-left-color: #f2701f; background-color: #232c48; }
+.row-name { display: flex; align-items: center; position: absolute; left: 15.333dp; top: 0; height: 40dp; overflow: hidden; }
+.row-label { display: block; min-width: 0; flex-shrink: 1; font-size: 18.667dp; font-weight: bold; white-space: nowrap; overflow: hidden; color: #e9ecf4; }
+.restart { display: block; flex-shrink: 0; margin-left: 8dp; padding: 1.333dp 4dp; font-size: 10dp; line-height: 12dp; letter-spacing: .667dp; font-weight: bold; color: #ffffff; background-color: #c8322b; }
+.value { min-width: 0; display: block; position: absolute; right: 16dp; top: 0; height: 40dp; font-size: 16.667dp; line-height: 40dp; font-weight: normal; white-space: nowrap; overflow: hidden; text-align: right; }
+.modified .current { color: #f2701f; }
+.adjust { display: none; font-size: 21.333dp; color: #f2701f; }
+.adjust.left { margin-right: 12dp; }
+.adjust.right { margin-left: 12dp; }
+.adjustable:focus .adjust { display: inline; }
+h2 { display: block; font-size: 22.667dp; line-height: 26.667dp; font-weight: bold; color: #ffffff; margin-bottom: 10.667dp; }
+p { display: block; font-size: 16.667dp; line-height: 25.333dp; color: #c9cfdb; white-space: pre-wrap; margin-bottom: 16dp; }
+.choice { display: block; height: 40dp; box-sizing: border-box; padding-left: 14.667dp; margin-bottom: 5.333dp; line-height: 40dp; font-size: 16.667dp; background-color: #161b2e; border-left: 3.333dp transparent; text-align: left; nav: vertical; }
+.choice:focus { border-left-color: #f2701f; background-color: #232c48; }
+.choice.chosen { color: #f2701f; }
+#footer { white-space: pre; position: absolute; left: 17.333dp; bottom: 13.333dp; font-size: 13.333dp; color: #6f7890; }
+scrollbarvertical { width: 6dp; background-color: #161b2e; }
+scrollbarvertical slidertrack { width: 6dp; background-color: #161b2e; }
+scrollbarvertical sliderbar { width: 6dp; min-height: 20dp; background-color: #525c7b; }
+
+.value, p, #footer { font-family: Roboto; }
+
+.row.centered { margin-top: 10.667dp; }
+.row.centered + .row.centered { margin-top: 0; }
+.centered .row-name { left: 0; justify-content: center; }
+.centered .row-label { text-align: center; }
+.centered .value { display: none; }
+.good .current { color: #5fd08a; }
+
+.key-arrow { display: inline-block; position: relative; width: 13dp; height: 12dp; vertical-align: middle; }
+.key-arrow.right { transform: rotate(180deg); }
+.shaft, .tip-a, .tip-b { position: absolute; left: 1dp; top: 5dp; height: 1dp; background-color: #6f7890; }
+.shaft { width: 10dp; }
+.tip-a, .tip-b { width: 5dp; transform-origin: 0% 50%; }
+.tip-a { transform: rotate(-45deg); } .tip-b { transform: rotate(45deg); }

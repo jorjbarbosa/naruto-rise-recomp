@@ -23,14 +23,41 @@ set(NARUTORISE_SOURCES
     src/input_replay.cpp
     src/graphics_device.cpp
     src/crash_report.cpp
+    src/game_image.cpp
     src/window_title.cpp
     src/wine.cpp
     src/mouse_camera.cpp
     src/mods/translation_data.cpp
     src/mods/translation_mod.cpp
+    # The menus: RmlUi over the SDK's immediate drawing, with their files embedded,
+    # and the setup screen before the game.
+    src/menu/render_interface.cpp src/menu/assets.cpp src/menu/ui.cpp
+    src/menu/setup_gate.cpp src/menu/setup_screen.cpp
+    src/menu/game_choice.cpp
+    src/menu/dlc.cpp
 )
+# The files that menu/assets.cpp embeds (#embed): a change rebuilds it.
+file(GLOB_RECURSE NARUTORISE_UI_FILES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/ui/*)
+set_source_files_properties(src/menu/assets.cpp PROPERTIES OBJECT_DEPENDS "${NARUTORISE_UI_FILES}")
 
 add_subdirectory(../third_party/nlohmann_json third_party/nlohmann_json)
+
+# The UI of the menus: RmlUi 6.3 over FreeType 2.15.0 (third_party submodules),
+# both static. FreeType without its optional dependencies (the fonts are plain
+# TTF) and RmlUi without samples; RmlUi takes the FreeType target, not a
+# FreeType of the system.
+block()
+    set(BUILD_SHARED_LIBS OFF)
+    foreach(_dependency IN ITEMS ZLIB BZIP2 PNG HARFBUZZ BROTLI HVF)
+        set(FT_DISABLE_${_dependency} ON)
+    endforeach()
+    add_subdirectory(../third_party/freetype third_party/freetype EXCLUDE_FROM_ALL)
+    add_library(Freetype::Freetype ALIAS freetype)
+    set(CMAKE_DISABLE_FIND_PACKAGE_Freetype ON)
+    set(RMLUI_SAMPLES OFF)
+    set(RMLUI_FONT_ENGINE freetype)
+    add_subdirectory(../third_party/rmlui third_party/rmlui EXCLUDE_FROM_ALL)
+endblock()
 
 # The native renderer (opt-in): its own D3D boundary and engine, chosen at
 # launch in place of the Xenos plugin (renderer = "native" in narutorise.toml).
@@ -38,13 +65,15 @@ add_subdirectory(../third_party/nlohmann_json third_party/nlohmann_json)
 option(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP "Build the native renderer next to the Xenos plugin" OFF)
 # The host graphics APIs of the native renderer, apart from the SDK's
 # REXGLUE_USE_VULKAN (the Xenos plugin's). Native builds include both APIs by
-# default, and the launcher offers the same backends as the game.
+# default, and the menu offers the same backends as the game.
 option(NARUTORISE_NATIVE_D3D12 "Build the D3D12 backend of the native renderer" ON)
 option(NARUTORISE_NATIVE_VULKAN "Build the Vulkan backend of the native renderer" ON)
 if(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP AND NOT NARUTORISE_NATIVE_D3D12 AND NOT NARUTORISE_NATIVE_VULKAN)
     message(FATAL_ERROR "Enable at least one native backend: NARUTORISE_NATIVE_D3D12 or NARUTORISE_NATIVE_VULKAN")
 endif()
 if(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP)
+    add_executable(native_draw_storage_test src/gpu/common/tests/draw_storage_test.cpp)
+    target_include_directories(native_draw_storage_test PRIVATE src)
     list(APPEND NARUTORISE_SOURCES
          # The host: configuration, guest kernel exports and the frame lifecycle.
          src/gpu/host/host.cpp src/gpu/host/kernel_video.cpp src/gpu/host/kernel_threading.cpp
@@ -71,6 +100,9 @@ if(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP)
          src/gpu/diagnostics/crash_dump.cpp src/gpu/diagnostics/sampler.cpp
          src/gpu/diagnostics/heap_watch.cpp src/gpu/diagnostics/motion.cpp
          src/gpu/diagnostics/shader_keys.cpp
+         # The UI layer of the Present, the SDK's immediate drawing over it and the UI
+         # screen before the game.
+         src/gpu/ui/layer.cpp src/gpu/ui/immediate_drawer.cpp src/gpu/ui/screen.cpp
          # The logic tick and the transforms of the state interpolation.
          src/gpu/interpolation/tick.cpp src/gpu/interpolation/transforms.cpp
          # The graphics options, under the SDK names.
@@ -95,16 +127,98 @@ if(WIN32)
     list(APPEND NARUTORISE_SOURCES ${CMAKE_CURRENT_BINARY_DIR}/narutorise.rc)
     add_executable(narutorise WIN32 ${NARUTORISE_SOURCES})
     # graphics_device.cpp: the adapters by name.
-    target_link_libraries(narutorise PRIVATE d3d12 dxgi)
+    target_link_libraries(narutorise PRIVATE d3d12 dxgi ole32 shell32 uuid)
 else()
     add_executable(narutorise ${NARUTORISE_SOURCES})
 endif()
-target_link_libraries(narutorise PRIVATE narutorise::json)
+target_link_libraries(narutorise PRIVATE narutorise::json RmlUi::Core)
+add_library(narutorise_menu_components STATIC src/menu/text.cpp src/menu/panel.cpp src/menu/pad_input.cpp
+            src/controls/config.cpp
+            src/controls/service.cpp
+            src/controls/runtime.cpp
+            src/controls/capture.cpp
+            src/menu/controls.cpp src/menu/controls_text.cpp
+            src/menu/input_gate.cpp src/menu/shortcut.cpp
+            src/menu/settings.cpp src/wine.cpp
+            src/menu/localization.cpp src/menu/config_manager.cpp
+            src/menu/key_bindings.cpp src/menu/key_names.cpp
+            src/menu/game_languages.cpp src/menu/graphics_devices.cpp src/mods/translation_data.cpp)
+target_sources(narutorise_menu_components PRIVATE src/menu/content_manager.cpp src/menu/folders.cpp)
+target_sources(narutorise_menu_components PRIVATE src/menu/update_checker.cpp)
+target_sources(narutorise_menu_components PRIVATE src/menu/game_logo.cpp)
+target_include_directories(narutorise_menu_components PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/thirdparty/stb)
+target_include_directories(narutorise_menu_components PUBLIC src)
+target_link_libraries(narutorise_menu_components PUBLIC rex::runtime RmlUi::Core narutorise::json)
+if(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP)
+    target_compile_definitions(narutorise_menu_components PUBLIC NARUTORISE_MENU_NATIVE_RENDERER=1)
+endif()
+if(NARUTORISE_NATIVE_VULKAN)
+    target_compile_definitions(narutorise_menu_components PUBLIC NARUTORISE_NATIVE_VULKAN=1 NARUTORISE_MENU_NATIVE_VULKAN=1)
+    target_include_directories(narutorise_menu_components PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/thirdparty/vulkan-headers/include)
+endif()
+
+add_executable(narutorise_dlc_test EXCLUDE_FROM_ALL tests/dlc_test.cpp)
+add_executable(narutorise_controls_config_test EXCLUDE_FROM_ALL tests/controls_config_test.cpp)
+target_link_libraries(narutorise_controls_config_test PRIVATE narutorise_menu_components)
+add_executable(narutorise_controls_service_test EXCLUDE_FROM_ALL tests/controls_service_test.cpp)
+target_link_libraries(narutorise_controls_service_test PRIVATE narutorise_menu_components)
+add_executable(narutorise_controls_runtime_test EXCLUDE_FROM_ALL tests/controls_runtime_test.cpp)
+target_link_libraries(narutorise_controls_runtime_test PRIVATE narutorise_menu_components)
+add_executable(narutorise_controls_capture_test EXCLUDE_FROM_ALL tests/controls_capture_test.cpp)
+target_link_libraries(narutorise_controls_capture_test PRIVATE narutorise_menu_components)
+# Rebuild the existing configuration/key-name regressions against the same
+# sources and SDK as the game, rather than running old launcher binaries.
+add_executable(narutorise_controls_legacy_config_test EXCLUDE_FROM_ALL tests/config_manager_test.cpp)
+target_link_libraries(narutorise_controls_legacy_config_test PRIVATE narutorise_menu_components)
+add_executable(narutorise_controls_key_names_test EXCLUDE_FROM_ALL tests/key_bindings_test.cpp)
+target_link_libraries(narutorise_controls_key_names_test PRIVATE narutorise_menu_components)
+add_executable(narutorise_controls_replay_test EXCLUDE_FROM_ALL tests/controls_replay_test.cpp src/input_replay.cpp)
+target_link_libraries(narutorise_controls_replay_test PRIVATE narutorise_menu_components)
+target_link_libraries(narutorise_dlc_test PRIVATE narutorise_menu_components)
+if(WIN32)
+    target_link_libraries(narutorise_dlc_test PRIVATE shell32 ole32)
+endif()
+if(WIN32)
+    add_executable(narutorise_menu_input_test EXCLUDE_FROM_ALL tests/menu_input_test.cpp)
+    target_link_libraries(narutorise_menu_input_test PRIVATE narutorise_menu_components)
+endif()
+add_executable(narutorise_updates_test EXCLUDE_FROM_ALL tests/update_checker_test.cpp)
+target_link_libraries(narutorise_updates_test PRIVATE narutorise_menu_components)
+if(NOT NARUTORISE_NATIVE_D3D12)
+    target_compile_definitions(narutorise_menu_components PUBLIC NARUTORISE_NATIVE_D3D12_DISABLED=1 NARUTORISE_MENU_NATIVE_D3D12_DISABLED=1)
+endif()
+if(WIN32)
+    target_link_libraries(narutorise_menu_components PUBLIC d3d12 dxgi ole32 shell32 uuid winhttp)
+endif()
+target_link_libraries(narutorise PRIVATE narutorise_menu_components)
 
 add_executable(narutorise_translation_test EXCLUDE_FROM_ALL
     tests/translation_test.cpp src/mods/translation_data.cpp)
 target_include_directories(narutorise_translation_test PRIVATE src)
 target_link_libraries(narutorise_translation_test PRIVATE rex::runtime narutorise::json)
+
+add_executable(narutorise_game_image_test EXCLUDE_FROM_ALL
+    tests/game_image_test.cpp src/game_image.cpp)
+target_include_directories(narutorise_game_image_test PRIVATE src)
+target_link_libraries(narutorise_game_image_test PRIVATE rex::runtime)
+
+add_executable(narutorise_game_logo_test EXCLUDE_FROM_ALL tests/game_logo_test.cpp)
+target_link_libraries(narutorise_game_logo_test PRIVATE narutorise_menu_components)
+
+add_executable(narutorise_setup_gate_test EXCLUDE_FROM_ALL
+    tests/setup_gate_test.cpp src/menu/setup_gate.cpp)
+target_include_directories(narutorise_setup_gate_test PRIVATE src)
+if(WIN32)
+    target_link_libraries(narutorise_setup_gate_test PRIVATE user32)
+endif()
+
+add_executable(narutorise_game_choice_test EXCLUDE_FROM_ALL
+    tests/game_choice_test.cpp src/menu/game_choice.cpp src/game_image.cpp)
+target_include_directories(narutorise_game_choice_test PRIVATE src)
+target_link_libraries(narutorise_game_choice_test PRIVATE rex::runtime narutorise_menu_components)
+if(WIN32)
+    target_link_libraries(narutorise_game_choice_test PRIVATE ole32 shell32 uuid)
+endif()
 
 add_executable(narutorise_validate_translation_package EXCLUDE_FROM_ALL
     ../tools/localization/validate-package.cpp src/mods/translation_data.cpp)
@@ -153,11 +267,21 @@ if(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP)
                                    NATIVE_RENDERER_ENGINE_FAULT_TEST=1 NARUTORISE_SHADER_CACHE_SPIRV=1
                                    _CRT_SECURE_NO_WARNINGS)
         add_dependencies(native_engine_test_units narutorise_native_shader_cache)
-        foreach(_narutorise_engine_test IN ITEMS latch lifetime failure translation resource depth_resolve depth_only present_edge)
+        foreach(_narutorise_engine_test IN ITEMS latch lifetime failure translation resource depth_resolve depth_only present_edge reconfigure ui)
             add_executable(native_engine_${_narutorise_engine_test}_test
                            src/gpu/backend/tests/${_narutorise_engine_test}_test.cpp)
             target_link_libraries(native_engine_${_narutorise_engine_test}_test PRIVATE native_engine_test_units)
         endforeach()
+        # The UI layer and the SDK's immediate drawing over it, through a dispatcher.
+        add_executable(native_engine_ui_layer_test src/gpu/ui/tests/layer_test.cpp src/gpu/ui/layer.cpp
+                       src/gpu/ui/immediate_drawer.cpp src/menu/setup_gate.cpp)
+        target_link_libraries(native_engine_ui_layer_test PRIVATE native_engine_test_units rex::runtime)
+        # The menus' UI over it: RmlUi, the embedded fonts and documents and the render interface.
+        add_executable(native_engine_menu_test src/menu/tests/ui_test.cpp src/menu/ui.cpp src/menu/assets.cpp
+                       src/menu/render_interface.cpp src/menu/setup_screen.cpp src/gpu/ui/layer.cpp
+                       src/gpu/ui/immediate_drawer.cpp src/gpu/ui/screen.cpp src/menu/dlc.cpp
+                       src/menu/game_choice.cpp src/game_image.cpp)
+          target_link_libraries(native_engine_menu_test PRIVATE native_engine_test_units rex::runtime RmlUi::Core narutorise_menu_components)
         # The Vulkan tests: the completion service (held submissions, injected
         # failures and the race) and the check of the SPIR-V contract.
         foreach(_narutorise_engine_test IN ITEMS completion shader_contract present draw_cache)
@@ -187,6 +311,21 @@ if(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP)
             target_sources(native_engine_draw_cache_test PRIVATE "${_draw_cache_shaders}/draw_cache_${_stage}.h")
         endforeach()
         target_include_directories(native_engine_draw_cache_test PRIVATE "${_draw_cache_shaders}")
+        if(NARUTORISE_NATIVE_D3D12)
+            add_executable(native_engine_bindings_test src/gpu/backend/d3d12/tests/bindings_test.cpp)
+            target_link_libraries(native_engine_bindings_test PRIVATE native_engine_test_units)
+            foreach(_stage IN ITEMS vs ps)
+                add_custom_command(OUTPUT "${_draw_cache_shaders}/bindings_${_stage}.h"
+                    COMMAND "${_draw_cache_thirdparty}/dxc-bin/bin/x64/dxc.exe"
+                        -T ${_stage}_6_0 -E ${_stage}_main -HV 2021
+                        -Vn kBindings_${_stage} -Fh "${_draw_cache_shaders}/bindings_${_stage}.h"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/backend/d3d12/tests/bindings.hlsl"
+                    DEPENDS src/gpu/backend/d3d12/tests/bindings.hlsl
+                            "${_draw_cache_thirdparty}/dxc-bin/bin/x64/dxc.exe" VERBATIM)
+                target_sources(native_engine_bindings_test PRIVATE "${_draw_cache_shaders}/bindings_${_stage}.h")
+            endforeach()
+            target_include_directories(native_engine_bindings_test PRIVATE "${_draw_cache_shaders}")
+        endif()
         # Host test of the Vulkan device (no guest code): clear, upload, copy and
         # readback, with a bounded wait on the submission.
         add_executable(native_vulkan_transfer_test src/gpu/backend/vulkan/tests/transfer_test.cpp)
@@ -221,9 +360,9 @@ foreach(_narutorise_module IN ITEMS ai2c:sub_882227F8 ai2c1:sub_88228C18 ai2c2:s
 endforeach()
 
 # The release version, in the window title when the copy has no
-# narutorise.version file (development builds), as in the launcher. The
-# launcher's directory already makes version.iss a configure dependency.
+# narutorise.version file (development builds).
 set(NARUTORISE_GAME_VERSION_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../packaging/version.iss)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${NARUTORISE_GAME_VERSION_FILE})
 file(STRINGS ${NARUTORISE_GAME_VERSION_FILE} NARUTORISE_GAME_VERSION_LINE REGEX "#define MyAppVersion")
 if(NARUTORISE_GAME_VERSION_LINE MATCHES "\"([^\"]+)\"")
     target_compile_definitions(narutorise PRIVATE NARUTORISE_VERSION="${CMAKE_MATCH_1}")
@@ -265,6 +404,8 @@ if(WIN32)
     endif()
 endif()
 
-# Cross-platform Launcher (SDL3 + Dear ImGui)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../launcher ${CMAKE_CURRENT_BINARY_DIR}/launcher)
-
+# Host regressions migrated from the retired launcher.
+foreach(_case IN ITEMS config_manager key_bindings localization game_languages update_checker)
+    add_executable(narutorise_${_case}_test EXCLUDE_FROM_ALL tests/${_case}_test.cpp)
+    target_link_libraries(narutorise_${_case}_test PRIVATE narutorise_menu_components)
+endforeach()

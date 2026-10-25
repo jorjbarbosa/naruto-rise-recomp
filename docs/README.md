@@ -7,7 +7,6 @@
 - [Project architecture and analysis](architecture.md)
 - [Renderers and frame rate](renderers.md)
 - [Troubleshooting](troubleshooting.md)
-- [Packaging and installer](../packaging/README.md)
-- [Installer verification](installer-status.md)
+- [ZIP packaging and compatibility bridge](../packaging/README.md)
 
 [Back to the project](../README.md)

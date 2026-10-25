@@ -55,6 +55,7 @@ class Engine final {
   // 10-bit value << 6). Used by every later Present until replaced.
   bool SetGammaRamp(const std::array<uint16_t, 768>& words, std::string& evidence);
   bool SetVsync(bool enabled, std::string& evidence);
+  bool Reconfigure(const RenderMode&, const PresentMode&, std::string& evidence);
   // Copies the RGBA8 image of key (an own texture with defined content, or a
   // single-sample color surface) into a stage slot, in the open batch. A front
   // buffer with undefined content is refused. The slot must have been
@@ -65,8 +66,19 @@ class Engine final {
   // The swapchain follows the window size. A minimized (empty) window skips
   // the frame. With capture, the back buffer is read back after the pass
   // (BGRA rows, its size in width and height) and the call waits for it.
+  // Optional result: true only on successful presentation, not an empty-window
+  // skip, occlusion or out-of-date swapchain. Always false after failure.
   bool Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, uint32_t& width, uint32_t& height,
-               std::string& evidence);
+               std::string& evidence, bool* presented = nullptr);
+  // The UI layer of the Present (UiFrame, contracts.h). UploadUiTexture
+  // creates or replaces the RGBA8 texture of a key (not 0) in the open batch;
+  // ReleaseUiTexture releases it once no submitted work can use it (an unknown
+  // key is fine). SetUiFrame keeps the frame every later Present draws over
+  // the image, until the next one; an empty frame draws nothing.
+  bool UploadUiTexture(uint32_t key, uint32_t width, uint32_t height, const std::vector<uint8_t>& rgba,
+                       std::string& evidence);
+  bool ReleaseUiTexture(uint32_t key, std::string& evidence);
+  bool SetUiFrame(UiFrame frame, std::string& evidence);
   // Live own resources (textures of guest headers, surfaces, stage slots).
   std::string ResourceCounts();
   // Releases the own texture of a guest header (a resolve

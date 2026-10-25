@@ -4,31 +4,37 @@
 
 ## Where to configure settings
 
-Use the launcher whenever possible. It reads and saves `narutorise.toml` **next to the executables** when you play or close it. Close both the game and launcher before editing the file manually.
+Use the setup screen or **F1** / **Back+Start** menu. Settings save automatically to `narutorise.toml` **next to the executable**. Hold Shift while opening, or pass `--setup`, to open setup. Close the game before editing the file manually. Options labelled RESTART require reopening the game; API/device changes offer a restart.
 
-The launcher's **Settings** tab lists its groups on the left; the panel below the options describes the option under the mouse:
+Native builds configure controls through **Settings → Controls → Configure controls**, before playing or from the F1 menu. The dedicated four-port configuration is described below.
+
+During play, resolution, brightness, frame rate, VSync, MSAA, FXAA, CAS/FSR, texture filtering, transparency AA, frame latency and triple buffering apply without restarting. The menu waits for the renderer to accept each change; a rejected change restores the previous value. Resolution, MSAA and presentation resource changes can briefly pause rendering. Vulkan keeps effective frame latency at 1 and respects the surface's supported image counts. Skip intro videos affects subsequent video opens.
+
+Graphics API, graphics card, input API, game language/translation and game-file changes retain their restart behavior.
+
+The shared Settings window has tabs and an option list, with descriptions or values in the adjacent panel:
 
 | Group | Options |
 | --- | --- |
 | Game | Game language, skip intro videos |
 | Display | Renderer (Direct3D 12 / Vulkan), graphics card, resolution, brightness, frame rate, VSync, fullscreen |
 | Quality | MSAA, FXAA, post-processing (CAS/FSR), texture filtering, transparency AA |
-| Controls | SDL controllers, the connected controller, keyboard and mouse, mouse camera and sensitivity, key mapping |
-| Advanced | Frame latency, triple buffering |
+| Controls | Dedicated four-port configuration, SDL/XInput backend, global menu shortcuts |
+| Advanced | Frame latency, triple buffering, update checks, desktop shortcut |
 
-**Reset to Recommended** restores the recommended values; the launcher shows the game's version under the cover art.
+Reset actions restore the recommended values for their page. The setup screen shows the installed version.
 
 During development, `app/narutorise.toml` is the template copied by CMake into the build output. Rebuilding can overwrite preferences saved there; make persistent development changes in the template or keep a backup of your configuration.
 
-**Renderer** selects **Direct3D 12** or **Vulkan**, in that order, from the APIs compiled into the game. There is no separate Xenos/native selector. The launcher saves `renderer = "native"` and `native_backend = "d3d12"` or `"vulkan"`; the choice takes effect on the next game launch. Old Xenos selections migrate to the native renderer while preserving a saved native backend. With no backend key, a build containing D3D12 uses it; a Vulkan-only build uses Vulkan. An explicitly requested API that is not compiled in produces an error.
+**Renderer** selects **Direct3D 12** or **Vulkan**, in that order, from the APIs compiled into the game. There is no separate Xenos/native selector. The menu saves `renderer = "native"` and `native_backend = "d3d12"` or `"vulkan"`; the choice takes effect on the next game launch. Old Xenos selections migrate to the native renderer while preserving a saved native backend. With no backend key, a build containing D3D12 uses it; a Vulkan-only build uses Vulkan. An explicitly requested API that is not compiled in produces an error.
 
-Settings exclusive to Xenos are hidden in native-capable launchers. Builds without the native renderer retain their legacy settings and do not offer the native API selector.
+Settings exclusive to Xenos are hidden in native menus. Builds without the native renderer retain their legacy settings and do not offer the native API selector.
 
 Graphics cards are listed by the selected API, using their names rather than sharing adapter indices between DXGI and Vulkan. Changing the API resets the card selection to automatic. Vulkan supports the same render scale, MSAA, gamma/brightness, CAS/FSR and FXAA paths. Its current presentation adapter limits the queue to one pending presentation even when a larger frame latency is configured. VSync uses FIFO; disabling it chooses immediate presentation when tearing is allowed and available, otherwise mailbox or FIFO.
 
 ## Game language
 
-Open **Settings → Game → Game language** in the launcher. The selection is saved with the other settings and applied on the next game launch. Text and voice availability depends on the language assets included in your game files.
+Open **Settings → Game → Game language** in the menu. The selection is saved with the other settings and applied on the next game launch. Text and voice availability depends on the language assets included in your game files.
 
 | Language | `user_language` |
 | --- | --- |
@@ -38,11 +44,11 @@ Open **Settings → Game → Game language** in the launcher. The selection is s
 | Spanish | `5` |
 | Italian | `6` |
 
-For example, set `user_language = 5` in `narutorise.toml` to select Spanish. This preference is independent of `launcher_language`. The launcher preserves manually configured SDK language codes outside this list, displaying them as **Custom (code)** until you select a listed language.
+For example, set `user_language = 5` in `narutorise.toml` to select Spanish. This preference is independent of `launcher_language`. The menu preserves manually configured SDK language codes outside this list, displaying them as **Custom (code)** until you select a listed language.
 
-External [translation mods](translation-mods.md) installed in `mods/` next to the executable appear in this same selector, using only their package names. Selecting one saves `translation_mod = "folder-name"` and `user_language = 1` automatically; selecting an official language clears the mod selection. Installation alone does not activate a package. The list refreshes when the launcher opens, regains focus, or starts the game. If the selected package is missing or invalid, it disappears from the list and English is selected automatically, without a warning. Restoring a package does not reactivate it. Changes take effect on the next game launch.
+External [translation mods](translation-mods.md) installed in `mods/` next to the executable appear in this same selector, using only their package names. Selecting one saves `translation_mod = "folder-name"` and `user_language = 1` automatically; selecting an official language clears the mod selection. Installation alone does not activate a package. The list refreshes when the menu opens, regains focus, or starts the game. If the selected package is missing or invalid, it disappears from the list and English is selected automatically, without a warning. Restoring a package does not reactivate it. Changes take effect on the next game launch.
 
-## Launcher and installer languages
+## Menu and compatibility bridge languages
 
 Both interfaces offer languages in this order:
 
@@ -56,13 +62,13 @@ Both interfaces offer languages in this order:
 | Italian | `"it"` |
 | Russian | `"ru"` |
 
-Use the selector in the launcher's header to change its interface. This does not change the game language: the game selector offers the five native languages listed above plus installed translation packages.
+Use **Settings → Game → Menu language** to change the interface. This does not change the game language: the game selector offers the five native languages listed above plus installed translation packages.
 
-The installer always starts with English selected, independently of the Windows language or a previous installation's language. Numbered installer options preserve the order above. On a fresh installation, the selected installer language becomes the launcher language. Reinstallation preserves existing configuration, including language preferences.
+The installer always starts with English selected, independently of the Windows language or a previous installation's language. Numbered installer options preserve the order above. On a fresh installation, the selected installer language becomes the menu language. Reinstallation preserves existing configuration, including language preferences.
 
 ## Ultrawide
 
-The launcher offers 16:9, 21:9, and 32:9. The patch changes the game's projection constant and passes the target aspect ratio to the SDK presenter, preserving the resolution seen by the original game code.
+Xenos supports 16:9, 21:9, and 32:9 through the TOML settings below. The native menu hides these Xenos-only options. The patch changes the game's projection constant and passes the target aspect ratio to the SDK presenter, preserving the resolution seen by the original game code.
 
 | Aspect ratio | `ultrawide_target_aspect` |
 | --- | --- |
@@ -85,11 +91,11 @@ The values below match `app/narutorise.toml`:
 
 | Key | Value | Effect |
 | --- | --- | --- |
-| `launcher_language` | `"en"` | Launcher interface; see the seven language codes above |
+| `launcher_language` | `"en"` | Menu interface; see the seven language codes above |
 | `user_language` | `1` | Game language; see the language codes above |
 | `translation_mod` | `""` | External translation package under `mods/`; requires English and a restart |
-| `resolution_scale` | `1` | Internal scale, the SDK's (and Xenia's) default; the launcher offers 1× through 4× |
-| `draw_resolution_scale_x`, `draw_resolution_scale_y` | `1`, `1` | Draw scales, synchronized by the launcher |
+| `resolution_scale` | `1` | Internal scale, the SDK's (and Xenia's) default; the menu offers 1× through 4× |
+| `draw_resolution_scale_x`, `draw_resolution_scale_y` | `1`, `1` | Draw scales, synchronized by the menu |
 | `graphics_device` | `""` | Graphics card by the name Windows gives it (both renderers); empty is automatic. See [Graphics card](#graphics-card) |
 | `fullscreen` | `true` | Fullscreen mode |
 | `vsync`, `d3d12_host_vsync` | `true`, `true` | Vertical synchronization |
@@ -98,11 +104,11 @@ The values below match `app/narutorise.toml`:
 | `present_effect` | `"cas"` | Presentation effect; integration depends on the SDK |
 | `skip_intro_videos` | `true` | Skip boot logos (`Ubisoft.bik`, `LOGO_CORPO_EMEA.bik`, `LOGO_CORPO_US.bik`); preserve the campaign opening (`Intro.bik`) |
 | `show_fps_overlay` | `false` | FPS/frametime overlay |
-| `input_backend` | `"sdl"` | SDL input |
-| `mnk_mode` | `false` | Keyboard and mouse as a controller; see [Keyboard and mouse](#keyboard-and-mouse) |
+| `input_backend` | `"sdl"` | Physical input provider (`sdl` or `xinput`); changing it requires a game restart |
+| `mnk_mode` | `false` | Legacy keyboard/mouse selection, imported on migration; native per-port profiles then take precedence |
 | `log_level` | `"info"` | Logging level |
 
-The launcher provides anisotropic filtering up to 16×. The internal `anisotropic_override` value uses the SDK's encoding; select the desired level through the interface.
+The menu provides anisotropic filtering up to 16×. The internal `anisotropic_override` value uses the SDK's encoding; select the desired level through the interface.
 
 `d3d12_readback_resolve = true` and `execute_unclipped_draw_vs_on_cpu = true` are part of the current graphics configuration. The latter is associated with the fix for black flickering during fights, together with the corresponding SDK patch.
 
@@ -117,7 +123,7 @@ Builds with the native renderer (`NARUTORISE_NATIVE_RENDERER_BOOTSTRAP=ON`, see 
 
 [Renderers and frame rate](renderers.md) explains how the two differ, how the native renderer presents 60 and 120 FPS, and its known issues.
 
-The launcher saves `renderer = "native"` for both choices. Xenos remains available as an advanced runtime configuration (`renderer = "xenos"`) when launching the game directly; opening a native-capable launcher migrates that choice to native. Builds without the native renderer use Xenos and retain their legacy options. The following table describes runtime support; Xenos-only controls are hidden in native-capable launchers.
+The menu saves `renderer = "native"` for both choices. Xenos remains available as an advanced runtime configuration (`renderer = "xenos"`) when launching the game directly; opening a native menu migrates that choice to native. Builds without the native renderer use Xenos and retain their legacy options. The following table describes runtime support; Xenos-only controls are hidden in native menus.
 
 | Option | Xenos | Native |
 | --- | --- | --- |
@@ -135,7 +141,7 @@ Native renderer options:
 | --- | --- | --- |
 | `msaa_samples` | `0` | MSAA of the game's multisampled targets: `0` keeps the game's 4×; `2`, `4` or `8` |
 | `transparency_antialiasing` | `false` | Alpha to coverage instead of the alpha test on foliage, fences and other cut-out textures |
-| `frame_rate` | `30` (`60` in the shipped file and the launcher) | Frame rate: `30` keeps the game's; `31` to `240` keep the game's logic at its own step and interpolate the frames in between (the launcher's slider: 30, 60, 120). Where the step is not well below the frame, the frames follow the step instead, so the game keeps its speed: fights (step 1/60 s) show at 60 below `76`, the open world (2/60 s) at 30 from `31` to `37`. With VSync on, it does not go above the monitor's refresh rate |
+| `frame_rate` | `30` (`60` in the shipped file and the menu) | Frame rate: `30` keeps the game's; `31` to `240` keep the game's logic at its own step and interpolate the frames in between (the menu's slider: 30, 60, 120). Where the step is not well below the frame, the frames follow the step instead, so the game keeps its speed: fights (step 1/60 s) show at 60 below `76`, the open world (2/60 s) at 30 from `31` to `37`. With VSync on, it does not go above the monitor's refresh rate |
 | `brightness` | `0.5` | Output brightness; `0.5` is the game's |
 | `internal_resolution_scale` | `0.0` | Fractional internal scale from 1 to 4 (`1.5` = 1920×1080); `0` uses `resolution_scale` |
 | `max_frame_latency` | `1` | Frames queued ahead of the display (1 to 3) |
@@ -143,7 +149,7 @@ Native renderer options:
 
 ## Graphics card
 
-The launcher enumerates graphics cards through the selected API (**Settings → Display → Graphics card**) and saves the chosen name in `graphics_device`. Vulkan and DXGI indices are never shared:
+The menu enumerates graphics cards through the selected API (**Settings → Display → Graphics card**) and saves the chosen name in `graphics_device`. Vulkan and DXGI indices are never shared:
 
 - **Automatic** (`graphics_device = ""`): the native renderer takes the card with the most dedicated video memory; Xenos takes the first card Windows lists.
 - **A named card:** the native renderer asks Plume for it; Xenos sets the SDK's `d3d12_adapter` to its index for that launch only. Vulkan rejects a missing or ambiguous name. The D3D12 path falls back to automatic with a warning when the named card is unavailable.
@@ -152,12 +158,11 @@ The executable also exports `NvOptimusEnablement` and `AmdPowerXpressRequestHigh
 
 ## Keyboard and mouse
 
-Turn on **Settings → Controls → Use keyboard and mouse**. The keyboard and mouse act as an Xbox controller and work alongside a connected controller. The game still shows the controller's buttons.
+Choose **Keyboard and mouse** for the desired player under **Configure controls**. Each port stores independent controller and keyboard/mouse mappings. One device belongs to one player; transferring an occupied device requires confirmation and leaves its previous port without a device, preserving both ports' adjustments. These ports do not add multiplayer modes to the game.
 
-- **Mouse moves the camera.** While exploring, the mouse turns the camera itself, at a fixed angle per pixel: at 100% **Sensitivity** (from 10% to 300%), one full turn takes about 2,100 pixels. The camera turns at most about 340 degrees per second, the speed the game's camera keeps up with; faster motion finishes over the next frames. Elsewhere, such as in fights, the mouse stands in for the right stick. While the game window has focus, the cursor stays inside it; Alt+Tab releases it.
-- **Map keys…** gives each controller input two keys. Click a field and press the new key within 5 seconds; right-click a field to clear it. A key already in use leaves its previous input. F1, F3, F4, F7, F11 and Backtick are reserved for system shortcuts and cannot be mapped. **Restore default keys** brings back the layout below.
+Select a binding to capture input **in that row**, with the list still visible. Release the input that started capture, then press the new input. **Esc** cancels; **Del** removes only the selected binding. Navigation, player/category changes and menu shortcuts are suspended during capture and until the captured input is released; B/LB/RB remain bindable inputs. Other alternatives stay in place. Keyboard conflicts are resolved only within that port's keyboard bank, including equivalent saved key aliases.
 
-Keys are recorded by their position on the keyboard, as the game reads them, and shown with your layout's labels: on an ABNT2 keyboard, the key to the right of L shows as Ç.
+Buttons, D-pad/stick clicks, triggers, movement and camera have keyboard/mouse views. The mouse turns J1's exploration camera directly, respecting remapped/removed directions; elsewhere it supplies the mapped guest axes. A keyboard assigned to another port supplies that port's axes without turning J1's direct camera. Mouse sensitivity ranges from **1% to 1000%** (`0.01`–`10.0`), as supported by the SDK. Alt+Tab releases pointer capture. F1, F3, F4, F7, F11, Backtick and the current global menu key remain reserved. Shift, Control and Alt can be standalone buttons; remove such a standalone binding before using the same modifier in a chord.
 
 | Input | Default keys |
 | --- | --- |
@@ -173,28 +178,31 @@ Keys are recorded by their position on the keyboard, as the game reads them, and
 | Start / Back | Enter, Esc / Tab |
 | D-pad | 1, 2, 3, 4 (up, down, left, right); numpad 8, 2, 4, 6 |
 
-In `narutorise.toml`, the options are `mnk_mode`, `mnk_mouse`, `mnk_sensitivity` (`1.0` = 100%) and one `keybind_*` per input, such as `keybind_a = "Space"`. A value lists alternatives separated by commas, with the SDK's key names (`LMB`, `RMB` and `MMB` for the mouse buttons). Shift, Control and Alt work as keys of their own. A combination such as `Shift+Up` works only while that modifier is not bound on its own. `mouse_camera_direct = false` makes the mouse stand in for the right stick everywhere, and `mouse_camera_trace = true` writes each mouse turn of the camera to the log.
+The native menu saves schema `controls.version = 1`, with `[controls.player1]` through `[controls.player4]`, and `.pad`/`.keys` banks below each port. Keys use comma-separated SDK names, including `LMB`, `RMB`, `MMB`, `X1MB`, `X2MB` and mapped mouse directions (`MouseUp`, `MouseDown`, `MouseLeft`, `MouseRight`). Existing alternatives are retained. On migration, the old `mnk_mode`, `mnk_mouse`, `mnk_sensitivity` and `keybind_*` values are imported into J1; enabled keyboard/mouse takes J1 and detected controllers take the next free ports. Otherwise controllers keep their initial connection order. Global legacy fields remain in the file, but per-port profiles become authoritative. `mouse_camera_direct = false` retains the stick-based camera path everywhere; `mouse_camera_trace = true` logs direct camera motion.
 
-With keyboard and mouse on, closing the game takes about 3 seconds, as with a controller connected.
+SDL combines the real serial and device path when both are available (otherwise it uses the available identifier); a session-only identity requires reassignment after restarting. Identical names have distinct suffixes. Device/driver path changes can require reassignment. XInput assignments follow its native slots, without a persistent physical identity. Ambiguous identities require reassignment. Device availability and ownership update on connection/disconnection; stale transfers and captures are canceled. **None** reports the port disconnected rather than presenting the SDK's NOP stand-in as hardware.
+
+Deadzones ignore small unwanted input near rest. The selected port has separate left/right stick and trigger values (0–95%) and an application toggle. Live plots show mapped device readings before filtering, the ignored region and effective output. Keyboard/mouse and unsupported axes do not offer analog adjustments. Supported devices offer per-channel vibration intensity, a brief **Identify** pulse and a stoppable test capped at five seconds. Leaving, changing player/category/device, losing focus, closing or disconnecting cancels the test. A removed backend may no longer accept a final motor command; physical shutdown behavior requires hardware verification.
+
+Confirmed changes save automatically and apply live after a successful write. Canceled captures/transfers/restores do not save. Invalid files or failed writes keep the last effective state. **Restore defaults** asks for confirmation, resets both banks plus deadzones/sensitivity/vibration for that port, and keeps its assigned device, other players and global menu shortcuts.
 
 ## Shortcuts
 
 | Key | Action |
 | --- | --- |
-| `F1` | Toggle the FPS and frametime overlay (shows the guest and host frame rates; Xenos renderer) |
+| `F1` or `Back+Start` | Open the native in-game menu (remappable in Controls) |
+| Shift while opening, or `--setup` | Open the setup screen |
 | `Alt+Enter` or `F11` | Toggle between borderless fullscreen and windowed mode (both renderers) |
 | `F3` | Toggle the SDK debug overlay (guest frame stats, build stamp, and per-frame counters when built with perf counters; Xenos renderer) |
 | `Alt+F4` | Request game shutdown |
 
-The FPS overlay (`F1`) shows two rates: **Guest** — the game's own frame rate, measured on every guest swap, which is what game speed follows — and **Host** — the window present rate, which can be much higher on high-refresh displays. Slow motion with a high host rate means the guest rate is below the game's target.
-
-The window title shows the game's name and version. The native renderer has no overlays; with the environment variable `REX_NATIVE_FPS_TITLE=1` (set for your Windows user, so the launcher passes it on), it adds the frame rate and frame time to the window title, visible in windowed mode.
+**Show FPS** in Settings → Advanced shows the swap rate and frame time. F1 opens the native menu. The SDK F3/F4 overlays are disabled on the native renderer. `REX_NATIVE_FPS_TITLE=1` additionally enables frame statistics in the window title for diagnostics.
 
 ## Folders and user data
 
 | Content | Default Windows location |
 | --- | --- |
-| Game data in a distribution | `game/` next to the executable, or the folder selected in the launcher |
+| Game data in a distribution | ISO or extracted copy selected in setup; nearby `game/` is also detected |
 | Game data during development | `game_root/` at the checkout root |
 | Configuration | `narutorise.toml` next to the executable |
 | Logs | `logs/` next to the executable |
@@ -209,9 +217,7 @@ The Documents folder may be redirected to OneDrive. To find its actual location:
 Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'narutorise'
 ```
 
-Back up the entire `narutorise/` folder in Documents to preserve saves, content, and metadata. The runtime supports overriding `user_data_root` and `cache_root`, but the launcher's DLC manager uses the default Documents path; custom locations require consistent manual organization.
-
-The game reads `user_data_root` before `narutorise.toml`, so in the TOML file it takes effect only when the launcher starts the game: the launcher passes it on the command line (a relative path is relative to the launcher's folder). Started directly, the game takes it from `--user_data_root` or the `REX_USER_DATA_ROOT` environment variable.
+Back up the entire `narutorise/` folder in Documents to preserve saves, content and metadata. The game also reads `user_data_root` from `narutorise.toml` before resolving runtime paths. Relative values are relative to the executable folder. `--user_data_root` takes priority over `REX_USER_DATA_ROOT`; either overrides the TOML value. Unless `--cache_root` / `REX_CACHE_ROOT` overrides it, the cache follows the effective user root. The DLC page uses that same root.
 
 To specify extracted game data and a Title Update:
 
@@ -219,5 +225,13 @@ To specify extracted game data and a Title Update:
 custom_game_root = "D:/Games/Naruto/game"
 update_data_root = "D:/Games/Naruto/title_update"
 ```
+
+`custom_game_root` can also name the Xbox 360 disc image itself, which the game reads in place without extracting it. Full disc images and trimmed XISO images both work:
+
+```toml
+custom_game_root = "D:/Games/Naruto - Rise of a Ninja.iso"
+```
+
+With an image, a Title Update is looked for in `title_update/` or `update/` next to the image. On startup the log names the game data and whether its `default.xex` is the one this port was recompiled from (`Game data: ...: ready`).
 
 Use `/` in TOML strings or escape backslashes. See [DLCs and Title Updates](dlc.md) for more information.

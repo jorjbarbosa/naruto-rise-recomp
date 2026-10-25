@@ -1,0 +1,40 @@
+<rml>
+<head>
+  <title>Setup</title>
+  <link type="text/rcss" href="theme.rcss"/>
+  <link type="text/rcss" href="setup.rcss"/>
+</head>
+<body data-model="setup">
+  <img id="background" src="generated/setup-background"/>
+  <div id="identity">
+    <div id="text-title" data-if="!logo_ready">
+      <div id="title">NARUTO</div>
+      <div id="subtitle">RISE OF A NINJA</div>
+    </div>
+    <img id="game-logo" data-if="logo_ready" src="local/game-logo"/>
+  </div>
+  <div id="choose-hint" data-if="!game_ready">@setup-choose-hint</div>
+  <div id="menu">
+    <div class="item" id="first" data-event-click="first" data-event-mouseover="hover">
+      <div class="plate"/><span class="label">{{first_label}}</span>
+    </div>
+    <div class="item" id="settings" data-event-click="settings" data-event-mouseover="hover">
+      <div class="plate"/><span class="label">@settings</span>
+    </div>
+    <div class="item" id="dlc" data-if="game_ready" data-event-click="dlc" data-event-mouseover="hover">
+      <div class="plate"/><span class="label">@dlc</span>
+    </div>
+    <div class="item" id="quit" data-event-click="quit" data-event-mouseover="hover">
+      <div class="plate"/><span class="label">@quit</span>
+    </div>
+  </div>
+  <div id="status" data-class-warning="!game_ready || start_failed">
+    <span class="dot"/><span class="title">{{status_title}}</span>
+    <div class="detail">{{status_detail}}</div>
+  </div>
+  <div id="footer">
+    <div id="setup-hints">@setup-key-hints</div>
+    <div id="version">{{version}}</div>
+  </div>
+</body>
+</rml>

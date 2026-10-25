@@ -23,10 +23,21 @@
 // (a device); "S <us> <read> <id> <packet> <buttons> <lt> <rt> <lx> <ly> <rx>
 // <ry>" (a state, written when it changes); "K <us> <read> <id> <vk> <unicode>
 // <flags> <user> <hid>" (a keystroke).
+// Optional "P <us> <total device reads> <id> <port>" records preserve explicit
+// native-port assignment and transfers; -1 disconnects the device. Old NRINPUT 2
+// files without P records retain their original SlotAssignment behavior.
 
 #include "input_replay.h"
+#include "menu/input_gate.h"
+#include "controls/runtime.h"
+#include <rex/cvar.h>
+#ifdef _WIN32
+#include <rex/input/xinput/xinput_input_driver.h>
+#endif
 
 #include <algorithm>
+#include <atomic>
+#include <functional>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -114,11 +125,25 @@ class Recorder {
     out_.flush();
   }
   bool ok() const { return bool(out_); }
+  void Poll() {
+    if (narutorise::menu::input_gate_enabled.load() && narutorise::controls::Current()->version)
+      clock_.Now();
+  }
   void Device(const DeviceInfo& info) {
+    auto config = narutorise::controls::Current();
+    const bool routing = narutorise::menu::input_gate_enabled.load() && config->version;
+    int port = -1;
+    if (routing) for (size_t i=0;i<config->ports.size();++i)
+      if (!info.key.empty() && config->ports[i].device==info.key) port=int(i);
     std::lock_guard lock(mutex_);
-    if (!devices_.insert(uint64_t(info.id)).second) return;
-    out_ << "D " << uint64_t(info.id) << ' ' << int(info.synthetic) << ' ' << info.name << '\n';
+    if (devices_.insert(uint64_t(info.id)).second)
+      out_ << "D " << uint64_t(info.id) << ' ' << int(info.synthetic) << ' ' << info.name << '\n';
+    if (routing) PortLocked(info.id,port);
     out_.flush();
+  }
+  void Disconnected(DeviceId id) {
+    if (!narutorise::menu::input_gate_enabled.load() || !narutorise::controls::Current()->version) return;
+    std::lock_guard lock(mutex_);PortLocked(id,-1);out_.flush();
   }
   // One state read of a device; state is null when the read failed.
   void State(DeviceId id, const X_INPUT_STATE* state) {
@@ -147,12 +172,20 @@ class Recorder {
   }
 
  private:
+  void PortLocked(DeviceId id,int port) {
+    auto [it,fresh]=ports_.try_emplace(uint64_t(id),port);
+    if (!fresh && it->second==port) return;
+    it->second=port;
+    out_ << "P " << clock_.Now() << ' ' << state_reads_[uint64_t(id)]+keystroke_reads_[uint64_t(id)]
+         << ' ' << uint64_t(id) << ' ' << port << '\n';
+  }
   InputClock clock_;
   std::mutex mutex_;
   std::ofstream out_;
   std::set<uint64_t> devices_;
   std::map<uint64_t, Pad> last_;
   std::map<uint64_t, uint64_t> state_reads_, keystroke_reads_;
+  std::map<uint64_t,int> ports_;
 };
 
 // One SDK driver with its devices, states and keystrokes recorded.
@@ -165,9 +198,18 @@ class RecordingDriver final : public InputDriver {
   }
   X_STATUS Setup() override { return X_STATUS_SUCCESS; }  // The inner driver is already set up.
   void EnumerateDevices(std::vector<DeviceInfo>& out) override {
+    recorder_->Poll();
     const size_t first = out.size();
     inner_->EnumerateDevices(out);
-    for (size_t i = first; i < out.size(); ++i) recorder_->Device(out[i]);
+    std::set<DeviceId> present;
+    for (size_t i = first; i < out.size(); ++i) {
+      auto recorded=out[i];
+      if(!recorded.key.empty()&&std::count_if(out.begin()+first,out.end(),[&](const auto& d){return d.key==recorded.key;})!=1)
+        recorded.key.clear(); // The effective assignment rejects ambiguous identities too.
+      recorder_->Device(recorded);present.insert(out[i].id);
+    }
+    for (auto id:devices_) if(!present.contains(id))recorder_->Disconnected(id);
+    devices_=std::move(present);
   }
   X_RESULT GetDeviceState(DeviceId id, X_INPUT_STATE* out_state) override {
     const X_RESULT result = inner_->GetDeviceState(id, out_state);
@@ -190,6 +232,7 @@ class RecordingDriver final : public InputDriver {
  private:
   std::unique_ptr<InputDriver> inner_;
   std::shared_ptr<Recorder> recorder_;
+  std::set<DeviceId> devices_;
 };
 
 // The recorded devices, as one driver. By default a read gets the state the
@@ -199,9 +242,24 @@ class RecordingDriver final : public InputDriver {
 // drifted already in the menus (the reads before the main menu vary from boot
 // to boot) and the replay ended in Fight Mode, while the clock kept the menus,
 // the load and the arrival in the village.
+class ReplayAssignment final : public rex::input::DeviceAssignment {
+ public:
+  explicit ReplayAssignment(std::function<void(uint32_t,std::vector<DeviceId>&)> resolve):resolve_(std::move(resolve)){}
+  void OnDevicesChanged(const std::vector<DeviceInfo>&) override {}
+  void DevicesForUser(uint32_t user,std::vector<DeviceId>& out) const override { resolve_(user,out); }
+ private:
+  std::function<void(uint32_t,std::vector<DeviceId>&)> resolve_;
+};
 class ReplayDriver final : public InputDriver {
  public:
-  explicit ReplayDriver(bool by_time) : InputDriver(nullptr, 0), by_time_(by_time) {}
+  explicit ReplayDriver(bool by_time) : InputDriver(nullptr, 0), by_time_(by_time), lifetime_(std::make_shared<std::atomic<ReplayDriver*>>(this)) {}
+  ~ReplayDriver() override { lifetime_->store(nullptr); }
+  std::unique_ptr<rex::input::DeviceAssignment> Assignment() {
+    if(!has_ports_)return std::make_unique<rex::input::SlotAssignment>();
+    return std::make_unique<ReplayAssignment>([lifetime=lifetime_](uint32_t user,std::vector<DeviceId>& out){
+      out.clear();if(auto* driver=lifetime->load())driver->ResolvePorts(user,out);
+    });
+  }
   bool Load(const std::string& path, std::string& error) {
     std::ifstream in(path, std::ios::binary);
     std::string line;
@@ -233,6 +291,10 @@ class ReplayDriver final : public InputDriver {
         if (!f || !tracks_.count(id)) continue;
         tracks_[id].states.push_back({by_time_ ? t : read, p});
         end_us_ = std::max(end_us_, t);
+      } else if (kind == 'P') {
+        uint64_t time=0,reads=0,id=0;int user=-1;f>>time>>reads>>id>>user;
+        if(!f||!tracks_.count(id)||user< -1||user>=int(narutorise::controls::kPorts))continue;
+        tracks_[id].ports.push_back({by_time_?time:reads,user});has_ports_=true;end_us_=std::max(end_us_,time);
       } else if (kind == 'K') {
         uint64_t t = 0, read = 0, id = 0;
         unsigned vk = 0, unicode = 0, flags = 0, user = 0, hid = 0;
@@ -314,12 +376,25 @@ class ReplayDriver final : public InputDriver {
     std::vector<std::pair<uint64_t, X_INPUT_KEYSTROKE>> keystrokes;
     size_t next_state = 0, next_keystroke = 0;
     uint64_t state_reads = 0, keystroke_reads = 0;
+    std::vector<std::pair<uint64_t,int>> ports;
+    size_t next_port=0;
+    int port=-1;
   };
+  void ResolvePorts(uint32_t user,std::vector<DeviceId>& out) {
+    const uint64_t time=clock_.Now();std::lock_guard lock(mutex_);
+    if(user>=narutorise::controls::kPorts)return;
+    for(auto& [id,track]:tracks_){
+      const uint64_t at=by_time_?time:track.state_reads+track.keystroke_reads;
+      while(track.next_port<track.ports.size()&&track.ports[track.next_port].first<=at)
+        track.port=track.ports[track.next_port++].second;
+      if(track.port==int(user))out.push_back(DeviceId(id));
+    }
+  }
   // Logs once when every device has played its last recorded state.
   void NoteEnd(bool device_done) {
     if (ended_ || !device_done) return;
     for (const auto& [id, track] : tracks_)
-      if (track.next_state < track.states.size()) return;
+      if (track.next_state < track.states.size() || track.next_port < track.ports.size()) return;
     ended_ = true;
     REXLOG_INFO("[narutorise] input replay: end of the recording ({:.1f} s recorded)", end_us_ / 1e6);
   }
@@ -330,6 +405,8 @@ class ReplayDriver final : public InputDriver {
   std::map<uint64_t, Track> tracks_;
   uint64_t end_us_ = 0;
   bool ended_ = false;
+  bool has_ports_=false;
+  std::shared_ptr<std::atomic<ReplayDriver*>> lifetime_;
 };
 
 const char* Variable(const char* name) {
@@ -337,14 +414,36 @@ const char* Variable(const char* name) {
   return value && *value ? value : nullptr;
 }
 
+std::unique_ptr<rex::input::InputSystem> NativeInput(std::shared_ptr<Recorder> recorder = {}) {
+  auto input = std::make_unique<rex::input::InputSystem>(nullptr);
+  const auto add = [&](std::unique_ptr<InputDriver> driver) {
+    if (driver->Setup() != X_STATUS_SUCCESS) return;
+    driver = narutorise::menu::GateInput(narutorise::controls::ConfigureInput(std::move(driver)));
+    if (recorder) driver = std::make_unique<RecordingDriver>(std::move(driver), recorder);
+    input->AddDriver(std::move(driver));
+  };
+#ifdef _WIN32
+  if (rex::cvar::GetFlagByName("input_backend") == "xinput")
+    add(std::make_unique<rex::input::xinput::XinputInputDriver>(nullptr, 0));
+  else
+#endif
+    add(std::make_unique<rex::input::sdl::SDLInputDriver>(nullptr, 0));
+  add(std::make_unique<rex::input::mnk::MnkInputDriver>(nullptr, 0));
+  input->AddDriver(std::make_unique<rex::input::nop::NopInputDriver>(nullptr, 1));
+  input->SetDeviceAssignment(narutorise::controls::ConfiguredAssignment());
+  return input;
+}
+
 }  // namespace
 
 std::unique_ptr<rex::system::IInputSystem> CreateInputSystem(bool tool_mode) {
   const char* record = Variable("REX_NATIVE_INPUT_RECORD");
   const char* replay = Variable("REX_NATIVE_INPUT_REPLAY");
-  if (tool_mode || (!record && !replay)) return rex::input::CreateDefaultInputSystem(tool_mode);
+  if (tool_mode) return rex::input::CreateDefaultInputSystem(tool_mode);
+  if (!record && !replay) return narutorise::menu::input_gate_enabled.load() ? NativeInput() : rex::input::CreateDefaultInputSystem(tool_mode);
   auto input = std::make_unique<rex::input::InputSystem>(nullptr);
   bool built = false;
+  bool recorded_assignment = false;
   if (replay) {
     const char* clock = Variable("REX_NATIVE_INPUT_REPLAY_CLOCK");
     const bool by_time = !(clock && std::string(clock) == "reads");
@@ -353,7 +452,9 @@ std::unique_ptr<rex::system::IInputSystem> CreateInputSystem(bool tool_mode) {
     if (driver->Load(replay, error)) {
       REXLOG_INFO("[narutorise] input replay: {} ({} devices, {:.1f} s, by {}); the real devices are not read",
                   replay, driver->devices(), driver->end_us() / 1e6, by_time ? "time" : "read");
-      input->AddDriver(std::move(driver));
+      auto assignment=driver->Assignment();
+      input->AddDriver(narutorise::menu::GateInput(std::move(driver)));
+      input->SetDeviceAssignment(std::move(assignment));recorded_assignment=true;
       built = true;
     } else {
       REXLOG_ERROR("[narutorise] input replay: {} not loaded ({}); using the real devices", replay, error);
@@ -361,6 +462,10 @@ std::unique_ptr<rex::system::IInputSystem> CreateInputSystem(bool tool_mode) {
   } else {
     auto recorder = std::make_shared<Recorder>(record);
     if (recorder->ok()) {
+      if (narutorise::menu::input_gate_enabled.load()) {
+        REXLOG_INFO("[narutorise] input recording: {}", record);
+        return NativeInput(recorder);
+      }
       // The default drivers of the SDK (CreateDefaultInputSystem, SDL backend), recorded.
       auto sdl = std::make_unique<rex::input::sdl::SDLInputDriver>(nullptr, 0);
       if (sdl->Setup() == X_STATUS_SUCCESS)
@@ -374,8 +479,8 @@ std::unique_ptr<rex::system::IInputSystem> CreateInputSystem(bool tool_mode) {
       REXLOG_ERROR("[narutorise] input recording: cannot write {}; not recording", record);
     }
   }
-  if (!built) return rex::input::CreateDefaultInputSystem(tool_mode);
+  if (!built) return narutorise::menu::input_gate_enabled.load() ? NativeInput() : rex::input::CreateDefaultInputSystem(tool_mode);
   input->AddDriver(std::make_unique<rex::input::nop::NopInputDriver>(nullptr, 1));
-  input->SetDeviceAssignment(std::make_unique<rex::input::SlotAssignment>());
+  if(!recorded_assignment)input->SetDeviceAssignment(std::make_unique<rex::input::SlotAssignment>());
   return input;
 }

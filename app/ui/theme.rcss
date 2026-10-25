@@ -1,0 +1,8 @@
+/* The theme of the menus: navy #0E1220 with orange #F2701F and red #C8322B,
+   Roboto Condensed. Plain rendering: no blur, shadow or gradient. */
+body {
+	font-family: "Roboto Condensed";
+	font-weight: normal;
+	font-size: 16dp;
+	color: #ffffff;
+}

@@ -7,6 +7,8 @@
 #include "gpu/backend/backend.h"
 #include "gpu/backend/failure_channel.h"
 
+#include <cmath>
+
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 
@@ -105,6 +107,10 @@ bool Engine::AttachWindow(void* window, std::string& evidence, const PresentMode
   if (Refused(evidence)) return false;
   return backend_ ? backend_->AttachWindow(window, evidence, mode) : NoBackend(evidence);
 }
+bool Engine::Reconfigure(const RenderMode& render, const PresentMode& present, std::string& evidence) {
+  if (Refused(evidence)) return false;
+  return backend_ ? backend_->Reconfigure(render, present, evidence) : NoBackend(evidence);
+}
 bool Engine::DetachWindow(std::string& evidence) {
   return backend_ ? backend_->DetachWindow(evidence) : NoBackend(evidence);
 }
@@ -120,9 +126,47 @@ bool Engine::StageFront(uint32_t key, uint32_t& slot, std::string& evidence) {
   return backend_ ? backend_->StageFront(key, slot, evidence) : NoBackend(evidence);
 }
 bool Engine::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, uint32_t& width, uint32_t& height,
-                     std::string& evidence) {
+                     std::string& evidence, bool* presented) {
+  if (presented) *presented = false;
   if (Refused(evidence)) return false;
-  return backend_ ? backend_->Present(slot, capture, bgra, width, height, evidence) : NoBackend(evidence);
+  bool shown = false;
+  const bool ok = backend_ ? backend_->Present(slot, capture, bgra, width, height, evidence, shown) : NoBackend(evidence);
+  if (presented) *presented = ok && shown;
+  return ok;
+}
+// The descriptions of the UI layer are checked here, once for both backends.
+bool Engine::UploadUiTexture(uint32_t key, uint32_t width, uint32_t height, const std::vector<uint8_t>& rgba,
+                             std::string& evidence) {
+  if (Refused(evidence)) return false;
+  if (!key || !width || !height || width > 8192 || height > 8192 || rgba.size() != size_t(width) * height * 4) {
+    evidence = fmt::format("{{\"uploaded\":false,\"reason\":\"native-ui-texture-description\",\"key\":{},"
+                           "\"size\":[{},{}],\"bytes\":{}}}", key, width, height, rgba.size());
+    return false;
+  }
+  return backend_ ? backend_->UploadUiTexture(key, width, height, rgba, evidence) : NoBackend(evidence);
+}
+bool Engine::ReleaseUiTexture(uint32_t key, std::string& evidence) {
+  return backend_ ? backend_->ReleaseUiTexture(key, evidence) : NoBackend(evidence);
+}
+bool Engine::SetUiFrame(UiFrame frame, std::string& evidence) {
+  const auto refuse = [&](const char* reason, size_t draw) {
+    evidence = fmt::format("{{\"set\":false,\"reason\":\"{}\",\"draw\":{}}}", reason, draw);
+    return false;
+  };
+  if (!std::isfinite(frame.width) || !std::isfinite(frame.height) || frame.width < 0 || frame.height < 0)
+    return refuse("native-ui-frame-space", 0);
+  for (size_t i = 0; i < frame.draws.size(); ++i) {
+    const UiDraw& d = frame.draws[i];
+    if (d.scissor && !(std::isfinite(d.scissor_left) && std::isfinite(d.scissor_top) &&
+                       std::isfinite(d.scissor_right) && std::isfinite(d.scissor_bottom)))
+      return refuse("native-ui-frame-scissor", i);
+    if (d.index_offset > frame.indices.size() || d.index_count > frame.indices.size() - d.index_offset)
+      return refuse("native-ui-frame-indices", i);
+    for (uint32_t k = 0; k < d.index_count; ++k)
+      if (uint64_t(d.vertex_offset) + frame.indices[d.index_offset + k] >= frame.vertices.size())
+        return refuse("native-ui-frame-vertices", i);
+  }
+  return backend_ ? backend_->SetUiFrame(std::move(frame), evidence) : NoBackend(evidence);
 }
 std::string Engine::ResourceCounts() { return backend_ ? backend_->ResourceCounts() : std::string("{}"); }
 bool Engine::ReleaseTexture(uint32_t key, std::string& evidence) {

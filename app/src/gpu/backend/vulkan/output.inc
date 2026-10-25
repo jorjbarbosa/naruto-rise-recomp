@@ -63,7 +63,8 @@ bool Backend::State::OutputEffects(OutputImage& source, BackImage& back, uint32_
 }
 
 bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, uint32_t& width,
-                       uint32_t& height, std::string& evidence) {
+                       uint32_t& height, std::string& evidence, bool& presented) {
+  presented = false;
   auto& s = *state_; bgra.clear(); width = height = 0;
   if (!s.ready || s.owner_thread != GetCurrentThreadId() || !s.window || slot >= s.stages.size())
     return GraphicsError(evidence, "native-present-owner-or-slot");
@@ -115,6 +116,8 @@ bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, u
   s.acquire_pending = false;
   auto& back = s.back_images.at(index);
   if (!s.OpenBatch(reason, result)) return GraphicsError(evidence, reason, result);
+  const bool ui = s.UiFrameVisible();
+  if (ui && !s.EnsureUiLayer(evidence)) return false;
   State::UploadPage* page{}; VkDeviceSize ramp_offset{};
   if (!s.Upload(4096, page, ramp_offset, result)) return GraphicsError(evidence, "native-present-ramp-upload", result);
   auto* ramp = reinterpret_cast<uint32_t*>(page->buffer->mapped + ramp_offset);
@@ -137,6 +140,8 @@ bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, u
     if (!s.OutputPass(stage, back.image, back.state, VK_FORMAT_B8G8R8A8_UNORM, s.swap_extent.width, s.swap_extent.height,
                       "present_ps", 0, c, page->buffer->buffer, ramp_offset, evidence)) return false;
   }
+  // The UI layer over the image and its bars.
+  if (ui && !s.DrawUi(back, evidence)) return false;
   std::shared_ptr<VmaBuffer> readback;
   const VkDeviceSize bytes = VkDeviceSize(s.swap_extent.width) * s.swap_extent.height * 4;
   if (capture) {
@@ -184,9 +189,11 @@ bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, u
     width = s.swap_extent.width; height = s.swap_extent.height;
     bgra.assign(readback->mapped, readback->mapped + bytes);
   }
-  evidence = fmt::format("{{\"presented\":true,\"backend\":\"vulkan\",\"present_result\":{},\"acquire_results\":[{}],"
-      "\"generation\":{},\"image\":{},\"size\":[{},{}],\"fence\":{},\"present_mode\":{},\"effective_frame_latency\":1}}",
-      int32_t(present_result), fmt::join(acquire_results, ","), s.swap_generation, index, s.swap_extent.width,
-      s.swap_extent.height, sequence, int(s.swap_mode));
+  presented = present_result == VK_SUCCESS || present_result == VK_SUBOPTIMAL_KHR;
+  evidence = fmt::format("{{\"presented\":{},\"backend\":\"vulkan\",\"present_result\":{},\"acquire_results\":[{}],"
+      "\"generation\":{},\"image\":{},\"size\":[{},{}],\"fence\":{},\"present_mode\":{},\"effective_frame_latency\":1,"
+      "\"ui\":{}}}",
+      presented, int32_t(present_result), fmt::join(acquire_results, ","), s.swap_generation, index, s.swap_extent.width,
+      s.swap_extent.height, sequence, int(s.swap_mode), ui);
   return true;
 }

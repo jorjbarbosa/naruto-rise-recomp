@@ -1,5 +1,6 @@
 // The pipeline set of the draw layer (pipeline_set.h).
 #include "gpu/backend/pipeline_set.h"
+#include "gpu/common/shader_activity.h"
 
 #include <windows.h>
 #include <algorithm>
@@ -34,7 +35,12 @@ PipelineSet::PipelineSet() : warm_sync_(warmSyncOption()) {}
 
 PipelineSet::~PipelineSet() { Stop(); }
 
-void PipelineSet::Configure(Creator creator) { creator_ = std::move(creator); }
+void PipelineSet::Configure(Creator creator) {
+  creator_ = [creator = std::move(creator)](const PipelineDesc& desc, Pipeline& pipeline) {
+    ShaderCompilation activity;
+    return creator(desc, pipeline);
+  };
+}
 
 NativeResult PipelineSet::Precompile(uint64_t key, const PipelineDesc& desc, bool& present) {
   present = false;
@@ -200,6 +206,7 @@ PipelineSet::Taken PipelineSet::TakeSkip(uint64_t key, uint64_t triple) {
 }
 
 const char* PipelineSet::NoteCreated(const Taken& take, uint64_t triple, uint32_t create_us) {
+  NoteShaderCompiled();
   {
     std::lock_guard lock(mutex_);
     warm_triples_.insert(triple);

@@ -85,3 +85,9 @@ launcher/**/*.suo
 
 # --- Shader cache (seeded at packaging time, copied by CMake) ---
 app/shader_cache/
+# Local investigations; tracked build tooling remains versioned.
+docs/native-renderer/
+app/src/gpu/historical/
+tools/native-renderer/
+patches/rea/
+docs/plans/

@@ -9,6 +9,7 @@
 #include <mutex>
 #include <thread>
 #include <atomic>
+#include <array>
 #include <algorithm>
 #include <fmt/format.h>
 #include "gpu/common/title_loading.h"
@@ -49,11 +50,14 @@ struct Dispatcher::State {
   std::mutex stage_mutex;
   std::condition_variable stage_wake, stage_space;
   std::deque<std::unique_ptr<StageTask>> stage;
-  bool stage_stopped = false;
+  std::atomic<bool> stage_stopped{false};
   std::thread translator;
   std::atomic<DWORD> translator_id{0};
   std::atomic<bool> discarding{false};
   uint64_t stage_enqueued = 0, stage_waits = 0, stage_max = 0;
+  size_t stage_waiting = 0;
+  uint64_t stage_notifications = 0, stage_space_notifications = 0;
+  uint64_t stage_consume_batches = 0, stage_consume_batch_max = 0;
   std::atomic<uint64_t> stage_depth_frame{0};  // The deepest since the last take.
   std::atomic<uint64_t> stage_run{0}, stage_discarded{0}, stage_stops{0};
 
@@ -83,7 +87,11 @@ struct Dispatcher::State {
       SetThreadDescription(GetCurrentThread(), L"Native Translation");
       sampler::RegisterThread("translate");
       for (;;) {
-        std::unique_ptr<StageTask> task;
+        // Take only work already queued; no timer or minimum batch delays a
+        // draw. A single consumer keeps captures and operations in FIFO order.
+        std::array<std::unique_ptr<StageTask>, 32> batch;
+        size_t count = 0;
+        bool notify_space = false;
         {
           std::unique_lock lock(stage_mutex);
           stage_wake.wait(lock, [&] { return !stage.empty() || stage_stopped; });
@@ -92,20 +100,34 @@ struct Dispatcher::State {
             stage_space.notify_all();
             return;
           }
-          task = std::move(stage.front());
-          stage.pop_front();
-          stage_space.notify_all();
+          count = std::min(batch.size(), stage.size());
+          for (size_t i = 0; i < count; ++i) {
+            batch[i] = std::move(stage.front());
+            stage.pop_front();
+          }
+          ++stage_consume_batches;
+          stage_consume_batch_max = std::max<uint64_t>(stage_consume_batch_max, count);
+          notify_space = stage_waiting != 0;
+          if (notify_space) ++stage_space_notifications;
         }
-        if (discarding.load(std::memory_order_acquire) && task->Discardable()) {
-          stage_discarded.fetch_add(1);
-          continue;
-        }
-        stage_run.fetch_add(1);
-        try {
-          task->Run();
-        } catch (const TranslationStopped&) {
-          discarding.store(true, std::memory_order_release);
-          stage_stops.fetch_add(1);
+        if (notify_space) stage_space.notify_all();
+        for (size_t i = 0; i < count; ++i) {
+          // Shutdown finishes the running task, drops the rest of this local
+          // batch and clears the FIFO on the next iteration. Pending Runs
+          // are destroyed too, fulfilling their refusal promises.
+          if (stage_stopped.load(std::memory_order_relaxed)) break;
+          auto task = std::move(batch[i]);
+          if (discarding.load(std::memory_order_acquire) && task->Discardable()) {
+            stage_discarded.fetch_add(1);
+            continue;
+          }
+          stage_run.fetch_add(1);
+          try {
+            task->Run();
+          } catch (const TranslationStopped&) {
+            discarding.store(true, std::memory_order_release);
+            stage_stops.fetch_add(1);
+          }
         }
       }
     });
@@ -336,15 +358,22 @@ bool Dispatcher::Enqueue(std::unique_ptr<StageTask> task) {
   if (s.stage.size() >= kStageMax) {
     ++s.stage_waits;
     profile::Count(profile::kStageWaits, 1);
+    ++s.stage_waiting;
     s.stage_space.wait(lock, [&] { return s.stage.size() < kStageMax || s.stage_stopped; });
+    --s.stage_waiting;
     if (s.stage_stopped) return false;
   }
+  const bool wake = s.stage.empty();
   s.stage.push_back(std::move(task));
   ++s.stage_enqueued;
   s.stage_max = std::max<uint64_t>(s.stage_max, s.stage.size());
   if (s.stage.size() > s.stage_depth_frame.load(std::memory_order_relaxed))
     s.stage_depth_frame.store(s.stage.size(), std::memory_order_relaxed);
-  s.stage_wake.notify_one();
+  if (wake) {
+    ++s.stage_notifications;
+    lock.unlock();
+    s.stage_wake.notify_one();
+  }
   return true;
 }
 void Dispatcher::Defer(std::function<void()> work) {
@@ -360,9 +389,11 @@ std::string Dispatcher::StageSummary() {
   auto& s = *state_;
   std::lock_guard lock(s.stage_mutex);
   return fmt::format("\"deferred\":{},\"enqueued\":{},\"run\":{},\"discarded\":{},\"stops\":{},\"waits\":{},"
-                     "\"max_depth\":{},\"pending\":{},\"stage_max\":{}", s.deferred, s.stage_enqueued, s.stage_run.load(),
+                     "\"max_depth\":{},\"pending\":{},\"stage_max\":{},\"wake_notifications\":{},"
+                     "\"space_notifications\":{},\"consume_batches\":{},\"consume_batch_max\":{}", s.deferred, s.stage_enqueued, s.stage_run.load(),
                      s.stage_discarded.load(), s.stage_stops.load(), s.stage_waits, s.stage_max, s.stage.size(),
-                     kStageMax);
+                     kStageMax, s.stage_notifications, s.stage_space_notifications, s.stage_consume_batches,
+                     s.stage_consume_batch_max);
 }
 
 bool Dispatcher::Run(std::function<bool(Engine&, std::string&)> operation,

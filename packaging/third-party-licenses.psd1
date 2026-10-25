@@ -9,7 +9,19 @@
     Components = @(
         @{ Name = 'nlohmann/json 3.11.3'; License = 'MIT'
            Url = 'https://github.com/nlohmann/json'; File = 'third_party/nlohmann_json/LICENSE.MIT'; Target = 'nlohmann-json.txt'
-           Usage = 'narutorise.exe, narutorise_launcher.exe' }
+           Usage = 'narutorise.exe' }
+        @{ Name = 'RmlUi 6.3'; License = 'MIT'
+           Url = 'https://github.com/mikke89/RmlUi'; File = 'third_party/rmlui/LICENSE.txt'; Target = 'rmlui.txt'
+           Usage = 'narutorise.exe (menus)' }
+        @{ Name = 'robin_hood hashing and itlib (inside RmlUi)'; License = 'MIT'
+           Url = 'https://github.com/mikke89/RmlUi'; File = 'third_party/rmlui/Include/RmlUi/Core/Containers/LICENSE.txt'; Target = 'rmlui-containers.txt'
+           Usage = 'narutorise.exe (menus)' }
+        @{ Name = 'FreeType 2.15.0 (portions of this software are copyright The FreeType Project, https://freetype.org)'; License = 'FTL'
+           Url = 'https://freetype.org'; File = 'third_party/freetype/docs/FTL.TXT'; Target = 'freetype.txt'
+           Usage = 'narutorise.exe (menus)' }
+        @{ Name = 'Roboto and Roboto Condensed (Roboto 3.016)'; License = 'OFL-1.1'
+           Url = 'https://github.com/googlefonts/roboto-3-classic'; File = 'app/ui/fonts/OFL.txt'; Target = 'roboto-condensed.txt'
+           Usage = 'narutorise.exe (embedded menu fonts)' }
         @{ Name = 'ReXGlue SDK (includes code derived from Xenia)'; License = 'BSD-3-Clause'
            Url = 'https://github.com/rexglue/rexglue-sdk'; File = 'sdk/LICENSE'; Target = 'rexglue-sdk.txt'
            Usage = 'narutorise.exe, rexruntime.dll, rexgpu-xenos.dll' }
@@ -21,13 +33,13 @@
            Usage = 'rexruntime.dll' }
         @{ Name = 'SDL3'; License = 'Zlib'
            Url = 'https://github.com/libsdl-org/SDL'; File = 'sdk/thirdparty/sdl3/LICENSE.txt'; Target = 'sdl3.txt'
-           Usage = 'rexruntime.dll, narutorise_launcher.exe' }
+           Usage = 'rexruntime.dll' }
         @{ Name = 'Dear ImGui'; License = 'MIT'
            Url = 'https://github.com/ocornut/imgui'; File = 'sdk/thirdparty/imgui/LICENSE.txt'; Target = 'imgui.txt'
-           Usage = 'rexruntime.dll, narutorise_launcher.exe' }
+           Usage = 'rexruntime.dll' }
         @{ Name = 'stb_image'; License = 'MIT OR Unlicense'
            Url = 'https://github.com/nothings/stb'; File = 'packaging/licenses/stb.txt'; Target = 'stb.txt'
-           Usage = 'rexruntime.dll, narutorise_launcher.exe' }
+           Usage = 'rexruntime.dll' }
         @{ Name = '{fmt}'; License = 'MIT'
            Url = 'https://github.com/fmtlib/fmt'; File = 'sdk/thirdparty/fmt/LICENSE'; Target = 'fmt.txt'
            Usage = 'rexruntime.dll' }
@@ -82,12 +94,6 @@
         @{ Name = 'DXBC checksum (AMD; derived from the RSA Data Security, Inc. MD5 Message-Digest Algorithm)'; License = 'RSA-MD'
            Url = 'https://github.com/rexglue/rexglue-sdk/tree/main/thirdparty/dxbc'; File = 'packaging/licenses/dxbc-checksum.txt'; Target = 'dxbc-checksum.txt'
            Usage = 'rexgpu-xenos.dll' }
-        @{ Name = 'extract-xiso'; License = 'BSD-4-Clause (modified)'
-           Url = 'https://github.com/XboxDev/extract-xiso'; File = 'tools/extract-xiso/LICENSE.TXT'; Target = 'extract-xiso.txt'
-           Usage = 'NarutoRiseInstaller.exe (ISO import)' }
-        @{ Name = 'Lato fonts'; License = 'OFL-1.1'
-           Url = 'https://www.latofonts.com'; File = 'launcher/assets/fonts/OFL.txt'; Target = 'lato.txt'
-           Usage = 'assets\fonts' }
         @{ Name = 'AMD FidelityFX SDK'; License = 'MIT'; Condition = 'FidelityFX'
            Url = 'https://github.com/rexglue/FidelityFX-SDK'; File = 'packaging/licenses/fidelityfx.txt'; Target = 'fidelityfx.txt'
            Usage = 'amd_fidelityfx_dx12.dll' }
@@ -111,7 +117,7 @@
            Usage = 'narutorise.exe' }
         @{ Name = 'Vulkan Headers'; License = 'Apache-2.0'; Condition = 'NativeVulkan'
            Url = 'https://github.com/KhronosGroup/Vulkan-Headers'; File = 'packaging/licenses/vulkan-headers-apache.txt'; Target = 'vulkan-headers.txt'
-           Usage = 'narutorise.exe and narutorise_launcher.exe' }
+           Usage = 'narutorise.exe' }
         @{ Name = 'SMOL-V'; License = 'MIT and Apache-2.0'; Condition = 'NativeVulkan'
            Url = 'https://github.com/aras-p/smol-v'; File = 'tools/xenosrecomp/thirdparty/smol-v/license.txt'; Target = 'smol-v.txt'
            Usage = 'narutorise.exe (embedded SPIR-V decoder)' }
