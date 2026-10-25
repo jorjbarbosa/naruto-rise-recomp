@@ -33,6 +33,7 @@ bool ConfigManager::Load(const std::filesystem::path& toml_path, GameConfig& con
     if (auto v = tbl["mnk_mode"].value<bool>()) config.mnk_mode = *v;
     if (auto v = tbl["mnk_mouse"].value<bool>()) config.mnk_mouse = *v;
     if (auto v = tbl["mnk_sensitivity"].value<double>()) config.mnk_sensitivity = *v;
+    if (auto v = tbl["mnk_key_prompts"].value<bool>()) config.mnk_key_prompts = *v;
     // A configuration from before the key options keeps the default layout.
     for (std::size_t i = 0; i < kKeyActionCount; ++i) {
       if (auto v = tbl[KeyActionOption(i)].value<std::string>()) config.key_binds[i] = *v;
@@ -114,6 +115,7 @@ bool ConfigManager::Save(const std::filesystem::path& toml_path, const GameConfi
   tbl.insert_or_assign("mnk_mode", config.mnk_mode);
   tbl.insert_or_assign("mnk_mouse", config.mnk_mouse);
   tbl.insert_or_assign("mnk_sensitivity", config.mnk_sensitivity);
+  tbl.insert_or_assign("mnk_key_prompts", config.mnk_key_prompts);
   for (std::size_t i = 0; i < kKeyActionCount; ++i) {
     tbl.insert_or_assign(KeyActionOption(i), config.key_binds[i]);
   }

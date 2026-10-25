@@ -180,6 +180,8 @@ inline constexpr const char* kIt[] = {
     "Muove la telecamera (la levetta destra) con il mouse. Disattivato, la telecamera si muove solo con i tasti della levetta destra.",  // MouseCameraDescription
     "Sensibilità",  // MouseSensitivityLabel
     "La velocità con cui la telecamera segue il mouse. 100% è il valore predefinito.",  // MouseSensitivityDescription
+    "Mostra i tasti nei testi",  // KeyPromptsLabel
+    "Mostra i tasti assegnati al posto dei pulsanti del controller nei suggerimenti e nei tutorial del gioco, ad esempio [Space] per A. Funziona con il testo del gioco in inglese e con le mod di traduzione.",  // KeyPromptsDescription
     "Tasti",  // KeysLabel
     "I tasti e i pulsanti del mouse per ogni comando del controller, due per comando.",  // KeysDescription
     "Assegna tasti…",  // MapKeysButton

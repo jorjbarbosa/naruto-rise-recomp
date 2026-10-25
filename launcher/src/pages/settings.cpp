@@ -48,6 +48,7 @@ constexpr Option kController{TextId::ControllerLabel, TextId::ControllerDescript
 constexpr Option kKeyboardMouse{TextId::KeyboardMouseLabel, TextId::KeyboardMouseDescription};
 constexpr Option kMouseCamera{TextId::MouseCameraLabel, TextId::MouseCameraDescription};
 constexpr Option kMouseSensitivity{TextId::MouseSensitivityLabel, TextId::MouseSensitivityDescription};
+constexpr Option kKeyPrompts{TextId::KeyPromptsLabel, TextId::KeyPromptsDescription};
 constexpr Option kKeys{TextId::KeysLabel, TextId::KeysDescription};
 
 constexpr Option kFrameLatency{TextId::FrameLatencyLabel, TextId::FrameLatencyDescription, Renderer::kNative};
@@ -205,6 +206,7 @@ void RenderControlsGroup(OptionList& list, PageContext& context) {
   // 10% to 300%; a value set by hand outside them stays until the slider moves.
   int sensitivity = std::clamp(static_cast<int>(std::lround(config.mnk_sensitivity * 100)), 10, 300);
   if (list.Slider(kMouseSensitivity, sensitivity, 10, 300, "%d%%")) config.mnk_sensitivity = sensitivity / 100.0;
+  list.Checkbox(kKeyPrompts, config.mnk_key_prompts);
   if (list.Button(kKeys, Tr(TextId::MapKeysButton))) g_mapping = true;
   ImGui::EndDisabled();
 }

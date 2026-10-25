@@ -37,11 +37,16 @@
 #include <cstring>
 #include <mutex>
 
+#include "mods/key_prompts.h"
 #include "mods/translation_data.h"
 
 REXCVAR_DEFINE_STRING(translation_mod, "", "Mods",
                       "Translation mod folder under mods/ next to the executable; empty disables "
                       "it. Requires restart and English game language.")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+REXCVAR_DEFINE_BOOL(mnk_key_prompts, true, "Input",
+                    "With keyboard and mouse on, show the bound keys instead of controller button "
+                    "icons in game texts. Requires restart and English game language.")
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
 extern "C" void __imp__sub_8264E3A8(PPCContext& __restrict, uint8_t*);
@@ -53,7 +58,54 @@ constexpr uint32_t kEnglishMainResource = 0xAB00018A;
 constexpr uint32_t kEnglishAdditionalResource = 0x5400047A;
 std::once_flag initialized;
 Package package;
+key_prompts::Labels prompt_labels;
+TextTransform prompt_transform;  // Empty: button icons stay.
 std::atomic<bool> enabled{false};
+
+// Button tags become the keys bound in keybind_*. Read once, like the package,
+// so a rebind applies on the next start.
+void InitializeKeyPrompts() {
+  if (!rex::cvar::Query<bool>("mnk_mode") || !REXCVAR_GET(mnk_key_prompts))
+    return;
+  if (rex::cvar::Query<int32_t>("user_language") != 1) {
+    REXLOG_INFO("[key prompts] only English texts are supported; button icons retained");
+    return;
+  }
+  key_prompts::BindValues binds;
+  for (const auto option : key_prompts::BindOptions())
+    binds.emplace(std::string(option), rex::cvar::Query<std::string>(option));
+  prompt_labels = key_prompts::BuildLabels(binds);
+  for (const auto& [tag, label] : prompt_labels)
+    REXLOG_INFO("[key prompts] <{}> -> [{}]", tag, label);
+  if (!prompt_labels.empty()) {
+    prompt_transform = [](std::string_view text) {
+      return key_prompts::ReplaceButtonTags(text, prompt_labels);
+    };
+  }
+}
+
+void LoadSelectedPackage(const std::filesystem::path& executable_root) {
+  const std::string selected = REXCVAR_GET(translation_mod);
+  if (selected.empty())
+    return;
+  if (!ValidModId(selected)) {
+    REXLOG_ERROR("[translation] invalid mod folder name: {}", selected);
+    return;
+  }
+  if (rex::cvar::Query<int32_t>("user_language") != 1) {
+    REXLOG_ERROR("[translation] {} requires English as the game language; original texts retained",
+                 selected);
+    return;
+  }
+  std::string error;
+  if (!LoadPackage(executable_root / "mods" / selected, package, error)) {
+    REXLOG_ERROR("[translation] cannot load {}: {}", selected, error);
+    package = {};
+    return;
+  }
+  REXLOG_INFO("[translation] loaded {} ({}) with {} text IDs; restart required for changes",
+              package.name, package.id, package.texts.size());
+}
 
 bool EnglishTable(uint32_t resource) {
   return resource == kEnglishMainResource || resource == kEnglishAdditionalResource;
@@ -95,7 +147,8 @@ void ReplaceRead(Scope& scope, uint32_t input, uint32_t size_address, PPCContext
 
   try {
     const auto* original = scope.memory->TranslateVirtual(input);
-    const auto patched = PatchTable(std::span(original, original_size), package.texts);
+    const auto patched =
+        PatchTable(std::span(original, original_size), package.texts, prompt_transform);
     for (const auto& rejected : patched.rejected) {
       REXLOG_WARN("[translation] original text retained: resource={:08X} id={}: {}", scope.resource,
                   rejected.id, rejected.reason);
@@ -132,27 +185,10 @@ void ReplaceRead(Scope& scope, uint32_t input, uint32_t size_address, PPCContext
 
 void Initialize(const std::filesystem::path& executable_root) {
   std::call_once(initialized, [&] {
-    const std::string selected = REXCVAR_GET(translation_mod);
-    if (selected.empty())
-      return;
-    if (!ValidModId(selected)) {
-      REXLOG_ERROR("[translation] invalid mod folder name: {}", selected);
-      return;
-    }
-    if (rex::cvar::Query<int32_t>("user_language") != 1) {
-      REXLOG_ERROR(
-          "[translation] {} requires English as the game language; original texts retained",
-          selected);
-      return;
-    }
-    std::string error;
-    if (!LoadPackage(executable_root / "mods" / selected, package, error)) {
-      REXLOG_ERROR("[translation] cannot load {}: {}", selected, error);
-      return;
-    }
-    REXLOG_INFO("[translation] loaded {} ({}) with {} text IDs; restart required for changes",
-                package.name, package.id, package.texts.size());
-    enabled.store(!package.texts.empty(), std::memory_order_release);
+    LoadSelectedPackage(executable_root);
+    InitializeKeyPrompts();
+    enabled.store(!package.texts.empty() || static_cast<bool>(prompt_transform),
+                  std::memory_order_release);
   });
 }
 }  // namespace narutorise::translation
