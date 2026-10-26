@@ -3,6 +3,7 @@
 
 # Ensure shell scripts keep LF even on Windows.
 *.sh text eol=lf
+packaging/appimage/AppRun text eol=lf
 
 # Ensure batch/PowerShell scripts use CRLF on checkout (Windows native).
 *.bat text eol=crlf

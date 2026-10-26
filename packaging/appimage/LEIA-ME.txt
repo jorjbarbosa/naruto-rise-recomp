@@ -1,0 +1,40 @@
+Naruto Rise Recompiled — AppImage de teste da correção de áudio
+
+No terminal, na pasta onde salvou o arquivo:
+
+chmod +x NarutoRise-audio-fix-x86_64.AppImage
+./NarutoRise-audio-fix-x86_64.AppImage
+
+Deixe game_root/ ou game/ com default.xex ao lado do AppImage. Para usar
+uma instalação em outro local:
+
+./NarutoRise-audio-fix-x86_64.AppImage --game_data_root="/caminho/para/game_root"
+
+Teste da espera de áudio, sem abrir o jogo:
+
+./NarutoRise-audio-fix-x86_64.AppImage --test-audio-wait
+
+O resultado deve terminar em PASS. A validação auditiva continua sendo feita
+no jogo: confira música, efeitos, transições e saída normal.
+
+Configurações: ~/.config/narutorise/narutorise.toml
+Logs: ~/.local/state/narutorise/logs/
+Saves: permanecem no diretório padrão do jogo em ~/.local/share/narutorise/.
+As variáveis XDG_CONFIG_HOME, XDG_STATE_HOME, XDG_CACHE_HOME e XDG_DATA_HOME
+continuam valendo quando definidas pelo seu ambiente.
+
+O executável original grava junto de si. Por isso o AppImage prepara uma
+cópia de seus binários no cache do usuário no primeiro uso (~130 MB), e a
+reutiliza. As configurações e os logs ficam fora desse cache e persistem.
+Para importar configurações do pacote anterior, copie seu narutorise.toml
+para o caminho de configurações acima antes da primeira execução.
+
+Este teste é para Linux x86_64 com glibc 2.43 ou superior e driver Vulkan.
+Sua captura Linux anterior já registrava glibc 2.43. Converter para AppImage
+não reduz a versão mínima exigida pelos binários existentes.
+
+Se o sistema não disponibilizar FUSE, execute:
+./NarutoRise-audio-fix-x86_64.AppImage --appimage-extract-and-run
+
+O AppImage não contém os arquivos do jogo. Os binários do jogo e a correção
+da espera de áudio são os mesmos do pacote .tar.gz já validado.
