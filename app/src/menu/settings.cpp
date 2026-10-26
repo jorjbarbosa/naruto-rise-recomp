@@ -32,10 +32,7 @@ void Settings::Initialize(std::filesystem::path directory, bool native_controls)
   if(!controls_enabled_){controls::Publish({});initial_menu_options_=menu_options_;return;}
   controls::Hardware().Poll(controls::Backend(), true);
   if (!config_.controls.version && !load_failed_) {
-    const auto effective_mnk = rex::cvar::GetFlagByName("mnk_mode");
-    const bool keyboard = rex::cvar::GetFlagSource("mnk_mode") >= rex::cvar::Source::kEnvironment
-        ? effective_mnk == "true" : config_.mnk_mode;
-    auto next = config_; next.controls = controls::Migrate(next.controls, *controls::Hardware().Devices(), keyboard);
+    auto next = config_; next.controls = controls::Migrate(next.controls);
     if (Save(next)) config_ = std::move(next);
   }
   controls::Publish(config_.controls);

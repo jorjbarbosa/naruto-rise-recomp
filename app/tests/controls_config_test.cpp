@@ -29,6 +29,16 @@ int main(int argc, char** argv) {
               config.controls.ports[0].sensitivity == 2.5 &&
               config.controls.ports[0].keys[16].find("MouseUp") != std::string::npos,
           "migration preserves alternatives and mouse");
+    {
+      auto automatic = config;
+      automatic.controls.version = 1;
+      Assign(automatic.controls, 0, kAutomaticDevice, {});
+      Check(ConfigManager::Save(root / "automatic.toml", automatic), "save automatic profile");
+      GameConfig loaded;
+      Check(ConfigManager::Load(root / "automatic.toml", loaded) &&
+                loaded.controls == automatic.controls,
+            "automatic profile survives restart");
+    }
     config.controls.version = 1;
     Assign(config.controls, 0, "keyboard", "Keyboard");
     Assign(config.controls, 1, "sdl:serial:test", "Controller");

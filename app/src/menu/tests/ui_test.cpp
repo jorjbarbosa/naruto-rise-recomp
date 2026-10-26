@@ -371,6 +371,8 @@ int main(int argc, char** argv) {
     std::ofstream(settings_path) << "unknown_option = 42\nuser_language = 1\nfullscreen = false\nshow_fps_overlay = false\nmnk_mode = true\nmnk_mouse = true\n";
     narutorise::menu::Settings settings_model;
     settings_model.Initialize(settings_dir);
+    check("first-run-controls-automatic", settings_model.config().controls.ports[0].device ==
+        narutorise::controls::kAutomaticDevice, "{}");
     settings_model.Open(menu, 0, false, {}, [](const std::string&) {}, [] {});
     frame("settings-game", modal);
     key(rex::ui::VirtualKey::kDown); key(rex::ui::VirtualKey::kRight);
@@ -447,8 +449,8 @@ int main(int argc, char** argv) {
       const auto focused_id=[&]{auto* e=Rml::GetContext("game")->GetFocusElement();return e?e->GetId():std::string{};};
       check("focus-route-initial-category",focused_id()=="device-category","{}");
       key(rex::ui::VirtualKey::kReturn);frame("focus-route-enter-device",modal);
-      check("focus-route-category-enters-content",focused_id()=="device-0"&&nav_saves==0,"{}");
-      if(focused_id()=="device-0"){
+      check("focus-route-category-enters-content",focused_id()=="device-auto"&&nav_saves==0,"{}");
+      if(focused_id()=="device-auto"){
         key(rex::ui::VirtualKey::kEscape);frame("focus-route-back-sidebar",modal);
         check("focus-route-back-retains-window",!nav_closed&&focused_id()=="device-category","{}");
         key(rex::ui::VirtualKey::kDown);frame("focus-route-buttons-category",modal);
@@ -520,6 +522,14 @@ int main(int argc, char** argv) {
       settings_model.Open(menu, 3, false, {}, [](const std::string&) {}, [] {});
       frame("modifier-conflict-restore-settings", modal);
     }
+    // The following transfer tests intentionally exercise a saved manual
+    // keyboard assignment; automatic ownership yields to explicit assignments.
+    auto manual_controls = settings_model.config();
+    narutorise::controls::Assign(manual_controls.controls, 0, "keyboard", "Keyboard and mouse");
+    check("manual-controls-fixture", ConfigManager::Save(settings_path, manual_controls), "{}");
+    settings_model.Reload();
+    settings_model.Open(menu, 3, false, {}, [](const std::string&) {}, [] {});
+    frame("manual-controls-settings", modal);
     focus_id("configure-controls");key(rex::ui::VirtualKey::kReturn);frame("controls-dedicated",modal);
     auto* controls_doc=visible_document("controls-window");
     check("controls-dedicated-window",controls_doc!=nullptr,"{}");
@@ -894,8 +904,9 @@ int main(int argc, char** argv) {
       rex::cvar::SetFlagFromCommandLine("mnk_mode", "true");
       narutorise::menu::Settings apply_settings;
       apply_settings.Initialize(apply_dir);
-      check("migration-uses-effective-keyboard-override",
-            narutorise::controls::Current()->ports[0].device == "keyboard", "{}");
+      check("migration-automatic-keeps-keyboard-available",
+            narutorise::controls::Current()->ports[0].device == narutorise::controls::kAutomaticDevice &&
+            rex::input::mnk::GetProfile()->enabled && rex::input::mnk::GetProfile()->user == 0, "{}");
       check("setup-without-edit-keeps-overrides", apply_settings.ApplyBeforeGame() &&
             rex::cvar::GetFlagByName("native_backend") == "vulkan" &&
             rex::cvar::GetFlagByName("skip_intro_videos") == "true", "{}");

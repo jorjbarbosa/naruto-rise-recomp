@@ -8,6 +8,7 @@
 
 namespace narutorise::controls {
 inline constexpr size_t kPorts = 4;
+inline constexpr const char* kAutomaticDevice = "auto";
 enum class SourceKind { None, Button, Axis };
 struct Source {
   SourceKind kind = SourceKind::None;
@@ -42,7 +43,7 @@ inline KeyBinds DefaultKeys() {
   return out;
 }
 struct Port {
-  std::string device;       // empty: None; "keyboard"; otherwise backend-qualified identity
+  std::string device;       // empty: None; "auto"; "keyboard"; backend-qualified identity
   std::string device_name;  // last known real name; retained on disconnect
   std::array<Source, kKeyActionCount> pad = DefaultPad();
   KeyBinds keys = DefaultKeys();
@@ -53,7 +54,7 @@ struct Port {
   bool operator==(const Port&) const = default;
 };
 struct Config {
-  int version = 0;  // legacy; assigned once the real inventory is available
+  int version = 0;  // legacy; migrated to automatic player one before the first save
   std::array<Port, kPorts> ports{};
   bool operator==(const Config&) const = default;
 };
@@ -65,6 +66,10 @@ void BindKey(Port& port, size_t action, size_t slot, const std::string& key);
 bool ModifierConflict(const KeyBinds& bindings, const std::string& key, const std::string& guide = {});
 void Restore(Port& port);
 void Assign(Config& config, size_t port, const std::string& device, const std::string& name);
+bool AvailableForAutomatic(const Config& config, const std::string& device);
+// A stable choice shared by runtime and menu inventories, independent of their
+// enumeration order. Explicit assignments and ambiguous identities are excluded.
+std::string AutomaticPad(const Config& config, const std::vector<std::string>& keys);
 bool Valid(const Config& config);
 std::string Encode(Source source);
 Source Decode(const std::string& text);

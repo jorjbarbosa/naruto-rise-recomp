@@ -6,6 +6,8 @@
 
 Use the setup screen or **F1** / **Back+Start** menu. Settings save automatically to `narutorise.toml` **next to the executable**. Hold Shift while opening, or pass `--setup`, to open setup. Close the game before editing the file manually. Options labelled RESTART require reopening the game; API/device changes offer a restart.
 
+New control profiles use **Automatic** for player one: an available controller and keyboard/mouse work without manual assignment, including controllers connected after startup. Saved manual assignments and **None** remain explicit choices. Select **Automatic** in the controls screen to restore automatic selection for an existing profile.
+
 Native builds configure controls through **Settings → Controls → Configure controls**, before playing or from the F1 menu. The dedicated four-port configuration is described below.
 
 During play, resolution, brightness, frame rate, VSync, MSAA, FXAA, CAS/FSR, texture filtering, transparency AA, frame latency and triple buffering apply without restarting. The menu waits for the renderer to accept each change; a rejected change restores the previous value. Resolution, MSAA and presentation resource changes can briefly pause rendering. Vulkan keeps effective frame latency at 1 and respects the surface's supported image counts. Skip intro videos affects subsequent video opens.
@@ -105,7 +107,7 @@ The values below match `app/narutorise.toml`:
 | `skip_intro_videos` | `true` | Skip boot logos (`Ubisoft.bik`, `LOGO_CORPO_EMEA.bik`, `LOGO_CORPO_US.bik`); preserve the campaign opening (`Intro.bik`) |
 | `show_fps_overlay` | `false` | FPS/frametime overlay |
 | `input_backend` | `"sdl"` | Physical input provider (`sdl` or `xinput`); changing it requires a game restart |
-| `mnk_mode` | `false` | Legacy keyboard/mouse selection, imported on migration; native per-port profiles then take precedence |
+| `mnk_mode` | `false` | Legacy keyboard/mouse selection; native Automatic and per-port profiles take precedence |
 | `log_level` | `"info"` | Logging level |
 
 The menu provides anisotropic filtering up to 16×. The internal `anisotropic_override` value uses the SDK's encoding; select the desired level through the interface.
@@ -178,7 +180,7 @@ Buttons, D-pad/stick clicks, triggers, movement and camera have keyboard/mouse v
 | Start / Back | Enter, Esc / Tab |
 | D-pad | 1, 2, 3, 4 (up, down, left, right); numpad 8, 2, 4, 6 |
 
-The native menu saves schema `controls.version = 1`, with `[controls.player1]` through `[controls.player4]`, and `.pad`/`.keys` banks below each port. Keys use comma-separated SDK names, including `LMB`, `RMB`, `MMB`, `X1MB`, `X2MB` and mapped mouse directions (`MouseUp`, `MouseDown`, `MouseLeft`, `MouseRight`). Existing alternatives are retained. On migration, the old `mnk_mode`, `mnk_mouse`, `mnk_sensitivity` and `keybind_*` values are imported into J1; enabled keyboard/mouse takes J1 and detected controllers take the next free ports. Otherwise controllers keep their initial connection order. Global legacy fields remain in the file, but per-port profiles become authoritative. `mouse_camera_direct = false` retains the stick-based camera path everywhere; `mouse_camera_trace = true` logs direct camera motion.
+The native menu saves schema `controls.version = 1`, with `[controls.player1]` through `[controls.player4]`, and `.pad`/`.keys` banks below each port. Keys use comma-separated SDK names, including `LMB`, `RMB`, `MMB`, `X1MB`, `X2MB` and mapped mouse directions (`MouseUp`, `MouseDown`, `MouseLeft`, `MouseRight`). Existing alternatives are retained. Migration imports `mnk_mouse`, `mnk_sensitivity` and `keybind_*` into J1 and selects **Automatic** (`device = "auto"`), which follows an available controller and also accepts keyboard/mouse. Devices explicitly assigned to another port are excluded from automatic selection. Existing versioned manual profiles remain unchanged. Global legacy fields remain in the file, but per-port profiles become authoritative. `mouse_camera_direct = false` retains the stick-based camera path everywhere; `mouse_camera_trace = true` logs direct camera motion.
 
 SDL combines the real serial and device path when both are available (otherwise it uses the available identifier); a session-only identity requires reassignment after restarting. Identical names have distinct suffixes. Device/driver path changes can require reassignment. XInput assignments follow its native slots, without a persistent physical identity. Ambiguous identities require reassignment. Device availability and ownership update on connection/disconnection; stale transfers and captures are canceled. **None** reports the port disconnected rather than presenting the SDK's NOP stand-in as hardware.
 

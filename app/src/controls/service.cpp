@@ -30,6 +30,17 @@ const Device* FindDevice(const Inventory& inventory, const std::string& key) {
     }
   return found;
 }
+const Device* SelectedDevice(const Config& config, size_t port, const Inventory& inventory) {
+  if (port >= kPorts) return nullptr;
+  const auto& key = config.ports[port].device;
+  if (key != kAutomaticDevice) return FindDevice(inventory, key);
+  std::vector<std::string> pads;
+  for (const auto& device : inventory.devices)
+    if (!device.keyboard) pads.push_back(device.key);
+  if (const auto selected = AutomaticPad(config, pads); !selected.empty())
+    return FindDevice(inventory, selected);
+  return AvailableForAutomatic(config, "keyboard") ? FindDevice(inventory, "keyboard") : nullptr;
+}
 std::shared_ptr<const Config> Current() {
   return current.load();
 }
@@ -42,15 +53,20 @@ void Publish(const Config& config) {
     return;
   }
   auto profile = std::make_shared<rex::input::mnk::Profile>();
+  size_t owner = kPorts;
   for (size_t i = 0; i < kPorts; ++i)
-    if (config.ports[i].device == "keyboard") {
-      const auto& port = config.ports[i];
-      profile->enabled = true;
-      profile->user = uint32_t(i);
-      profile->mouse = port.mouse;
-      profile->sensitivity = port.sensitivity;
-      profile->bindings = port.keys;
-    }
+    if (config.ports[i].device == "keyboard") owner = i;
+  if (owner == kPorts)
+    for (size_t i = 0; i < kPorts; ++i)
+      if (config.ports[i].device == kAutomaticDevice) owner = i;
+  if (owner < kPorts) {
+    const auto& port = config.ports[owner];
+    profile->enabled = true;
+    profile->user = uint32_t(owner);
+    profile->mouse = port.mouse;
+    profile->sensitivity = port.sensitivity;
+    profile->bindings = port.keys;
+  }
   rex::input::mnk::SetProfile(std::move(profile));
 }
 std::string Backend() {
@@ -309,8 +325,8 @@ void Service::StopAllRumble() {
   StopRumble();
   auto inventory = Devices();
   auto config = Current();
-  for (const auto& p : config->ports)
-    if (const auto* d = FindDevice(*inventory, p.device)) {
+  for (size_t i = 0; i < kPorts; ++i)
+    if (const auto* d = SelectedDevice(*config, i, *inventory)) {
       if (d->pad && std::find(pads_.begin(), pads_.end(), d->pad) != pads_.end())
         SDL_RumbleGamepad(d->pad, 0, 0, 0);
 #ifdef _WIN32

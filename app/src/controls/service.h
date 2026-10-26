@@ -28,6 +28,7 @@ struct Inventory {
 };
 // Ambiguous identities are deliberately not resolved by connection order.
 const Device* FindDevice(const Inventory& inventory, const std::string& key);
+const Device* SelectedDevice(const Config& config, size_t port, const Inventory& inventory);
 class Service {
  public:
   void Initialize();

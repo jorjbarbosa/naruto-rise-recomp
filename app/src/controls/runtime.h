@@ -7,6 +7,6 @@ RawState Transform(const RawState& raw, const Port& port);
 std::unique_ptr<rex::input::InputDriver> ConfigureInput(
     std::unique_ptr<rex::input::InputDriver> driver);
 std::unique_ptr<rex::input::DeviceAssignment> ConfiguredAssignment();
-// Resolves legacy selection against a real inventory, once, before saving.
-Config Migrate(Config config, const Inventory& inventory, bool keyboard_enabled);
+// New profiles follow available hardware instead of freezing the first poll.
+Config Migrate(Config config);
 }  // namespace narutorise::controls

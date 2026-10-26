@@ -6,6 +6,15 @@ const char* ControlsText(std::string_view key) {
     const char* values[7];
   };
   static constexpr Entry entries[] = {
+      {"c-automatic", {"Automatic", "Automático", "Automatique", "Automatisch", "Automático", "Automatico", "Автоматически"}},
+      {"c-automatic-help",
+       {"Uses an available controller automatically. Keyboard and mouse remain available unless assigned to another player.",
+        "Usa um controle disponível automaticamente. Teclado e mouse continuam disponíveis, salvo quando atribuídos a outro jogador.",
+        "Utilise automatiquement une manette disponible. Le clavier et la souris restent disponibles sauf s’ils sont attribués à un autre joueur.",
+        "Verwendet automatisch einen verfügbaren Controller. Tastatur und Maus bleiben verfügbar, sofern sie keinem anderen Spieler zugewiesen sind.",
+        "Usa un mando disponible automáticamente. El teclado y el ratón siguen disponibles salvo si están asignados a otro jugador.",
+        "Usa automaticamente un controller disponibile. Tastiera e mouse restano disponibili se non assegnati a un altro giocatore.",
+        "Автоматически использует доступный контроллер. Клавиатура и мышь доступны, если не назначены другому игроку."}},
       {"c-modifier-conflict",
        {"A modifier cannot be used both alone and in a chord. Remove the conflicting binding first.",
         "Um modificador não pode ser usado sozinho e numa combinação ao mesmo tempo. Remova o vínculo em conflito primeiro.",

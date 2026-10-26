@@ -192,6 +192,12 @@ add_executable(narutorise_controls_config_test EXCLUDE_FROM_ALL tests/controls_c
 target_link_libraries(narutorise_controls_config_test PRIVATE narutorise_menu_components)
 add_executable(narutorise_controls_service_test EXCLUDE_FROM_ALL tests/controls_service_test.cpp)
 target_link_libraries(narutorise_controls_service_test PRIVATE narutorise_menu_components)
+if(WIN32)
+    # Windows links SDL statically in the runtime DLL and the test executable.
+    # Compile this driver unit beside the virtual fixture so both use one SDL
+    # instance; virtual devices cannot cross two static SDL copies.
+    target_sources(narutorise_controls_service_test PRIVATE ../sdk/src/input/sdl/sdl_input_driver.cpp)
+endif()
 add_executable(narutorise_controls_runtime_test EXCLUDE_FROM_ALL tests/controls_runtime_test.cpp)
 target_link_libraries(narutorise_controls_runtime_test PRIVATE narutorise_menu_components)
 add_executable(narutorise_controls_capture_test EXCLUDE_FROM_ALL tests/controls_capture_test.cpp)

@@ -113,7 +113,7 @@ void Controls::Hide() {
   message_.clear();
 }
 const controls::Device* Controls::Device() const {
-  return inventory_ ? controls::FindDevice(*inventory_, config_.ports[player_].device) : nullptr;
+  return inventory_ ? controls::SelectedDevice(config_, player_, *inventory_) : nullptr;
 }
 void Controls::Tick(bool focused) {
   if (auto action = std::exchange(pending_, {}))
@@ -246,7 +246,7 @@ void Controls::SetGamepadHints(bool gamepad) {
 }
 std::string Controls::Bindings(const std::vector<size_t>& actions) {
   const auto& port = config_.ports[player_];
-  bool keyboard = port.device == "keyboard";
+  bool keyboard = Device() ? Device()->keyboard : port.device == "keyboard";
   std::string out = "<div class='mapping-head'><span>" + Escape(Text("c-game-command")) +
                     "</span><span>" + Escape(Text(keyboard ? "c-key-source" : "c-pad-source")) +
                     "</span></div>";
@@ -295,7 +295,7 @@ void Controls::Render(std::string focus) {
       focus = current->GetId();
   const auto& port = config_.ports[player_];
   const auto* device = Device();
-  bool keyboard = port.device == "keyboard";
+  bool keyboard = device ? device->keyboard : port.device == "keyboard";
   document_->GetElementById("controls-back")->SetInnerRML("‹  " + Escape(Text("c-controls")));
   std::string tabs;
   for (size_t i = 0; i < 4; ++i)
@@ -306,6 +306,8 @@ void Controls::Render(std::string focus) {
   std::string name = device                ? (keyboard ? Text("keyboard-mouse") : device->name)
                      : port.device.empty() ? Text("c-none")
                                            : port.device_name + " · " + Text("not-connected");
+  if (port.device == controls::kAutomaticDevice)
+    name = std::string(Text("c-automatic")) + (device ? " · " + name : "");
   std::string side = "<div class='section'>" + Escape(Text("c-device")) + "</div>" +
                      Category("device-category", name, Devices, page_ == Devices, false);
   side += "<div class='section gap'>" + Escape(Text("c-mapping")) + "</div>";
@@ -329,6 +331,10 @@ void Controls::Render(std::string focus) {
   std::string out;
   if (page_ == Devices) {
     out = Title(Text("c-choose-device"), Text("c-device-help"));
+    const bool another_auto = std::any_of(config_.ports.begin(), config_.ports.end(),
+        [&](const controls::Port& p) { return &p != &port && p.device == controls::kAutomaticDevice; });
+    out += Button("device-auto", Text("c-automatic"), "device", -2, 0, another_auto, "category");
+    out += "<p>" + Escape(Text("c-automatic-help")) + "</p>";
     for (size_t i = 0; i < inventory_->devices.size(); ++i) {
       const auto& d = inventory_->devices[i];
       int owner = -1;
@@ -659,6 +665,16 @@ void Controls::UpdatePreview() {
 }
 void Controls::ChooseDevice(int index) {
   controls::Hardware().StopRumble();
+  if (index == -2) {
+    if (std::any_of(config_.ports.begin(), config_.ports.end(), [&](const controls::Port& p) {
+          return &p != &config_.ports[player_] && p.device == controls::kAutomaticDevice;
+        })) return;
+    auto next = config_;
+    next.version = 1;
+    controls::Assign(next, player_, controls::kAutomaticDevice, {});
+    Commit(std::move(next), "device-category");
+    return;
+  }
   if (index < 0) {
     auto next = config_;
     next.version = 1;

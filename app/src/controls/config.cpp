@@ -112,6 +112,19 @@ void Assign(Config& config, size_t port, const std::string& device, const std::s
   config.ports[port].device = device;
   config.ports[port].device_name = name;
 }
+bool AvailableForAutomatic(const Config& config, const std::string& device) {
+  return !device.empty() && device != kAutomaticDevice &&
+         std::none_of(config.ports.begin(), config.ports.end(),
+                      [&](const Port& p) { return p.device == device; });
+}
+std::string AutomaticPad(const Config& config, const std::vector<std::string>& keys) {
+  std::string selected;
+  for (const auto& key : keys)
+    if (key != "keyboard" && AvailableForAutomatic(config, key) &&
+        std::count(keys.begin(), keys.end(), key) == 1 && (selected.empty() || key < selected))
+      selected = key;
+  return selected;
+}
 bool Valid(const Config& config) {
   if (config.version < 0 || config.version > 1)
     return false;

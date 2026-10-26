@@ -21,12 +21,13 @@ class Physical final : public InputDriver {
   X_INPUT_STATE state{};
   X_INPUT_VIBRATION rumble{};
   bool present = true;
+  DeviceId id = DeviceId(12);
   std::string key = "fixture:physical";
   X_STATUS Setup() override { return X_STATUS_SUCCESS; }
   void EnumerateDevices(std::vector<DeviceInfo>& out) override {
     if (present) {
       DeviceInfo d;
-      d.id = DeviceId(12);
+      d.id = id;
       d.key = key;
       d.name = "Test fixture";
       out.push_back(d);
@@ -55,6 +56,54 @@ class Physical final : public InputDriver {
 };
 int main() {
   try {
+    {
+      // A first poll without a pad must not save a permanently empty port.
+      auto automatic = Migrate({});
+      Check(automatic.version == 1 && automatic.ports[0].device == kAutomaticDevice,
+            "first-run automatic port");
+      automatic.ports[0].keys[0] = "G";
+      Publish(automatic);
+      InputSystem first_run(nullptr);
+      auto a = std::make_unique<Physical>(); auto* pad = a.get(); pad->present = false;
+      auto b = std::make_unique<Physical>(); auto* second = b.get(); second->id = DeviceId(13);
+      second->present = false; second->key = "fixture:second";
+      auto keyboard = std::make_unique<mnk::MnkInputDriver>(nullptr, 0); auto* keys = keyboard.get();
+      Check(keyboard->Setup() == X_STATUS_SUCCESS, "automatic keyboard setup");
+      first_run.AddDriver(ConfigureInput(std::move(a)));
+      first_run.AddDriver(ConfigureInput(std::move(b)));
+      first_run.AddDriver(ConfigureInput(std::move(keyboard)));
+      first_run.SetDeviceAssignment(ConfiguredAssignment());
+      X_INPUT_STATE state{};
+      Check(first_run.GetState(0, &state) == X_ERROR_SUCCESS, "keyboard works before a pad connects");
+      rex::ui::KeyEvent down(nullptr, rex::ui::VirtualKey::kG, 1, false, false, false, false, false);
+      keys->OnKeyDown(down);
+      Check(first_run.GetState(0, &state) == X_ERROR_SUCCESS && (uint16_t(state.gamepad.buttons) & 0x1000),
+            "automatic keyboard bindings");
+      rex::ui::KeyEvent up(nullptr, rex::ui::VirtualKey::kG, 1, true, false, false, false, false);
+      keys->OnKeyUp(up);
+      pad->present = true; pad->state.gamepad.buttons = 0x1000;
+      Check(first_run.GetState(0, &state) == X_ERROR_SUCCESS && uint16_t(state.gamepad.buttons) == 0x1000,
+            "late controller automatically feeds player one");
+      Check(first_run.GetState(1, &state) == X_ERROR_DEVICE_NOT_CONNECTED, "automatic does not fill other players");
+      pad->present = false;
+      Check(first_run.GetState(0, &state) == X_ERROR_SUCCESS && !uint16_t(state.gamepad.buttons),
+            "keyboard remains on disconnect");
+      pad->key = "sdl:session:new-connection"; pad->present = true;
+      Check(first_run.GetState(0, &state) == X_ERROR_SUCCESS && uint16_t(state.gamepad.buttons) == 0x1000,
+            "reconnected controller with a new identity");
+      second->present = true; second->state.gamepad.buttons = 0x8000;
+      Assign(automatic, 1, second->key, "Second controller"); Publish(automatic);
+      Check(first_run.GetState(0, &state) == X_ERROR_SUCCESS && uint16_t(state.gamepad.buttons) == 0x1000,
+            "automatic excludes explicitly assigned controller");
+      Check(first_run.GetState(1, &state) == X_ERROR_SUCCESS && uint16_t(state.gamepad.buttons) == 0x8000,
+            "manual player two remains independent");
+      Assign(automatic, 2, "keyboard", "Keyboard"); Publish(automatic);
+      Check(mnk::GetProfile()->user == 2, "explicit keyboard owner takes precedence over automatic");
+      automatic.ports[0].device.clear(); Publish(automatic);
+      Check(first_run.GetState(0, &state) == X_ERROR_DEVICE_NOT_CONNECTED,
+            "manual None is respected even with a controller attached");
+      Check(Migrate(automatic) == automatic, "saved assignments are not migrated again");
+    }
     Config config;
     config.version = 1;
     Assign(config, 0, "fixture:physical", "Test fixture");
@@ -178,9 +227,10 @@ int main() {
     d.name = "Test fixture";
     inventory.devices.push_back(d);
     Config legacy;
-    auto migrated = Migrate(legacy, inventory, true);
-    Check(migrated.ports[0].device == "keyboard" && migrated.ports[1].device == d.key,
-          "approved legacy device priority");
+    legacy.ports[0].keys[0] = "G";
+    auto migrated = Migrate(legacy);
+    Check(migrated.ports[0].device == kAutomaticDevice && migrated.ports[1].device.empty() &&
+              migrated.ports[0].keys[0] == "G", "migration preserves bindings with automatic player one");
     std::cout << "PASS: real InputSystem routing, remap/keystroke, transfer, None, deadzones, "
                  "rumble scale, MnK owner, migration\n";
   } catch (const std::exception& e) {

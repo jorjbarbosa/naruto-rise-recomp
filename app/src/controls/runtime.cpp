@@ -65,6 +65,16 @@ class Assignment final : public DeviceAssignment {
     const auto& key = config->ports[user].device;
     if (key.empty())
       return;
+    if (key == kAutomaticDevice) {
+      std::vector<std::string> pads;
+      for (const auto& d : devices_) if (!d.synthetic) pads.push_back(d.key);
+      const auto pad = AutomaticPad(*config, pads);
+      for (const auto& d : devices_)
+        if ((!pad.empty() && d.key == pad) ||
+            (d.key == "keyboard" && AvailableForAutomatic(*config, d.key)))
+          out.push_back(d.id);
+      return;
+    }
     for (const auto& d : devices_)
       if (d.key == key)
         out.push_back(d.id);
@@ -264,6 +274,9 @@ class Driver final : public InputDriver {
     for (const auto& p : config.ports)
       if (!p.device.empty() && p.device == key->second)
         return &p;
+    if (AvailableForAutomatic(config, key->second))
+      for (const auto& p : config.ports)
+        if (p.device == kAutomaticDevice) return &p;
     return nullptr;
   }
   // Xbox keystrokes, generated from the same transformed state as GetState.
@@ -372,20 +385,14 @@ std::unique_ptr<InputDriver> ConfigureInput(std::unique_ptr<InputDriver> driver)
 std::unique_ptr<DeviceAssignment> ConfiguredAssignment() {
   return std::make_unique<Assignment>();
 }
-Config Migrate(Config config, const Inventory& inventory, bool keyboard_enabled) {
+Config Migrate(Config config) {
   if (config.version)
     return config;
   for (auto& p : config.ports) {
     p.device.clear();
     p.device_name.clear();
   }
-  size_t at = 0;
-  if (keyboard_enabled) {
-    Assign(config, at++, "keyboard", "Keyboard and mouse");
-  }
-  for (const auto& d : inventory.devices)
-    if (!d.keyboard && at < kPorts && FindDevice(inventory, d.key))
-      Assign(config, at++, d.key, d.name);
+  Assign(config, 0, kAutomaticDevice, {});
   config.version = 1;
   return config;
 }
