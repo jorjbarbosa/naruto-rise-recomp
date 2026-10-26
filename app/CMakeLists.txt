@@ -239,6 +239,11 @@ add_executable(narutorise_game_image_test EXCLUDE_FROM_ALL
 target_include_directories(narutorise_game_image_test PRIVATE src)
 target_link_libraries(narutorise_game_image_test PRIVATE rex::runtime)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(narutorise_posix_wait_test EXCLUDE_FROM_ALL tests/posix_wait_test.cpp)
+    target_link_libraries(narutorise_posix_wait_test PRIVATE rex::runtime)
+endif()
+
 add_executable(narutorise_game_logo_test EXCLUDE_FROM_ALL tests/game_logo_test.cpp)
 target_link_libraries(narutorise_game_logo_test PRIVATE narutorise_menu_components)
 
