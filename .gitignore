@@ -91,3 +91,6 @@ app/src/gpu/historical/
 tools/native-renderer/
 patches/rea/
 docs/plans/
+
+# Local task documentation: never version task folders.
+/tasks/
