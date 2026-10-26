@@ -95,6 +95,8 @@ endif()
 if(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP)
     add_executable(native_draw_storage_test src/gpu/common/tests/draw_storage_test.cpp)
     target_include_directories(native_draw_storage_test PRIVATE src)
+    add_executable(native_descriptor_writes_test src/gpu/backend/vulkan/tests/descriptor_writes_test.cpp)
+    target_include_directories(native_descriptor_writes_test PRIVATE src)
     list(APPEND NARUTORISE_SOURCES
          # The host: configuration, guest kernel exports and the frame lifecycle.
          src/gpu/host/host.cpp src/gpu/host/kernel_video.cpp src/gpu/host/kernel_threading.cpp

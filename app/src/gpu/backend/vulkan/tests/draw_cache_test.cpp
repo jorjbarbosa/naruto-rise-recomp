@@ -39,8 +39,9 @@ int main(int argc, char** argv) {
   DrawTexture t; t.reg = 0; t.key = 0x6000; t.format = TextureFormat::kR8G8B8A8Unorm;
   t.width = t.height = 2; t.levels = 1; t.layout = t.version = 1;
   auto upload = [&](std::array<uint8_t, 4> color) {
-    t.data = {std::vector<uint8_t>(size_t(t.width) * t.height * 4)};
-    for (size_t at = 0; at < t.data[0].size(); at += 4) std::memcpy(t.data[0].data() + at, color.data(), 4);
+    t.data.assign(t.cube ? 6 : 1, std::vector<uint8_t>(size_t(t.width) * t.height * 4));
+    for (auto& face : t.data) for (size_t at = 0; at < face.size(); at += 4)
+      std::memcpy(face.data() + at, color.data(), 4);
     const bool ok = engine.UploadSampled(t, e); t.data.clear(); return ok;
   };
   check("upload-red", upload({255, 0, 0, 255}), e);
@@ -109,6 +110,49 @@ int main(int argc, char** argv) {
   summary = engine.PipelineSummary();
   check("recycled-descriptors", number("draw_descriptor_pools") == 1 && number("draw_set_allocations") == 12 &&
       number("draw_samplers") == 2 && number("vulkan_draws") == 121, "{" + summary + "}");
+  check("recycled-write-count", number("draw_descriptor_elements") == 385, "{" + summary + "}");
+  auto shader_input = [&](uint32_t reg, uint32_t forced, uint32_t cube) {
+    const uint32_t values[]{reg, forced, cube};
+    std::memcpy(r.ps_constants.data() + 16, values, sizeof(values));
+    ++r.ps_constants_version;
+  };
+  auto solid = [&](const char* label, std::array<uint8_t, 4> expected) {
+    bool ok = engine.DrawIndexed(r, fence, e) && engine.ReadSurface(surface.key, fence, pixels, width, height, e);
+    ok &= width == 64 && height == 64 && pixels.size() == 64 * 64 * 4;
+    if (ok) for (size_t at = 0; at < pixels.size(); at += 4)
+      ok &= std::memcmp(pixels.data() + at, expected.data(), 4) == 0;
+    check(label, ok, e);
+  };
+  // Recycled descriptor storage must clear entries that were active before,
+  // even when no current texture references that slot. Explicitly sample it.
+  r.textures.clear(); shader_input(0, 1, 0);
+  solid("removed-image-slot-zero", {0, 0, 0, 0});
+  t.reg = 19; r.textures = {t}; shader_input(19, 0, 0);
+  solid("high-register-slot", {0, 0, 255, 255});
+  r.textures.clear(); shader_input(19, 20, 0);
+  solid("removed-high-slot-zero", {0, 0, 0, 0});
+  // Recreate the same resource key as a cube, then remove that cube binding.
+  t.reg = 0; t.cube = true; ++t.layout; ++t.version;
+  check("upload-cube", upload({0, 255, 0, 255}), e);
+  r.textures = {t}; shader_input(0, 0, 1);
+  solid("cube-slot", {0, 255, 0, 255});
+  r.textures.clear(); shader_input(0, 1, 1);
+  solid("removed-cube-slot-zero", {0, 0, 0, 0});
+  t.cube = false; ++t.layout; ++t.version;
+  check("recreate-2d", upload({255, 0, 0, 255}), e);
+  shader_input(0, 0, 0); r.textures = {t};
+  // Cross the 64-group pool boundary and then reuse every group. Different
+  // samplers force different immutable groups without changing these pixels.
+  for (unsigned cycle = 0; cycle < 2; ++cycle) {
+    for (unsigned i = 0; i < 70; ++i) {
+      r.textures[0].lod_bias = float(i) / 100;
+      if (!engine.DrawIndexed(r, fence, e)) { check("many-groups-draw", false, e); break; }
+    }
+    solid(cycle ? "many-groups-recycled" : "many-groups-in-flight", {255, 0, 0, 255});
+  }
+  summary = engine.PipelineSummary();
+  check("final-write-counters", number("draw_descriptor_groups") > 140 &&
+      number("draw_descriptor_elements") < 128 * number("draw_descriptor_groups"), "{" + summary + "}");
   check("release", engine.ReleaseRemaining(e), e);
   check("shutdown", engine.Shutdown(e), e);
   output << "{\"kind\":\"verdict\",\"passed\":" << (passed ? "true" : "false") << "}\n";

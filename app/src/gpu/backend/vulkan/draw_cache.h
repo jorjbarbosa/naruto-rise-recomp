@@ -2,6 +2,7 @@
 // cache until its submission completes, before any retired images are freed.
 #pragma once
 #include "gpu/backend/vulkan/graphics.h"
+#include "gpu/backend/vulkan/descriptor_writes.h"
 #include <unordered_map>
 
 namespace gpu::vulkan {
@@ -9,6 +10,10 @@ struct DrawCacheCounters {
   std::atomic<uint64_t> draws{0}, pools{0}, groups{0}, views{0}, samplers{0}, framebuffers{0}, constant_bytes{0}, passes{0};
   std::atomic<uint64_t> pipeline_binds{0}, descriptor_binds{0};
   std::atomic<uint64_t> set_allocations{0};
+#if defined(NATIVE_RENDERER_ENGINE_FAULT_TEST)
+  // Actual elements sent to Vulkan: a regression oracle, absent from the product.
+  std::atomic<uint64_t> descriptor_elements{0};
+#endif
 };
 template <size_t N> struct DrawKeyHash {
   size_t operator()(const std::array<uint64_t, N>& key) const {
@@ -31,9 +36,9 @@ class DrawCache {
     for (auto pool : pools_) vkDestroyDescriptorPool(device_, pool, nullptr);
     for (const auto& [key, sampler] : samplers_) vkDestroySampler(device_, sampler, nullptr);
   }
-  // Called only after the batch's GPU fence completes. Slots are overwritten
-  // in full before the next batch can bind them. Samplers contain no image
-  // references, so they can remain with the reusable arena.
+  // Called only after the batch's GPU fence completes. Active image slots are
+  // rewritten before reuse, including those whose numeric handles repeat.
+  // Permanent fallback descriptors and owned samplers survive the recycle.
   void Recycle() {
     for (const auto& [key, framebuffer] : framebuffers_) vkDestroyFramebuffer(device_, framebuffer, nullptr);
     for (const auto& [key, view] : views_) vkDestroyImageView(device_, view, nullptr);
@@ -117,20 +122,30 @@ class DrawCache {
       const auto result = vkAllocateDescriptorSets(device_, &info, out.data());
       if (result != VK_SUCCESS) return result;
       ++groups_in_pool_;
-      slots_.push_back(out);
+      slots_.push_back({out, {}});
       counters_.set_allocations.fetch_add(4, std::memory_order_relaxed);
     } else {
-      out = slots_[used_slots_];
+      out = slots_[used_slots_].sets;
     }
-    ++used_slots_;
-    std::array<VkWriteDescriptorSet, 4> writes{};
-    for (unsigned i = 0; i < 4; ++i) {
-      writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-      writes[i].dstSet = out[i]; writes[i].descriptorCount = 32;
-      writes[i].descriptorType = i == 3 ? VK_DESCRIPTOR_TYPE_SAMPLER : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-      writes[i].pImageInfo = images[i].data();
+    const auto masks = slots_[used_slots_++].previous.Plan(key);
+    // At most sixteen disjoint runs per 32-bit mask, four masks. A new slot is
+    // initialized in full; recycled slots update only invalid/changed entries.
+    std::array<VkWriteDescriptorSet, 64> writes;
+    uint32_t count = 0;
+    for (unsigned set = 0; set < 4; ++set) {
+      DescriptorRanges(masks[set], [&](unsigned first, unsigned length) {
+        auto& write = writes[count++];
+        write = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = out[set]; write.dstArrayElement = first; write.descriptorCount = length;
+        write.descriptorType = set == 3 ? VK_DESCRIPTOR_TYPE_SAMPLER : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        write.pImageInfo = images[set].data() + first;
+      });
     }
-    vkUpdateDescriptorSets(device_, 4, writes.data(), 0, nullptr);
+    if (count) vkUpdateDescriptorSets(device_, count, writes.data(), 0, nullptr);
+#if defined(NATIVE_RENDERER_ENGINE_FAULT_TEST)
+    for (uint32_t i = 0; i < count; ++i)
+      counters_.descriptor_elements.fetch_add(writes[i].descriptorCount, std::memory_order_relaxed);
+#endif
     groups_.emplace(key, out);
     counters_.groups.fetch_add(1, std::memory_order_relaxed);
     return VK_SUCCESS;
@@ -144,7 +159,8 @@ class DrawCache {
   const VkDevice device_;
   DrawCacheCounters& counters_;
   std::vector<VkDescriptorPool> pools_;
-  std::vector<std::array<VkDescriptorSet, 4>> slots_;
+  struct Slot { std::array<VkDescriptorSet, 4> sets; DescriptorWriteState previous; };
+  std::vector<Slot> slots_;
   size_t used_slots_ = 0;
   uint32_t groups_in_pool_ = 0;
   std::unordered_map<ViewKey, VkImageView, DrawKeyHash<6>> views_;

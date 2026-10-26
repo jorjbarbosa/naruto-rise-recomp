@@ -1513,13 +1513,17 @@ std::string Backend::ResourceCounts() {
 
 std::string Backend::PipelineSummary() {
   const auto& c = state_->draw_counters;
-  return state_->pipeline_set.Summary() + fmt::format(
+  auto summary = state_->pipeline_set.Summary() + fmt::format(
       ",\"vulkan_draws\":{},\"draw_descriptor_pools\":{},\"draw_descriptor_groups\":{},\"draw_image_views\":{},"
       "\"draw_samplers\":{},\"draw_framebuffers\":{},\"draw_constant_bytes\":{},\"draw_render_passes\":{},"
       "\"draw_pipeline_binds\":{},\"draw_descriptor_binds\":{},\"draw_set_allocations\":{}",
       c.draws.load(), c.pools.load(), c.groups.load(), c.views.load(), c.samplers.load(),
       c.framebuffers.load(), c.constant_bytes.load(), c.passes.load(), c.pipeline_binds.load(), c.descriptor_binds.load(),
       c.set_allocations.load());
+#if defined(NATIVE_RENDERER_ENGINE_FAULT_TEST)
+  summary += fmt::format(",\"draw_descriptor_elements\":{}", c.descriptor_elements.load());
+#endif
+  return summary;
 }
 
 bool Backend::LiveResources(ResourceKeys& keys, std::string& evidence) {
