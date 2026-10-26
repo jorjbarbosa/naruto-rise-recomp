@@ -44,7 +44,9 @@ int main(int argc, char** argv) {
 
     Write(path, "launcher_language = 'pt_BR'\n");
     GameConfig legacy;
+    Require(legacy.show_startup_menu, "Initial menu must default to enabled");
     Require(ConfigManager::Load(path, legacy), "Legacy configuration failed to load");
+    Require(legacy.show_startup_menu, "Missing startup preference keeps the initial menu enabled");
     Require(legacy.user_language == 1, "Missing game language must default to English");
     Require(legacy.launcher_language == "pt_BR", "Launcher language was changed");
     Require(ConfigManager::Save(path, legacy), "Legacy configuration failed to save");

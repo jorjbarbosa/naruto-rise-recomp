@@ -110,7 +110,7 @@ def main():
     focus = importlib.util.module_from_spec(focus_spec)
     focus_spec.loader.exec_module(focus)
 
-    def case(name, reason=None, api='d3d12', args=(), first=False, failed=False, play=False, language='en', root=iso):
+    def case(name, reason=None, api='d3d12', args=(), first=False, failed=False, play=False, language='en', root=iso, show_menu=True):
         user = product / ('user-' + name)
         user.mkdir()
         marker = user/'launch.marker'
@@ -118,7 +118,7 @@ def main():
             marker.write_text('started\n')
         config = {'renderer': 'native', 'native_backend': api, 'fullscreen': False,
                   'skip_intro_videos': True, 'frame_rate': 60, 'input_backend': 'sdl', 'launcher_language': language,
-                  'check_for_updates': False}
+                  'check_for_updates': False, 'show_startup_menu': show_menu}
         if not first:
             config['custom_game_root'] = str(root)
         (product/'narutorise.toml').write_text('\n'.join(f'{key} = {json.dumps(value, ensure_ascii=False)}' for key,value in config.items()), encoding='utf-8')
@@ -164,7 +164,7 @@ def main():
             user32.PostMessageW(hwnd, 0x10, 0, 0)
             process.wait(timeout=25)
             assert process.returncode == 0, process.returncode
-            if reason:
+            if reason and not any(arg.startswith('--game_data_root=') for arg in args):
                 assert not marker.exists()
             record = dict(case=name, passed=True, exit=process.returncode, reason=reason, api=api, screenshot_crc=crc)
             if log:
@@ -187,15 +187,17 @@ def main():
     case('failed', 'start-failed', failed=True)
     for api in ('d3d12', 'vulkan'):
         case('setup-'+api, 'requested', api=api, args=('--setup',), play=True)
-    case('direct')
-    case('command-line', args=('--game_data_root='+str(iso), '--setup'), failed=True)
+    case('default-menu', 'startup')
+    case('direct', show_menu=False)
+    case('command-line', args=('--game_data_root='+str(iso),), failed=True, show_menu=False)
+    case('command-line-menu', 'startup', args=('--game_data_root='+str(iso),))
     unicode_root = product/'jogo-ação.iso'
     try:
         os.link(iso, unicode_root)
     except OSError as error:
         print(f'NOT_RUN: Unicode ISO hard link is unavailable: {error}', flush=True)
     else:
-        case('unicode-path', root=unicode_root)
+        case('unicode-path', 'startup', root=unicode_root)
     for language in ('en', 'pt_BR', 'fr', 'de', 'es', 'it', 'ru'):
         case('language-'+language, 'requested', args=('--setup',), language=language)
     crcs = [r['screenshot_crc'] for r in results if r['case'].startswith('language-')]

@@ -61,6 +61,8 @@ REXCVAR_DEFINE_BOOL(show_fps_overlay, false, "narutorise/UI",
 
 REXCVAR_DEFINE_BOOL(setup, false, "narutorise/UI",
                     "Open the setup screen before the game (also Shift held at the start)");
+REXCVAR_DEFINE_BOOL(show_startup_menu, true, "narutorise/UI",
+                    "Show the initial menu before the game (Settings > Advanced)");
 REXCVAR_DEFINE_BOOL(check_for_updates, true, "narutorise/UI", "Notify when a new release is available");
 REXCVAR_DEFINE_UINT32(restart_wait_pid, 0, "narutorise/Internal", "Wait for the previous process during a settings restart");
 
@@ -224,8 +226,8 @@ class NarutoriseApp : public rex::ReXApp {
       REXLOG_WARN("{}", line);
   }
 
-  // The game boots straight away unless the setup screen is needed
-  // (menu/setup_gate.h); then the screen shows on the window before the
+  // The initial menu follows the saved startup preference and recovery rules
+  // (menu/setup_gate.h); it shows on the window before the
   // runtime exists, and its Play resumes the boot. The native mode only: with
   // Xenos the game boots as configured.
   std::optional<rex::PathConfig> OnFinalizePaths(const rex::PathConfig& defaults,
@@ -250,6 +252,7 @@ class NarutoriseApp : public rex::ReXApp {
     facts.status = game_identity_.status;
     facts.start_failed = start_failed_;
     facts.requested = REXCVAR_GET(setup) || menu::SetupKeyHeld();
+    facts.show_startup_menu = REXCVAR_GET(show_startup_menu);
     const menu::SetupReason reason = menu::SetupReasonFor(facts);
     if (reason == menu::SetupReason::kNone || !OpenSetupScreen(reason, defaults, std::move(resume))) {
       ArmFirstPresentation();

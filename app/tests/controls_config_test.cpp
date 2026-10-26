@@ -33,11 +33,12 @@ int main(int argc, char** argv) {
       auto automatic = config;
       automatic.controls.version = 1;
       Assign(automatic.controls, 0, kAutomaticDevice, {});
+      automatic.show_startup_menu = false;
       Check(ConfigManager::Save(root / "automatic.toml", automatic), "save automatic profile");
       GameConfig loaded;
       Check(ConfigManager::Load(root / "automatic.toml", loaded) &&
-                loaded.controls == automatic.controls,
-            "automatic profile survives restart");
+                loaded.controls == automatic.controls && !loaded.show_startup_menu,
+            "automatic profile and startup preference survive restart");
     }
     config.controls.version = 1;
     Assign(config.controls, 0, "keyboard", "Keyboard");

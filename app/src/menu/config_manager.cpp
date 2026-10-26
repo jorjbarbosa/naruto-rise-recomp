@@ -101,6 +101,7 @@ bool ConfigManager::Load(const std::filesystem::path& toml_path, GameConfig& con
     if (auto v = tbl["present_effect"].value<std::string>()) loaded.present_effect = *v;
     if (auto v = tbl["present_dither"].value<bool>()) loaded.present_dither = *v;
     if (auto v = tbl["show_fps_overlay"].value<bool>()) loaded.show_fps_overlay = *v;
+    if (auto v = tbl["show_startup_menu"].value<bool>()) loaded.show_startup_menu = *v;
     if (auto v = tbl["ultrawide_target_aspect"].value<double>()) loaded.ultrawide_target_aspect = *v;
     if (auto v = tbl["custom_game_root"].value<std::string>()) loaded.custom_game_root = *v;
     if (auto v = tbl["user_data_root"].value<std::string>()) loaded.user_data_root = *v;
@@ -193,6 +194,7 @@ bool ConfigManager::Save(const std::filesystem::path& toml_path, const GameConfi
   tbl.insert_or_assign("present_effect", config.present_effect);
   tbl.insert_or_assign("present_dither", config.present_dither);
   tbl.insert_or_assign("show_fps_overlay", config.show_fps_overlay);
+  tbl.insert_or_assign("show_startup_menu", config.show_startup_menu);
   tbl.insert_or_assign("ultrawide_target_aspect", config.ultrawide_target_aspect);
   if (!config.custom_game_root.empty()) {
     tbl.insert_or_assign("custom_game_root", config.custom_game_root);

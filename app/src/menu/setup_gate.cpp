@@ -7,11 +7,12 @@
 namespace narutorise::menu {
 
 SetupReason SetupReasonFor(const SetupFacts& facts) {
-  if (facts.command_line_root) return SetupReason::kNone;
+  if (facts.command_line_root && !facts.show_startup_menu && !facts.requested) return SetupReason::kNone;
   if (!facts.found) return facts.configured ? SetupReason::kGameMissing : SetupReason::kFirstRun;
   if (facts.status != game_image::Status::kReady) return SetupReason::kGameNotReady;
   if (facts.start_failed) return SetupReason::kStartFailed;
   if (facts.requested) return SetupReason::kRequested;
+  if (facts.show_startup_menu) return SetupReason::kStartup;
   return SetupReason::kNone;
 }
 
@@ -23,6 +24,7 @@ const char* SetupReasonName(SetupReason reason) {
     case SetupReason::kGameNotReady: return "game-not-ready";
     case SetupReason::kStartFailed: return "start-failed";
     case SetupReason::kRequested: return "requested";
+    case SetupReason::kStartup: return "startup";
   }
   return "unknown";
 }

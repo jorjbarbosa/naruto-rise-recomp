@@ -5,6 +5,8 @@ gpu_plugin = "xenos"
 # in builds with the native renderer; builds without it always use Xenos.
 # Linux builds have only the native renderer.
 renderer = "native"
+# Show the initial menu before the game. Can be changed under Settings > Advanced.
+show_startup_menu = true
 # Native graphics API: "d3d12" or "vulkan" when included in the build.
 # Omit to use D3D12, or Vulkan in a Vulkan-only build (Linux). Fixed for the
 # session.

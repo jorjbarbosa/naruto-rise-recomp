@@ -276,6 +276,10 @@ std::vector<PanelRow> Settings::Rows(int group) {
         menu_options_.chord != initial_menu_options_.chord, false, chord_names, selected,
         [this, chords](int value) { auto next = menu_options_; next.chord = chords.at(size_t(value)); SaveMenuOptions("game_menu_chord", next); }, {}});
   } else {
+    rows.push_back({"show_startup_menu", Text("startup-menu"), Bool(config_.show_startup_menu), Text("startup-menu-help"),
+        config_.show_startup_menu != initial_.show_startup_menu, false,
+        {Text("off"), Text("on")}, config_.show_startup_menu ? 1 : 0,
+        [this](int value) { Change("show_startup_menu", [value](GameConfig& c) { c.show_startup_menu = value != 0; }); }, {}});
     choice("max_frame_latency", TextId::FrameLatencyLabel, TextId::FrameLatencyDescription,
         config_.native_backend == "vulkan" ? std::vector<std::string>{Tr(TextId::FrameLatencyLowest)} :
         std::vector<std::string>{Tr(TextId::FrameLatencyLowest), "2", "3"}, config_.max_frame_latency - 1,

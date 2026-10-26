@@ -1,8 +1,6 @@
-// When the setup screen opens before the game. The game boots straight away
-// unless there is no game to boot, the player asks for the screen (Shift held
-// at the start, or --setup: the safe mode), or the last start ended before its
-// first frame (the launch marker is still there). A game data root on the
-// command line (automated boots, shortcuts of older versions) never opens it.
+// The initial menu opens by default. Players may turn it off under Advanced;
+// missing game data, a failed start or an explicit --setup still open it.
+// Automated boots can pass --show_startup_menu=false with --game_data_root.
 #pragma once
 
 #include "game_image.h"
@@ -16,6 +14,7 @@ enum class SetupReason {
   kGameNotReady,   // The game data is not the game of this port (game_image::Status).
   kStartFailed,    // The last start ended before its first frame.
   kRequested,      // Shift held at the start, or --setup.
+  kStartup,        // The saved preference to show the initial menu.
 };
 
 struct SetupFacts {
@@ -25,6 +24,7 @@ struct SetupFacts {
   game_image::Status status = game_image::Status::kUnreadable;  // Of the root found.
   bool start_failed = false;       // The launch marker of the last start is there.
   bool requested = false;
+  bool show_startup_menu = true;
 };
 
 // The game's problems come first: the screen opens on the game file then.

@@ -4,7 +4,7 @@
 
 ## Where to configure settings
 
-Use the setup screen or **F1** / **Back+Start** menu. Settings save automatically to `narutorise.toml` **next to the executable**. Hold Shift while opening, or pass `--setup`, to open setup. Close the game before editing the file manually. Options labelled RESTART require reopening the game; API/device changes offer a restart.
+The initial menu opens by default. Turn off **Settings → Advanced → Show menu at startup** (`show_startup_menu = false`) to boot directly into the game. **F1** / **Back+Start** opens settings during play. Hold Shift while opening, or pass `--setup`, to request the initial menu again. Automated boots can use `--show_startup_menu=false`. Settings save automatically to `narutorise.toml` **next to the executable**. Close the game before editing the file manually. Options labelled RESTART require reopening the game; API/device changes offer a restart.
 
 New control profiles use **Automatic** for player one: an available controller and keyboard/mouse work without manual assignment, including controllers connected after startup. Saved manual assignments and **None** remain explicit choices. Select **Automatic** in the controls screen to restore automatic selection for an existing profile.
 

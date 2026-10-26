@@ -114,6 +114,7 @@ int main(int argc, char** argv) {
     facts.found = facts.configured = true;
     facts.status = narutorise::game_image::Status::kReady;
     facts.start_failed = std::filesystem::exists(marker);
+    facts.show_startup_menu = false;  // This fixture tests recovery after opting out.
     return narutorise::menu::SetupReasonFor(facts);
   };
   const std::vector<uint8_t> texels{255, 0, 255, 255, 0, 255, 255, 255};  // Magenta, cyan.
