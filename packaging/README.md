@@ -22,7 +22,7 @@ includes the required option:
 ```powershell
 pwsh -File packaging/package-release.ps1
 # Use a separate output folder or override the default release version:
-pwsh -File packaging/package-release.ps1 -OutputRootDir dist/candidate -Version 0.3.0-beta
+pwsh -File packaging/package-release.ps1 -OutputRootDir dist/candidate -Version 0.4.0-beta
 ```
 
 The script refreshes the Release build and generated DLC modules, audits PE
