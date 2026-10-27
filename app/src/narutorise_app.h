@@ -638,6 +638,7 @@ class NarutoriseApp : public rex::ReXApp {
   // renames folders that don't fit XCONTENT_AGGREGATE_DATA::file_name_raw
   // (42 bytes) and writes missing .header sidecars with a full license mask.
   void AutoInstallDlc() {
+    using rex::X_RESULT;  // X_ERROR_SUCCESS casts to it.
     auto* kernel_state = runtime() ? runtime()->kernel_state() : nullptr;
     auto* content_manager = kernel_state ? kernel_state->content_manager() : nullptr;
     if (!content_manager) {
@@ -733,11 +734,12 @@ class NarutoriseApp : public rex::ReXApp {
           probe.title_id = parsed_title_id;
           probe.set_file_name(file_name);
           rex::system::xam::XCONTENT_AGGREGATE_DATA existing_header{};
+          // X_RESULT carries Win32 codes: a missing header passes XSUCCEEDED.
           if (content_manager->ContentExists(0, probe) &&
-              XSUCCEEDED(content_manager->ReadContentHeaderFile(
+              content_manager->ReadContentHeaderFile(
                   file_name, 0, parsed_title_id,
                   rex::system::XContentType::kMarketplaceContent,
-                  existing_header))) {
+                  existing_header) == X_ERROR_SUCCESS) {
             continue;
           }
 
@@ -875,9 +877,9 @@ class NarutoriseApp : public rex::ReXApp {
       // Don't clobber headers written by InstallContent (they carry the real
       // license mask extracted from the STFS package).
       rex::system::xam::XCONTENT_AGGREGATE_DATA existing{};
-      if (XSUCCEEDED(content_manager->ReadContentHeaderFile(
+      if (content_manager->ReadContentHeaderFile(
               short_name, 0, parsed_title_id,
-              rex::system::XContentType::kMarketplaceContent, existing))) {
+              rex::system::XContentType::kMarketplaceContent, existing) == X_ERROR_SUCCESS) {
         continue;
       }
 
