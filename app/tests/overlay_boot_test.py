@@ -83,7 +83,8 @@ def main():
             key(13); assert process.poll() is None
             key(0x25); key(0x25); key(13); shot('settings')
             for _ in range(4): key(0x22) # Advanced.
-            key(0x28); key(0x28); key(0x27)
+            for _ in range(3): key(0x28) # Past the startup menu, updates and shortcut.
+            key(0x27)
             time.sleep(.2)
             shot('fps-option')
             saved = tomllib.loads((product/'data/narutorise.toml').read_text(encoding='utf-8'))

@@ -41,7 +41,9 @@ Enter ou Esc mantém a sessão atual e a opção salva para o próximo início.
 **Reiniciar agora** pede uma escolha explícita e, durante o jogo, avisa sobre
 o progresso desde o último salvamento.
 
-A página Avançado também verifica atualizações e cria um atalho `.lnk`. O
+A página Avançado agrupa as opções em Geral (menu inicial, atualizações e
+atalho), Indicadores na tela, Desempenho, Diagnóstico (envio de relatórios e
+diagnósticos locais) e Pasta de dados. Ela verifica atualizações e cria um atalho `.lnk`. O
 atualizador apenas avisa e abre a página da release; não baixa nem instala a
 versão. `check_for_updates = false` desliga a consulta automática. A consulta
 manual continua disponível. O atalho aponta diretamente a `narutorise.exe`,

@@ -404,7 +404,7 @@ int main(int argc, char** argv) {
     key(rex::ui::VirtualKey::kRight); frame("settings-startup-menu-on", modal);
     saved = toml::parse_file(settings_path.string());
     check("startup-menu-enabled-in-advanced", saved["show_startup_menu"].value<bool>() == true, "{}");
-    key(rex::ui::VirtualKey::kDown); key(rex::ui::VirtualKey::kDown); key(rex::ui::VirtualKey::kDown); key(rex::ui::VirtualKey::kRight);
+    key(rex::ui::VirtualKey::kDown); key(rex::ui::VirtualKey::kRight); // No utilities here: FPS follows the startup menu.
     frame("settings-fps", modal);
     saved = toml::parse_file(settings_path.string());
     check("settings-fps-saved", saved["show_fps_overlay"].value<bool>() == true, "{}");
