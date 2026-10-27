@@ -35,8 +35,10 @@ Outputs are `naruto-rise-recomp-win-amd64/` and its ZIP. The payload includes:
 
 - `narutorise.exe`, runtime/plugin DLLs and every generated character DLC engine;
 - optional `amd_fidelityfx_dx12.dll` when provided by the SDK;
-- default `narutorise.toml`, the version file and a quick-start README;
-- curated `mods/pt-br/mod.toml` and `texts.json`;
+- Sentry DLL (for shared SDK builds), Crashpad helpers and notices when reporting
+  support is enabled; the compatibility bridge installs these files too;
+- immutable `defaults/narutorise.toml`, the version file and a quick-start README;
+- curated immutable seeds `defaults/mods/pt-br/mod.toml` and `texts.json`;
 - Xenos shader storage from `NARUTORISE_SHADER_STORAGE_DIR`;
 - project and third-party notices under `licenses/`, including RmlUi,
   FreeType (FTL) and the embedded Roboto Condensed font (OFL).
@@ -44,6 +46,16 @@ Outputs are `naruto-rise-recomp-win-amd64/` and its ZIP. The payload includes:
 Menus, artwork and fonts are embedded in the executable. The ZIP contains no
 launcher, setup helper, `extract-xiso`, `install.ps1` or installer. Game data,
 personal settings, saves and locally installed mods are never copied into it.
+Active mods and translations belong to the resolved data folder's `mods/`.
+Preparation copies eligible legacy mods without deleting originals or replacing
+divergent contents, then seeds PT-BR only when its active package is absent.
+Builds, ZIP/AppImage replacement and the bridge update only immutable defaults;
+existing active packages are preserved in full. The bridge records uninstall
+ownership for the current full payload only; retired resource trees, including
+legacy translations, remain after uninstall. Translation updates require a
+backup and deliberate merge/replacement from the seed. General CLI/env data
+root overrides import no personal mods. See [data-folder policy](../docs/data-folder.md).
+
 The icon source is `app/ui/narutorise.ico`. The extractor remains a developer
 tool for preparing the code-generation inputs, outside the distribution.
 
@@ -86,7 +98,7 @@ There is no ISO page, extraction helper or ISO import. The bridge preserves
 the current installation when the launcher is in use: preflight reserves that
 file before replacing any payload, and reports an error if it cannot do so.
 Close the old launcher and retry. The bridge also preserves
-`game/`, `game_root/`, existing `narutorise.toml` byte for byte, saves, DLC,
+`game/`, `game_root/`, existing legacy `narutorise.toml`, the active `data/` tree and `data_location.json` byte for byte, saves, DLC,
 community mods and unrelated files, including on uninstall. It does not run
 legacy uninstallers. It keeps downgrade guards and the historical version
 numbering migration. Fresh installation remains available as a compatibility
@@ -145,3 +157,37 @@ python -I app/tests/user_data_boot_test.py dist/naruto-rise-recomp-win-amd64 C:/
 Use a new output folder for each run. These tests create isolated products/user
 roots and display game windows. Proton/Game Mode, physical controllers and
 updater download/UI handoff still require separate acceptance testing.
+
+## Data layout and AppImage acceptance
+
+The ZIP contains no populated `data/`, root TOML, logs or staged DLC. Replacing
+its files preserves the active data folder. See [Data folder and recovery](../docs/data-folder.md).
+The bridge installs only the factory template in `defaults/`; on a fresh install
+its language initializes the template, while existing preferences remain intact.
+
+For Linux, supply a freshly built package with `defaults/narutorise.toml`, runtime
+and game modules, version/build information and licenses to `package-linux-appimage.py`.
+The script bundles the curated translation and any supplied shader seeds. `AppRun`
+executes the immutable payload in `APPDIR`, preserves argv/cwd and the external
+`APPIMAGE` identity, and sets only library lookup. The native application finds
+nearby game data, so a wrapper-injected CLI path cannot override a saved ISO.
+Neither the wrapper nor an update deletes old payload caches.
+
+```bash
+python3 packaging/package-linux-appimage.py /path/to/linux-package NarutoRise.AppImage --work-dir out/appimage-build
+python3 packaging/tests/test_appimage.py ./NarutoRise.AppImage out
+python3 packaging/tests/test_data_appimage.py ./NarutoRise-A.AppImage ./NarutoRise-B.AppImage out/appimage-data
+```
+
+The first test covers the actual audio wait probe, image metadata and wrapper
+contract. The second requires a Linux desktop, Vulkan and FUSE and checks real
+setup boots, XDG/legacy import, two artifact versions, extract-and-run, portable
+selection and cleanup of an isolated old payload cache. It stops only its own
+test process groups after setup; clean shutdown and guest save loading require
+separate acceptance. A missing Linux/GPU/FUSE environment is a test limitation,
+not evidence that these scenarios passed.
+
+For two Windows ZIPs, run `test_package.py` on each and
+`python packaging/tests/test_data_zip.py before.zip after.zip out/zip-data`.
+This validates repeated replacement and byte preservation of active/legacy trees;
+it does not substitute for loading and saving an old save in the game.

@@ -15,7 +15,7 @@
 | Missing generated header or DLL target | Run code generation before configuring the application and reconfigure after changing modules |
 | Failure to copy `extract-xiso.exe` | Run `setup.ps1`; the complete build includes the installer helper |
 | Out of memory during compilation | Reduce concurrency: `cmake --build app/out/build/win-amd64-release --parallel 2` |
-| Packaging reports a missing cache | Copy `555307E5.xsh` and `555307E5.rtv.d3d12.xpso` from `Documents/narutorise/cache/shaders/shareable/` to `packaging/private/shader_cache/` (or configure the application with `-DNARUTORISE_SHADER_STORAGE_DIR=<folder>`), then package again |
+| Packaging reports a missing cache | Copy `555307E5.xsh` and `555307E5.rtv.d3d12.xpso` from `<effective cache_root>/shaders/shareable/` to `packaging/private/shader_cache/` (or configure the application with `-DNARUTORISE_SHADER_STORAGE_DIR=<folder>`), then package again |
 | Debug CRT dependency in a release | Rebuild the SDK and application in Release; do not reuse Debug DLLs |
 | `Native bootstrap requires NATIVE_RENDERER_PLUME_SOURCE` | Pass a Plume checkout with `-DNATIVE_RENDERER_PLUME_SOURCE=<folder>`; see [Native renderer](build-and-run.md#native-renderer-optional) |
 | `plume source must be clean at ...` or `allocator source must be clean at ...` | Check out the pinned commits in Plume and its `contrib/D3D12MemoryAllocator` submodule, without local changes |
@@ -60,15 +60,15 @@ See the [known issues](renderers.md#known-issues). When a problem appears only w
 
 ### Preferences reset after a build
 
-CMake copies `app/narutorise.toml` into the output directory. Adjust the development template or restore your local configuration after building.
+CMake copies the factory template into `defaults/narutorise.toml`; the active configuration remains in the data folder. If preferences appear missing, confirm the active/pending location and session overrides in Settings → Advanced. See [Data folder and recovery](data-folder.md).
 
 ### DLC is missing or fails to load
 
-Run the game after importing content to finish installation. Check content and `.header` files in Documents, installation log messages, and the recompiled DLC DLL. If you customized `user_data_root`, remember that the launcher still uses Documents. See [DLCs](dlc.md).
+Run the game after importing content to finish installation. Check content and `.header` files in the effective guest root, installation log messages, and the recompiled DLC DLL. The game menu shares the runtime root, including `user_data_root` overrides. See [DLCs](dlc.md).
 
 ## Collecting diagnostics
 
-Default logs are written to `logs/` next to `narutorise.exe`. The FPS overlay (`F1`) shows the **guest** frame rate (the game's own frame production, which is what game speed follows) alongside the **host** rate; slow motion with a high host rate means the guest rate is below target. For additional details, temporarily set:
+Default logs are written to `logs/` in the active data folder, shown in Settings → Advanced. The FPS overlay (`F1`) shows the **guest** frame rate (the game's own frame production, which is what game speed follows) alongside the **host** rate; slow motion with a high host rate means the guest rate is below target. For additional details, temporarily set:
 
 ```toml
 log_level = "debug"

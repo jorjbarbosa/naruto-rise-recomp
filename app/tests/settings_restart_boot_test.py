@@ -66,20 +66,22 @@ def main():
                 if item.name == 'narutorise.exe' or item.suffix.lower() == '.dll':
                     shutil.copy2(item, product / item.name)
             user = product / 'saves-ação'
-            config_path = product / 'narutorise.toml'
+            data = product / 'data'
+            data.mkdir()
+            config_path = data / 'narutorise.toml'
             config = dict(renderer='native', native_backend=api, graphics_device='', fullscreen=False,
                           skip_intro_videos=True, custom_game_root=str(iso), launcher_language='pt_BR',
-                          check_for_updates=False, dlc_source_path='')
+                          check_for_updates=False, dlc_source_path='', show_startup_menu=stage == 'setup')
             config_path.write_text('\n'.join(f'{k} = {json.dumps(v)}' for k, v in config.items()), encoding='utf-8')
             args = ['--setup'] if stage == 'setup' else []
             with (output / (name + '-console.log')).open('wb') as console:
                 original = subprocess.Popen([str(product / 'narutorise.exe'), *args], cwd=product,
-                                            env=dict(os.environ, REX_USER_DATA_ROOT=str(user)),
+                                            env=dict(os.environ, REX_DATA_ROOT=str(data), REX_USER_DATA_ROOT=str(user)),
                                             stdout=console, stderr=subprocess.STDOUT)
                 processes = [original]
 
                 def latest_log():
-                    files = list((product / 'logs').glob('*.log'))
+                    files = list((data / 'logs').glob('*.log'))
                     return max(files, key=lambda p: p.stat().st_mtime) if files else None
 
                 def text():
@@ -87,23 +89,37 @@ def main():
                     return log.read_text(encoding='utf-8', errors='replace') if log else ''
 
                 def saved():
-                    return tomllib.loads(config_path.read_text(encoding='utf-8'))
+                    deadline = time.monotonic() + 2
+                    while True:
+                        try:
+                            return tomllib.loads(config_path.read_text(encoding='utf-8'))
+                        except (PermissionError, FileNotFoundError):
+                            if time.monotonic() >= deadline:
+                                raise
+                            time.sleep(.02)
 
                 try:
                     hwnd = win.wait_for(lambda: win.window(original.pid), original)
-                    ready = 'Setup screen: requested' if stage == 'setup' else 'Native renderer backend:'
+                    ready = 'Setup presentation ready' if stage == 'setup' else 'Native renderer backend:'
                     win.wait_for(lambda: ready in text(), original)
+                    hwnd = win.wait_for(lambda: win.window(original.pid), original)
                     focus.focus_window(hwnd)
+                    rect = win.w.RECT()
+                    win.user32.GetClientRect(hwnd, ctypes.byref(rect))
+                    win.user32.PostMessageW(hwnd, 0x200, 0, ((rect.bottom - 10) << 16) | 10)
                     time.sleep(1 if stage == 'setup' else 5)
 
                     def key(value):
+                        nonlocal hwnd
+                        hwnd = win.wait_for(lambda: win.window(original.pid), original)
                         if win.user32.GetForegroundWindow() != hwnd:
                             focus.focus_window(hwnd)
-                        flags = 1 | (win.user32.MapVirtualKeyW(value, 0) << 16)
-                        if 0x21 <= value <= 0x28:
-                            flags |= 1 << 24
-                        win.user32.PostMessageW(hwnd, 0x100, value, flags)
-                        win.user32.PostMessageW(hwnd, 0x101, value, flags | 0xc0000000)
+                        events = (focus.Input * 2)()
+                        extended = 1 if 0x21 <= value <= 0x28 else 0
+                        for index, flags in enumerate((extended, extended | 2)):
+                            events[index].type = 1
+                            events[index].key = focus.Keyboard(value, win.user32.MapVirtualKeyW(value, 0), flags, 0, 0)
+                        assert win.user32.SendInput(2, events, ctypes.sizeof(focus.Input)) == 2
                         time.sleep(.2)
 
                     if stage == 'setup':
@@ -147,11 +163,18 @@ def main():
                     win.user32.PostMessageW(child_hwnd, 0x10, 0, 0)
                     assert child.wait() == 0
                     assert not (user / 'launch.marker').exists()
-                    for log in (product / 'logs').glob('*.log'):
+                    for log in (data / 'logs').glob('*.log'):
                         shutil.copy2(log, output / (name + '-' + log.name))
                     results.append(dict(case=name, passed=True, replacement_api=other_api))
                     print(json.dumps(results[-1]), flush=True)
                     (output / 'results.json').write_text(json.dumps(results, indent=2), encoding='utf-8')
+                except Exception:
+                    failed_window = win.window(original.pid)
+                    if failed_window:
+                        win.capture(failed_window, output / (name + '-failure.png'))
+                    for log in (data / 'logs').glob('*.log'):
+                        shutil.copy2(log, output / (name + '-failure-' + log.name))
+                    raise
                 finally:
                     for process in reversed(processes):
                         if process.poll() is None:

@@ -19,15 +19,18 @@ std::filesystem::path DesktopShortcut() {
 #endif
 }
 bool WriteShortcut(const std::filesystem::path& link_path, const std::filesystem::path& executable,
-                    const std::filesystem::path& user_root) {
+                    const data::DataPaths& paths, const std::vector<std::string>& extra_arguments) {
 #ifdef _WIN32
   if (link_path.empty()) return false;
   const auto initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
   struct Scope { bool uninit; ~Scope() { if (uninit) CoUninitialize(); } } scope{SUCCEEDED(initialized)};
   Microsoft::WRL::ComPtr<IShellLinkW> link;
   if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link)))) return false;
-  const auto arguments = launch::UserDataArgument(user_root);
-  if (FAILED(link->SetPath(executable.c_str())) || FAILED(link->SetWorkingDirectory(executable.parent_path().c_str())) ||
+  auto values = launch::StorageArguments(paths);
+  values.insert(values.end(), extra_arguments.begin(), extra_arguments.end());
+  const auto arguments = launch::CommandLine(values);
+  const auto cwd = paths.initial_cwd.empty() ? executable.parent_path() : paths.initial_cwd;
+  if (FAILED(link->SetPath(executable.c_str())) || FAILED(link->SetWorkingDirectory(cwd.c_str())) ||
       FAILED(link->SetIconLocation(executable.c_str(), 0)) || FAILED(link->SetArguments(arguments.c_str()))) return false;
   Microsoft::WRL::ComPtr<IPersistFile> file;
   return SUCCEEDED(link.As(&file)) && SUCCEEDED(file->Save(link_path.c_str(), TRUE));

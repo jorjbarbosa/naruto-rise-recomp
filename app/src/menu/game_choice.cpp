@@ -2,6 +2,8 @@
 #include "menu/game_choice.h"
 #include "menu/text.h"
 #include <fstream>
+#include <future>
+#include <SDL3/SDL.h>
 #include <toml++/toml.hpp>
 #ifdef _WIN32
 #include <windows.h>
@@ -44,7 +46,28 @@ FileChoice ChooseFile(void* owner, bool folder) {
   CoTaskMemFree(name);
   return {std::move(path), {}};
 #else
-  return {{}, "The system file picker is unavailable on this platform"};
+  // SDL provides the platform dialog (including XDG portals). Keep pumping
+  // its event loop while this synchronous UI action waits for the callback.
+  std::promise<FileChoice> completion;
+  auto result = completion.get_future();
+  const auto callback = [](void* state, const char* const* files, int) {
+    FileChoice choice;
+    if (!files) choice.error = SDL_GetError();
+    else if (*files) {
+      const std::string value(*files);
+      choice.path = std::filesystem::path(std::u8string(value.begin(), value.end()));
+    }
+    static_cast<std::promise<FileChoice>*>(state)->set_value(std::move(choice));
+  };
+  if (folder) SDL_ShowOpenFolderDialog(callback, &completion, nullptr, nullptr, false);
+  else {
+    const SDL_DialogFileFilter filters[] = {{Text("game-filter"), "iso;xex"}, {Text("all-files"), "*"}};
+    SDL_ShowOpenFileDialog(callback, &completion, nullptr, filters, 2, nullptr, false);
+    while (result.wait_for(std::chrono::milliseconds(10)) != std::future_status::ready) SDL_PumpEvents();
+    return result.get();
+  }
+  while (result.wait_for(std::chrono::milliseconds(10)) != std::future_status::ready) SDL_PumpEvents();
+  return result.get();
 #endif
 }
 

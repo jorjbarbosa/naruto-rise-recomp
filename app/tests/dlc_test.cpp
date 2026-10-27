@@ -60,7 +60,7 @@ int main(int argc, char** argv) {
   std::string error;
   if (!launcher_content::EnsureDlcFolders(error)) return 4;
   std::ofstream(base / "loose/addon/content.bin") << "test content";
-  if (launcher_content::InstallDlc(base / "loose", base / "product", error) != 0) return 5;
+  if (launcher_content::InstallDlc(base / "loose", base / "product/dlc", error) != 0) return 5;
   if (!std::filesystem::exists(expected / "loose/addon/content.bin")) return 6;
   const auto installed = launcher_content::ListInstalledDlc();
   if (installed.size() != 1 || installed[0].path != expected / "loose") return 7;
@@ -73,9 +73,18 @@ int main(int argc, char** argv) {
   if (packages.size() != 3 || std::none_of(packages.begin(), packages.end(), [](const auto& item) {
         return item.path.filename() == kPackage && item.name == "Choji & Temari";
       })) return 9;
-  if (launcher_content::InstallDlc(base / "packages", base / "product", error) != 3 ||
+  if (launcher_content::InstallDlc(base / "packages", base / "product/dlc", error) != 3 ||
       !std::filesystem::exists(base / "product/dlc/addon")) return 8;
   const auto staged = base / "product/dlc";
+  if (launcher_content::InstallDlc(base / "packages", staged, error) != 3) return 17;
+  header[4] = 'X';
+  std::ofstream(base / "packages/addon", std::ios::binary).write(header.data(), header.size());
+  if (launcher_content::InstallDlc(base / "packages", staged, error) != -1 ||
+      error.find("conflict") == std::string::npos ||
+      std::filesystem::file_size(staged / "addon") != header.size()) return 18;
+  error.clear();
+  if (launcher_content::InstallDlc(base / "packages", {}, error) != -1) return 19;
+  error.clear();
   if (launcher_content::ListPendingDlc(staged).size() != 3) return 10;
   // An extracted folder alone, or a truncated header, must remain pending.
   std::filesystem::create_directories(expected / kPackage);
@@ -95,5 +104,33 @@ int main(int argc, char** argv) {
   launcher_content::SetUserDataRoot(base / "other-user");
   if (launcher_content::ListPendingDlc(staged).size() != 3) return 15;
   launcher_content::SetUserDataRoot(base / "user");
+  const auto mirror_source = base / "mirror source", mirror_target = base / "mirror target";
+  std::filesystem::create_directories(mirror_source);
+  std::ofstream(mirror_source / "loose") << "installed bytes";
+  WritePackage(mirror_source / "container", u"Do not mirror STFS");
+  if (!launcher_content::MirrorDlcTree(mirror_source, mirror_target, error) ||
+      !std::filesystem::exists(mirror_target / "loose") || std::filesystem::exists(mirror_target / "container")) return 20;
+  std::ofstream(mirror_source / "loose") << "newer divergent bytes";
+  std::filesystem::last_write_time(mirror_source / "loose", std::filesystem::file_time_type::clock::now() + std::chrono::hours(1));
+  if (launcher_content::MirrorDlcTree(mirror_source, mirror_target, error)) return 21;
+  std::ifstream preserved(mirror_target / "loose");
+  const std::string bytes{std::istreambuf_iterator<char>(preserved), std::istreambuf_iterator<char>()};
+  if (bytes != "installed bytes") return 22;
+  // Conflict diagnostics must preserve paths outside the Windows code page.
+  const auto unicode = base / std::filesystem::path(u"DLC \u65e5\u672c\u8a9e");
+  const auto unicode_source = unicode / "source", unicode_target = unicode / "target";
+  std::filesystem::create_directories(unicode_source);
+  std::filesystem::create_directories(unicode_target);
+  std::ofstream(unicode_source / "content") << "original source";
+  std::ofstream(unicode_target / "content") << "original destination";
+  error.clear();
+  if (launcher_content::MirrorDlcTree(unicode_source, unicode_target, error) ||
+      error.find("conflict") == std::string::npos ||
+      error.find("\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e") == std::string::npos) return 23;
+  std::ifstream unicode_preserved(unicode_target / "content");
+  if (std::string(std::istreambuf_iterator<char>(unicode_preserved), {}) != "original destination") return 24;
+  error.clear();
+  if (launcher_content::InstallDlc(unicode / "missing", staged, error) != -1 ||
+      error.find("\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e") == std::string::npos) return 25;
   std::cout << "PASS: effective user root, loose installation, package names, pending/installed state, long IDs, UTF-16 names\n";
 }

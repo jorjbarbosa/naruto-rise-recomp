@@ -114,9 +114,19 @@ class BridgeTests(unittest.TestCase):
             'narutorise.toml': b'# personal settings\r\nfullscreen = false\r\nlauncher_language = "ru"\r\nuser_data_root = "my-saves"\r\n',
             'game/default.xex': b'original game XEX', 'game/data.bin': b'original assets',
             'game_root/data.bin': b'legacy assets', 'dlc/pending': b'pending STFS',
+            'data/narutorise.toml': b'launcher_language = "ru"\nunknown = "keep"\n',
+            'data/E000000000000001/555307E5/00000001/save/data': b'new layout save',
+            'data/E000000000000001/555307E5/Headers/00000001/save.header': b'save header',
+            'data/dlc/pending': b'new staging', 'data/logs/001.log': b'existing log',
+            'data/.narutorise-migration/state.json': b'{"version":1,"completed":[]}',
+            'data_location.json': b'{"version":1,"mode":"portable"}',
             'my-saves/saves/save.bin': b'personal save',
             'my-saves/0000000000000000/555307E5/00000002/installed.bin': b'installed DLC',
             'mods/community/texts.json': b'{"1":"My translation"}',
+            'mods/pt-br/texts.json': b'{"1":"Personal legacy PT-BR"}',
+            'mods/pt-br/mod.toml': b'# personal legacy manifest',
+            'data/mods/pt-br/texts.json': b'{"1":"Personal active PT-BR"}',
+            'data/mods/pt-br/mod.toml': b'# personal active manifest',
             'mods/pt-br/my-notes.txt': b'personal notes', 'personal.txt': b'personal file',
         }
         for name, data in files.items():
@@ -130,7 +140,12 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual((self.dest / name).read_bytes(), data, name)
 
     def current(self):
-        for name in ('narutorise.exe', 'rexruntime.dll', 'narutorise_ai2c.dll', 'mods/pt-br/texts.json'):
+        required = ['narutorise.exe', 'rexruntime.dll', 'narutorise_ai2c.dll', 'defaults/mods/pt-br/texts.json']
+        if (self.package / 'sentry-notices.txt').is_file():
+            required += ['crashpad_handler.exe', 'crashpad_wer.dll', 'sentry-notices.txt']
+            if (self.package / 'sentry.dll').is_file():
+                required.append('sentry.dll')
+        for name in required:
             self.assertEqual(hashlib.sha256((self.dest / name).read_bytes()).digest(),
                              hashlib.sha256((self.package / name).read_bytes()).digest(), name)
         self.assertEqual((self.dest / 'narutorise.version').read_text().strip(), self.version)
@@ -229,7 +244,7 @@ if ($p.target) { $s.TargetPath=$p.target; $s.WorkingDirectory=(Split-Path $p.tar
                 self.uninstalled = False
                 self.assertEqual(self.install(mode='install', language=language), 0)
                 self.current()
-                config = tomllib.loads((self.dest / 'narutorise.toml').read_text(encoding='utf-8-sig'))
+                config = tomllib.loads((self.dest / 'defaults/narutorise.toml').read_text(encoding='utf-8-sig'))
                 self.assertEqual(config['launcher_language'], code)
                 self.assertEqual(config['translation_mod'], '')
                 self.uninstall()

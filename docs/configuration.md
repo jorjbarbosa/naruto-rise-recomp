@@ -4,7 +4,7 @@
 
 ## Where to configure settings
 
-The initial menu opens by default. Turn off **Settings → Advanced → Show menu at startup** (`show_startup_menu = false`) to boot directly into the game. **F1** / **Back+Start** opens settings during play. Hold Shift while opening, or pass `--setup`, to request the initial menu again. Automated boots can use `--show_startup_menu=false`. Settings save automatically to `narutorise.toml` **next to the executable**. Close the game before editing the file manually. Options labelled RESTART require reopening the game; API/device changes offer a restart.
+The initial menu opens by default. Turn off **Settings → Advanced → Show menu at startup** (`show_startup_menu = false`) to boot directly into the game. **F1** / **Back+Start** opens settings during play. Hold Shift while opening, or pass `--setup`, to request the initial menu again. Automated boots can use `--show_startup_menu=false`. Settings save automatically to `narutorise.toml` in the **active data folder**, shown in **Settings → Advanced**. The Windows ZIP defaults to `data/` beside the executable; Linux defaults to the XDG data directory. See [Data folder and recovery](data-folder.md). Close the game before editing the file manually. Options labelled RESTART require reopening the game; API/device changes offer a restart.
 
 New control profiles use **Automatic** for player one: an available controller and keyboard/mouse work without manual assignment, including controllers connected after startup. Saved manual assignments and **None** remain explicit choices. Select **Automatic** in the controls screen to restore automatic selection for an existing profile.
 
@@ -22,11 +22,11 @@ The shared Settings window has tabs and an option list, with descriptions or val
 | Display | Renderer (Direct3D 12 / Vulkan), graphics card, resolution, brightness, frame rate, VSync, fullscreen |
 | Quality | MSAA, FXAA, post-processing (CAS/FSR), texture filtering, transparency AA |
 | Controls | Dedicated four-port configuration, SDL/XInput backend, global menu shortcuts |
-| Advanced | Frame latency, triple buffering, update checks, desktop shortcut |
+| Advanced | Frame latency, triple buffering, data folder, update checks, desktop shortcut |
 
 Reset actions restore the recommended values for their page. The setup screen shows the installed version.
 
-During development, `app/narutorise.toml` is the template copied by CMake into the build output. Rebuilding can overwrite preferences saved there; make persistent development changes in the template or keep a backup of your configuration.
+During development, CMake copies `app/narutorise.toml` to `defaults/narutorise.toml`. It initializes a missing active configuration once; rebuilding and replacing distribution files preserve the active TOML. Edit the template for factory defaults, or the active file for personal preferences.
 
 **Renderer** selects **Direct3D 12** or **Vulkan**, in that order, from the APIs compiled into the game. There is no separate Xenos/native selector. The menu saves `renderer = "native"` and `native_backend = "d3d12"` or `"vulkan"`; the choice takes effect on the next game launch. Old Xenos selections migrate to the native renderer while preserving a saved native backend. With no backend key, a build containing D3D12 uses it; a Vulkan-only build uses Vulkan. An explicitly requested API that is not compiled in produces an error.
 
@@ -48,7 +48,7 @@ Open **Settings → Game → Game language** in the menu. The selection is saved
 
 For example, set `user_language = 5` in `narutorise.toml` to select Spanish. This preference is independent of `launcher_language`. The menu preserves manually configured SDK language codes outside this list, displaying them as **Custom (code)** until you select a listed language.
 
-External [translation mods](translation-mods.md) installed in `mods/` next to the executable appear in this same selector, using only their package names. Selecting one saves `translation_mod = "folder-name"` and `user_language = 1` automatically; selecting an official language clears the mod selection. Installation alone does not activate a package. The list refreshes when the menu opens, regains focus, or starts the game. If the selected package is missing or invalid, it disappears from the list and English is selected automatically, without a warning. Restoring a package does not reactivate it. Changes take effect on the next game launch.
+External [translation mods](translation-mods.md) live in `<active data folder>/mods/` and appear in this selector by their package names. Selecting one saves `translation_mod = "folder-name"` and `user_language = 1` in the active TOML; selecting an official language clears that selection. Reopen the menu after installing a package. Changes take effect after restart. The selection and mods follow a data-folder change after verified copying. Missing or invalid packages are omitted from the list and the runtime retains original English text; the saved selection remains until another language is chosen. The distributed PT-BR seed in `defaults/mods/pt-br` initializes an absent active package and preserves existing customizations during boot, rebuild and update. See [data-folder recovery](data-folder.md).
 
 ## Menu and compatibility bridge languages
 
@@ -95,7 +95,7 @@ The values below match `app/narutorise.toml`:
 | --- | --- | --- |
 | `launcher_language` | `"en"` | Menu interface; see the seven language codes above |
 | `user_language` | `1` | Game language; see the language codes above |
-| `translation_mod` | `""` | External translation package under `mods/`; requires English and a restart |
+| `translation_mod` | `""` | External translation package under active data `mods/`; requires English and a restart |
 | `resolution_scale` | `1` | Internal scale, the SDK's (and Xenia's) default; the menu offers 1× through 4× |
 | `draw_resolution_scale_x`, `draw_resolution_scale_y` | `1`, `1` | Draw scales, synchronized by the menu |
 | `graphics_device` | `""` | Graphics card by the name Windows gives it (both renderers); empty is automatic. See [Graphics card](#graphics-card) |
@@ -202,24 +202,35 @@ Confirmed changes save automatically and apply live after a successful write. Ca
 
 ## Folders and user data
 
-| Content | Default Windows location |
+| Content | Default Windows ZIP location |
 | --- | --- |
-| Game data in a distribution | ISO or extracted copy selected in setup; nearby `game/` is also detected |
-| Game data during development | `game_root/` at the checkout root |
-| Configuration | `narutorise.toml` next to the executable |
-| Logs | `logs/` next to the executable |
-| Saves and user content | `narutorise/` inside the Windows Documents folder |
-| Cache | `Documents/narutorise/cache/` |
-| Installed DLCs | `Documents/narutorise/0000000000000000/555307E5/00000002/` |
-| DLC packages awaiting import | `dlc/` next to the executable |
+| Game data | External ISO or complete extracted copy selected in setup |
+| Factory template | `<exe>/defaults/narutorise.toml` |
+| Active configuration | `<exe>/data/narutorise.toml` |
+| Logs | `<exe>/data/logs/` |
+| Saves, profiles and achievements | Xbox trees directly under `<exe>/data/` |
+| Cache | `<exe>/data/cache/` |
+| Installed DLCs | `<exe>/data/0000000000000000/555307E5/00000002/` and adjacent `Headers/` |
+| DLC packages awaiting import | `<exe>/data/dlc/` |
 
-The Documents folder may be redirected to OneDrive. To find its actual location:
+Linux defaults to `${XDG_DATA_HOME:-$HOME/.local/share}/narutorise`, with cache
+in `${XDG_CACHE_HOME:-$HOME/.cache}/narutorise`. The explicit portable mode uses
+`data/` beside the external AppImage, including its cache. The data folder menu
+shows active and pending locations separately and applies changes after restart.
 
-```powershell
-Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'narutorise'
-```
+`--data_root` > `REX_DATA_ROOT` > persisted selection > platform default. General
+session overrides isolate storage without implicit legacy import. The existing
+`--user_data_root` > `REX_USER_DATA_ROOT` > TOML contract still selects the exact
+guest tree, with no `saves/` suffix. CLI/env relative storage roots use the initial
+cwd; relative TOML paths retain the historical executable/import base. Explicit
+cache/log paths prevail. With an explicit guest root and no explicit cache root,
+cache follows that guest root; otherwise it follows the platform policy above.
 
-Back up the entire `narutorise/` folder in Documents to preserve saves, content and metadata. The game also reads `user_data_root` from `narutorise.toml` before resolving runtime paths. Relative values are relative to the executable folder. `--user_data_root` takes priority over `REX_USER_DATA_ROOT`; either overrides the TOML value. Unless `--cache_root` / `REX_CACHE_ROOT` overrides it, the cache follows the effective user root. The DLC page uses that same root.
+Back up the complete active folder, any custom guest root, and the selection
+file. Windows legacy Documents is discovered through the system API, including
+redirected/OneDrive folders. First-run import copies eligible data and preserves
+the source. [Data folder and recovery](data-folder.md) describes conflicts,
+interrupted copies, portable selection and backups.
 
 To specify extracted game data and a Title Update:
 

@@ -6,6 +6,9 @@
 #include <vector>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
+#include <iterator>
+#include <rex/filesystem.h>
 #include <rex/filesystem/devices/stfs_container_device.h>
 #include <rex/system/xam/content_manager.h>
 
@@ -24,13 +27,32 @@ constexpr char kTitleId[] = "555307E5";
 constexpr char kMarketplaceContentType[] = "00000002";
 constexpr char kCommonXuid[] = "0000000000000000";
 
+bool CopyFile(const std::filesystem::path& source,
+              const std::filesystem::path& destination, std::string& error) {
+  std::error_code ec;
+  if (std::filesystem::is_symlink(source, ec) || std::filesystem::is_symlink(destination, ec)) {
+    error = "DLC copy refuses symbolic links."; return false;
+  }
+  if (std::filesystem::exists(destination, ec)) {
+    std::ifstream a(source, std::ios::binary), b(destination, std::ios::binary);
+    if (a && b && std::filesystem::file_size(source) == std::filesystem::file_size(destination) &&
+        std::equal(std::istreambuf_iterator<char>(a), std::istreambuf_iterator<char>(),
+                   std::istreambuf_iterator<char>(b), std::istreambuf_iterator<char>()) &&
+        !a.bad() && !b.bad()) return true;
+    error = "DLC conflict: " + rex::path_to_utf8(source) + " / " + rex::path_to_utf8(destination) +
+            ". Both copies preserved."; return false;
+  }
+  if (std::filesystem::copy_file(source, destination, std::filesystem::copy_options::none, ec)) return true;
+  error = "Failed to copy DLC: " + ec.message(); return false;
+}
+
 bool CopyRecursive(const std::filesystem::path& source,
                    const std::filesystem::path& destination,
-                   std::string& error) {
+                   std::string& error, bool skip_packages = false) {
   std::error_code ec;
   std::filesystem::create_directories(destination, ec);
   if (ec) {
-    error = "Failed to create destination: " + destination.string();
+    error = "Failed to create destination: " + rex::path_to_utf8(destination);
     return false;
   }
 
@@ -38,15 +60,12 @@ bool CopyRecursive(const std::filesystem::path& source,
        std::filesystem::directory_iterator(source, std::filesystem::directory_options::skip_permission_denied, ec)) {
     if (ec) continue;
     const auto dest_path = destination / entry.path().filename();
+    if (entry.is_symlink(ec)) { error = "DLC copy refuses symbolic links."; return false; }
     if (entry.is_directory(ec)) {
-      if (!CopyRecursive(entry.path(), dest_path, error)) return false;
+      if (!CopyRecursive(entry.path(), dest_path, error, skip_packages)) return false;
     } else {
-      std::filesystem::copy_file(entry.path(), dest_path,
-                                 std::filesystem::copy_options::overwrite_existing, ec);
-      if (ec) {
-        error = "Failed to copy " + entry.path().string() + ": " + ec.message();
-        return false;
-      }
+      if (skip_packages && IsStfsPackage(entry.path())) continue;
+      if (!CopyFile(entry.path(), dest_path, error)) return false;
     }
   }
   return true;
@@ -122,14 +141,7 @@ std::filesystem::path GetUserDataRoot() {
     std::lock_guard lock(root_mutex);
     if (!root_override.empty()) return root_override;
   }
-#if defined(_WIN32)
-  wchar_t path[MAX_PATH];
-  if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_PERSONAL, nullptr, 0, path))) {
-    return std::filesystem::path(path) / "narutorise";
-  }
-#endif
-  // Fallback to current path / narutorise (should not happen on Windows).
-  return std::filesystem::current_path() / "narutorise";
+  throw std::logic_error("Content root was not initialized by the application");
 }
 
 std::filesystem::path GetDlcRoot() {
@@ -148,7 +160,7 @@ bool EnsureDlcFolders(std::string& error) {
 
 bool InstallLooseDlc(const std::filesystem::path& source, std::string& error) {
   if (!std::filesystem::is_directory(source)) {
-    error = "Source is not a folder: " + source.string();
+    error = "Source is not a folder: " + rex::path_to_utf8(source);
     return false;
   }
 
@@ -186,41 +198,34 @@ bool InstallLooseDlc(const std::filesystem::path& source, std::string& error) {
 }
 
 int InstallDlc(const std::filesystem::path& source,
-               const std::filesystem::path& exe_dir,
+               const std::filesystem::path& staging_root,
                std::string& error) {
   if (!std::filesystem::is_directory(source)) {
-    error = "Source is not a folder: " + source.string();
+    error = "Source is not a folder: " + rex::path_to_utf8(source);
     return -1;
   }
 
   // STFS packages must be installed by the game itself: only
   // ContentManager::InstallContent (which lives in the game process, next to
   // the emulated kernel) extracts them and writes the content header with the
-  // license from the package. Stage them into the dlc/ folder next to
-  // narutorise.exe; the game picks them up on the next launch and installs
+  // license from the package. Stage into the selected data folder;
+  // the game picks them up on the next launch and installs
   // them once.
   const auto packages = ScanStfsPackages(source);
   if (!packages.empty()) {
-    if (exe_dir.empty()) {
-      error = "Game executable folder not set.";
+    if (staging_root.empty()) {
+      error = "DLC package staging is disabled in the active configuration.";
       return -1;
     }
-    const auto staging_root = exe_dir / "dlc";
     std::error_code ec;
     std::filesystem::create_directories(staging_root, ec);
     if (ec) {
-      error = "Failed to create " + staging_root.string() + ": " + ec.message();
+      error = "Failed to create " + rex::path_to_utf8(staging_root) + ": " + ec.message();
       return -1;
     }
     for (const auto& package : packages) {
       const auto dest = staging_root / package.path.filename();
-      std::filesystem::copy_file(package.path, dest,
-                                 std::filesystem::copy_options::overwrite_existing,
-                                 ec);
-      if (ec) {
-        error = "Failed to copy " + package.path.string() + ": " + ec.message();
-        return -1;
-      }
+      if (!CopyFile(package.path, dest, error)) return -1;
     }
     return static_cast<int>(packages.size());
   }
@@ -228,6 +233,12 @@ int InstallDlc(const std::filesystem::path& source,
   // No STFS packages: treat the selection as already-extracted (loose)
   // content and copy it directly into the user data tree.
   return InstallLooseDlc(source, error) ? 0 : -1;
+}
+
+bool MirrorDlcTree(const std::filesystem::path& source, const std::filesystem::path& destination,
+                   std::string& error) {
+  try { return CopyRecursive(source, destination, error, true); }
+  catch (const std::exception& failure) { error = failure.what(); return false; }
 }
 
 std::vector<ContentInfo> ListInstalledDlc() {

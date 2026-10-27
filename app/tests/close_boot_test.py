@@ -81,12 +81,14 @@ def main():
                 if item.name == 'narutorise.exe' or item.suffix.lower() == '.dll':
                     shutil.copy2(item, product/item.name)
             config = dict(renderer='native', native_backend=api, fullscreen=False, skip_intro_videos=True,
-                          frame_rate=60, mnk_mode=True, mnk_mouse=True, custom_game_root=str(iso), check_for_updates=False)
-            (product/'narutorise.toml').write_text('\n'.join(f'{key} = {json.dumps(value)}' for key,value in config.items()), encoding='utf-8')
+                          frame_rate=60, mnk_mode=True, mnk_mouse=True, custom_game_root=str(iso), check_for_updates=False,
+                          show_startup_menu=False)
+            (product / 'data').mkdir(exist_ok=True)
+            (product/'data/narutorise.toml').write_text('\n'.join(f'{key} = {json.dumps(value)}' for key,value in config.items()), encoding='utf-8')
             process = subprocess.Popen([str(product/'narutorise.exe')], cwd=product,
-                                       env=dict(os.environ, REX_USER_DATA_ROOT=str(product/'user')))
+                                       env=dict(os.environ, REX_DATA_ROOT=str(product / "data"), REX_USER_DATA_ROOT=str(product/'user')))
             def log():
-                files = list((product/'logs').glob('*.log'))
+                files = list((product/'data/logs').glob('*.log'))
                 return max(files, key=lambda p:p.stat().st_mtime).read_text(encoding='utf-8', errors='replace') if files else ''
             try:
                 hwnd = win.wait_for(lambda:win.window(process.pid), process)
@@ -124,7 +126,7 @@ def main():
                 assert 'Title terminated; hard-exiting process.' in log()
                 elapsed = time.monotonic() - started
                 name = api+'-'+page
-                shutil.copy2(max((product/'logs').glob('*.log'), key=lambda p:p.stat().st_mtime), output/(name+'.log'))
+                shutil.copy2(max((product/'data/logs').glob('*.log'), key=lambda p:p.stat().st_mtime), output/(name+'.log'))
                 result = dict(api=api, page=page, passed=True, exit=process.returncode, close_seconds=round(elapsed,3))
                 results.append(result)
                 (output/'results.json').write_text(json.dumps(results, indent=2), encoding='utf-8')

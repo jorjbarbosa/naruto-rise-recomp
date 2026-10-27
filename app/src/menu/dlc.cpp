@@ -3,6 +3,7 @@
 #include "menu/ui.h"
 #include "menu/text.h"
 #include "menu/game_choice.h"
+#include "data_paths.h"
 #include "../menu/content_manager.h"
 #include "../menu/folders.h"
 #include <rex/logging.h>
@@ -26,7 +27,7 @@ void Dlc::Redraw() {
         [path = item.path] { launcher_ui::OpenFolder(path); }};
     row.good = true; rows.push_back(std::move(row));
   }
-  for (const auto& item : launcher_content::ListPendingDlc(directory_ / "dlc")) {
+  for (const auto& item : launcher_content::ListPendingDlc(directory_)) {
     PanelRow row{"staged-" + std::to_string(rows.size()), item.name, Text("install-on-restart"),
         Tr(TextId::DlcStfsStaged), true};
     rows.push_back(std::move(row));
@@ -56,8 +57,8 @@ void Dlc::ChooseFolder() {
 void Dlc::InstallFolder(const std::filesystem::path& path) {
   if (!ui_ || work_.valid() || view_ != ui_->ViewRevision()) return;
   // A selected ancestor of the target would recursively copy itself.
-  const auto source = std::filesystem::weakly_canonical(path);
-  const auto target = std::filesystem::weakly_canonical(launcher_content::GetDlcRoot());
+  const auto source = data::CanonicalPath(path);
+  const auto target = data::CanonicalPath(launcher_content::GetDlcRoot());
   const auto relative = target.lexically_relative(source);
   if (relative.empty() || (!relative.is_absolute() && *relative.begin() != "..")) {
     ui_->ShowDialog(Text("dlc"), Tr(TextId::DlcInstallFailed), {{Text("cancel"), {}}}); return;

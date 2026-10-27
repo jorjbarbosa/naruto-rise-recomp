@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import tomllib
 import urllib.request
 
 TOOL_URL = 'https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage'
@@ -30,6 +31,13 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     package = args.package.resolve()
+    defaults = package / 'defaults/narutorise.toml'
+    if not defaults.is_file():
+        raise FileNotFoundError('Build/package Linux with defaults/narutorise.toml before creating the AppImage')
+    configuration = tomllib.loads(defaults.read_text(encoding='utf-8-sig'))
+    for key in ('custom_game_root', 'user_data_root', 'cache_root', 'log_file', 'data_root'):
+        if configuration.get(key):
+            raise ValueError('Personal path in distributed defaults: ' + key)
     work = args.work_dir.resolve()
     work.mkdir(parents=True, exist_ok=False)
     output = args.output.resolve()
@@ -66,8 +74,16 @@ def main():
     payload.mkdir(parents=True)
     binaries = ['narutorise', 'librexruntime.so', 'narutorise_posix_wait_test'] + [
         'libnarutorise_ai2c' + suffix + '.so' for suffix in ['', '1', '2', '3']]
+    # The native SDK is linked statically. Its separate Crashpad process must
+    # survive packaging, including executable permission inside the image.
+    sentry_files = []
+    if (package / 'sentry-notices.txt').is_file():
+        if not (package / 'crashpad_handler').is_file():
+            raise FileNotFoundError('Sentry-enabled package is missing crashpad_handler')
+        binaries.append('crashpad_handler')
+        sentry_files.append('sentry-notices.txt')
     hashes = {}
-    for name in binaries + ['narutorise.toml', 'narutorise.version', 'LICENSE', 'build-info.json']:
+    for name in binaries + ['narutorise.version', 'LICENSE', 'build-info.json'] + sentry_files:
         source = package / name
         shutil.copy2(source, payload / name)
         if name in binaries:
@@ -75,6 +91,16 @@ def main():
             if sha(payload / name) != hashes[name]:
                 raise RuntimeError('Payload changed: ' + name)
             (payload / name).chmod(0o755 if not name.endswith('.so') else 0o644)
+    (payload / 'defaults').mkdir()
+    shutil.copy2(package / 'defaults/narutorise.toml', payload / 'defaults/narutorise.toml')
+    # Curated translation resources stay immutable in the image. Never copy a
+    # user's data/config/logs or locally modified mods into the distribution.
+    for name in ('mod.toml', 'texts.json'):
+        destination = payload / 'defaults/mods/pt-br' / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(root / 'mods/pt-br' / name, destination)
+    if (package / 'shader_cache').is_dir():
+        shutil.copytree(package / 'shader_cache', payload / 'shader_cache')
     shutil.copytree(package / 'licenses', payload / 'licenses')
     libraries = payload / 'bundled-libs'
     libraries.mkdir()
@@ -95,10 +121,12 @@ def main():
     for name in ['AppRun', 'narutorise.desktop']:
         shutil.copy2(root / 'packaging/appimage' / name, appdir / name)
     (appdir / 'AppRun').chmod(0o755)
+    shutil.copy2(root / 'packaging/appimage/README.txt', payload / 'README.txt')
     shutil.copy2(root / 'app/ui/images/spiral.png', appdir / 'narutorise.png')
     (appdir / '.DirIcon').symlink_to('narutorise.png')
     build_material = {'binaries': hashes, 'dependencies': dependencies,
-                      'default_config': sha(payload / 'narutorise.toml'), 'deployment': 1}
+                      'default_config': sha(payload / 'defaults/narutorise.toml'),
+                      'payload_execution': 'appdir', 'data_layout': 1}
     build_id = hashlib.sha256(json.dumps(build_material, sort_keys=True).encode()).hexdigest()[:24]
     (appdir / 'build-id').write_text(build_id + '\n')
     (appdir / 'packaging-info.json').write_text(json.dumps({**provenance, **build_material,

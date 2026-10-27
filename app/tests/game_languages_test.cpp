@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
     GameConfig config;
     config.user_language = 5;
     config.launcher_language = "pt_BR";
-    Require(DiscoverTranslationMods(root).empty(), "A missing mods folder must be harmless");
+    Require(DiscoverTranslationMods(root / "mods").empty(), "A missing mods folder must be harmless");
     const auto official = GameLanguages(config, {});
     Require(official.options.size() == 5 && official.options[official.selected].language == 5,
             "Official language selection changed");
@@ -66,7 +66,7 @@ int main(int argc, char** argv) {
           "[mod]\ntype='translation'\nbase_language='en'\ntexts='../outside.json'\n");
     Package(root, "bad-manifest", "Broken manifest");
     Write(root / "mods/bad-manifest/mod.toml", "[mod\n");
-    auto mods = DiscoverTranslationMods(root);
+    auto mods = DiscoverTranslationMods(root / "mods");
     Require(mods.size() == 2 && mods[0].id == "pt-br" && mods[1].id == "pt-br-alt",
             "Discovery must accept valid packages, sort ties and reject invalid packages");
     auto languages = GameLanguages(config, mods);
@@ -113,7 +113,7 @@ int main(int argc, char** argv) {
 
     SelectGameLanguage(config, Find(languages, "pt-br"));
     std::filesystem::rename(root / "mods/pt-br", root / "removed");
-    mods = DiscoverTranslationMods(root);
+    mods = DiscoverTranslationMods(root / "mods");
     ReconcileGameLanguage(config, mods);
     languages = GameLanguages(config, mods);
     Require(config.translation_mod.empty() && config.user_language == 1 &&
@@ -127,20 +127,20 @@ int main(int argc, char** argv) {
                 fallback_reload.user_language == 1,
             "Automatic English fallback did not persist");
     std::filesystem::rename(root / "removed", root / "mods/pt-br");
-    mods = DiscoverTranslationMods(root);
+    mods = DiscoverTranslationMods(root / "mods");
     ReconcileGameLanguage(config, mods);
     languages = GameLanguages(config, mods);
     Require(config.translation_mod.empty() && languages.selected == 0 && languages.options.size() == 7,
             "Restoring a package must make it available without activating it");
     SelectGameLanguage(config, Find(languages, "pt-br"));
     Write(root / "mods/pt-br/textos.json", "{");
-    ReconcileGameLanguage(config, DiscoverTranslationMods(root));
+    ReconcileGameLanguage(config, DiscoverTranslationMods(root / "mods"));
     Require(config.translation_mod.empty() && config.user_language == 1,
             "An invalid selected package must automatically select English");
     Package(root, "pt-br", "Portuguese");
     config.translation_mod = "pt-br";
     config.user_language = 4;
-    ReconcileGameLanguage(config, DiscoverTranslationMods(root));
+    ReconcileGameLanguage(config, DiscoverTranslationMods(root / "mods"));
     Require(config.user_language == 1 && config.translation_mod == "pt-br",
             "A selected valid mod must use its English base");
 

@@ -11,7 +11,7 @@ if (-not $OutputRootDir) { $OutputRootDir = Join-Path $RootDir 'dist' }
 $OutputRootDir = [IO.Path]::GetFullPath($OutputRootDir)
 if (-not $PackageDir) { $PackageDir = Join-Path $OutputRootDir 'naruto-rise-recomp-win-amd64' }
 $PackageDir = (Resolve-Path -LiteralPath $PackageDir).Path
-foreach ($name in @('narutorise.exe', 'rexruntime.dll', 'narutorise.toml', 'narutorise.version', 'licenses\README.txt')) {
+foreach ($name in @('narutorise.exe', 'rexruntime.dll', 'defaults\narutorise.toml', 'narutorise.version', 'licenses\README.txt')) {
     if (-not (Test-Path -LiteralPath (Join-Path $PackageDir $name) -PathType Leaf)) {
         throw "Missing package file: $name. Run package-release.ps1 first."
     }

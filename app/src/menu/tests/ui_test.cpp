@@ -971,7 +971,7 @@ int main(int argc, char** argv) {
       menu.HideSetup();
       menu.ShowOverlay({}, {}, {}, {});
       narutorise::menu::Dlc dlc;
-      dlc.Open(menu, settings_dir / "async-product", user, nullptr,
+      dlc.Open(menu, settings_dir / "async-product/dlc", user, nullptr,
                [](auto action) { action(); }, {});
       dlc.InstallFolder(source);
       menu.HideOverlay();
@@ -982,7 +982,7 @@ int main(int argc, char** argv) {
       check("closed-menu-still-finishes-authorized-copy", std::filesystem::is_regular_file(
             user / "0000000000000000/555307E5/00000002/async-source/content.bin"), "{}");
       menu.ShowOverlay({}, {}, {}, {});
-      dlc.Open(menu, settings_dir / "async-product", user, nullptr,
+      dlc.Open(menu, settings_dir / "async-product/dlc", user, nullptr,
                [](auto action) { action(); }, {});
       dlc.InstallFolder(source);
       settings_model.Open(menu, 0, true, {}, {}, {});
@@ -1004,7 +1004,7 @@ int main(int argc, char** argv) {
       std::ofstream(product / "dlc" / package, std::ios::binary)
           .write(reinterpret_cast<const char*>(&metadata), sizeof(metadata));
       narutorise::menu::Dlc dlc;
-      dlc.Open(menu, product, user, nullptr, [](auto action) { action(); }, {});
+      dlc.Open(menu, product / "dlc", user, nullptr, [](auto action) { action(); }, {});
       frame("dlc-pending-name", modal);
       auto* document = visible_document("options");
       auto* pending = document ? document->GetElementById("staged-1") : nullptr;
@@ -1024,7 +1024,7 @@ int main(int argc, char** argv) {
       std::ofstream(root.parent_path() / "Headers/00000002" / (package + ".header"), std::ios::binary)
           .write(reinterpret_cast<const char*>(&header), sizeof(header));
       narutorise::menu::Dlc reopened;
-      reopened.Open(menu, product, user, nullptr, [](auto action) { action(); }, {});
+      reopened.Open(menu, product / "dlc", user, nullptr, [](auto action) { action(); }, {});
       frame("dlc-installed-name", modal);
       document = visible_document("options");
       auto* installed = document ? document->GetElementById("dlc-0") : nullptr;

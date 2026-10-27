@@ -63,7 +63,11 @@ int main(int argc, char** argv) {
   gpu::EndShaderBatch();
   const auto folder = std::filesystem::absolute(argv[1]); std::filesystem::create_directories(folder);
   const auto executable = folder / "narutorise.exe", link_path = folder / "game.lnk", user = folder / "user";
-  if (!WriteShortcut(link_path, executable, user)) return 8;
+  narutorise::data::DataPaths storage;
+  storage.data_root = user; storage.user_data_root = user;
+  storage.initial_cwd = folder / "original cwd";
+  std::filesystem::create_directories(storage.initial_cwd);
+  if (!WriteShortcut(link_path, executable, storage)) return 8;
   CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
   Microsoft::WRL::ComPtr<IShellLinkW> link;
   Microsoft::WRL::ComPtr<IPersistFile> file;
@@ -72,20 +76,21 @@ int main(int argc, char** argv) {
   wchar_t target[MAX_PATH], arguments[2048], cwd[MAX_PATH];
   if (FAILED(link->GetPath(target, MAX_PATH, nullptr, SLGP_RAWPATH)) ||
       FAILED(link->GetArguments(arguments, 2048)) || FAILED(link->GetWorkingDirectory(cwd, MAX_PATH))) return 10;
-  if (std::filesystem::path(target) != executable || std::filesystem::path(cwd) != folder ||
-      std::wstring(arguments).find(user.wstring()) == std::wstring::npos ||
-      std::wstring(arguments).find(L"game_data_root") != std::wstring::npos) return 11;
+  if (std::filesystem::path(target) != executable || std::filesystem::path(cwd) != storage.initial_cwd ||
+      !std::wstring(arguments).empty()) return 11;
   const std::filesystem::path roots[] = {folder / L"saves-a\u00e7\u00e3o", L"D:\\saves\\", L"D:\\", L"..\\relative saves"};
   for (const auto& root : roots) {
     const auto expected = std::filesystem::absolute(root).lexically_normal();
     file.Reset(); link.Reset();
-    if (!WriteShortcut(link_path, executable, root) ||
+    storage.data_root = expected;
+    storage.data_source = narutorise::data::Source::kCommandLine;
+    if (!WriteShortcut(link_path, executable, storage) ||
         FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))) ||
         FAILED(link.As(&file)) || FAILED(file->Load(link_path.c_str(), STGM_READ)) ||
         FAILED(link->GetArguments(arguments, 2048))) return 16;
     int count = 0;
     auto parsed = CommandLineToArgvW((L"narutorise.exe " + std::wstring(arguments)).c_str(), &count);
-    const std::wstring prefix = L"--user_data_root=";
+    const std::wstring prefix = L"--data_root=";
     const bool equal = parsed && count == 2 && std::wstring(parsed[1]).starts_with(prefix) &&
         std::filesystem::path(std::wstring(parsed[1]).substr(prefix.size())) == expected;
     if (parsed) LocalFree(parsed);

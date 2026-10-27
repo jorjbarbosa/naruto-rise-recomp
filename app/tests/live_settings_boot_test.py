@@ -77,8 +77,9 @@ def main():
             shutil.copy2(item, product/item.name)
     (output/'identity.json').write_text(json.dumps(dict(source=str(source), product=str(product), api=api,
         exe_sha256=hashlib.sha256((product/'narutorise.exe').read_bytes()).hexdigest()), indent=2))
-    config_path = product / 'narutorise.toml'
-    config = dict(renderer='native', native_backend=api, fullscreen=False, skip_intro_videos=True,
+    (product / 'data').mkdir(exist_ok=True)
+    config_path = product / 'data/narutorise.toml'
+    config = dict(renderer='native', native_backend=api, fullscreen=False, skip_intro_videos=True, show_startup_menu=False,
                   check_for_updates=False, show_fps_overlay=False, custom_game_root=str(iso))
     if '--graphics' in sys.argv[5:]:
         config.update(frame_rate=60, swap_post_effect='none', present_effect='bilinear', anisotropic_override=5,
@@ -86,10 +87,10 @@ def main():
                       max_frame_latency=1, triple_buffering=False, msaa_samples=0, transparency_antialiasing=False)
     config_path.write_text('\n'.join(f'{k} = {json.dumps(v)}' for k, v in config.items()), encoding='utf-8')
     process = subprocess.Popen([str(product/'narutorise.exe')], cwd=product,
-                               env=dict(os.environ, REX_USER_DATA_ROOT=str(product/'user')))
+                               env=dict(os.environ, REX_DATA_ROOT=str(product / "data"), REX_USER_DATA_ROOT=str(product/'user')))
     checks = []
     def log():
-        logs = list((product/'logs').glob('*.log'))
+        logs = list((product/'data/logs').glob('*.log'))
         return max(logs, key=lambda p:p.stat().st_mtime).read_text(encoding='utf-8', errors='replace') if logs else ''
     def saved(): return tomllib.loads(config_path.read_text(encoding='utf-8'))
     def check(name, passed, **evidence):
@@ -304,8 +305,8 @@ def main():
             if hwnd: win.user32.PostMessageW(hwnd, 0x10, 0, 0)
             try: process.wait(timeout=25)
             except subprocess.TimeoutExpired: process.kill(); process.wait()
-        if (product/'logs').exists():
-            for item in (product/'logs').glob('*.log'): shutil.copy2(item, output/item.name)
+        if (product/'data/logs').exists():
+            for item in (product/'data/logs').glob('*.log'): shutil.copy2(item, output/item.name)
     assert all(c['passed'] for c in checks), checks
 
 

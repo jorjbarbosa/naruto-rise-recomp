@@ -8,11 +8,13 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <limits>
 #include <optional>
+#include <stdexcept>
 #include <utility>
 #include <fmt/format.h>
 #include <toml++/toml.hpp>
@@ -22,6 +24,7 @@
 #include <rex/logging.h>
 #include <rex/perf/counter.h>
 #include <rex/rex_app.h>
+#include <rex/system.h>
 #include <rex/system/xam/content_manager.h>
 #include <rex/system/xcontent.h>
 #include <rex/ui/keybinds.h>
@@ -30,6 +33,8 @@
 #include <rex/ui/window.h>
 
 #include "crash_report.h"
+#include "sentry_reporting.h"
+#include "data_migration.h"
 #include "game_image.h"
 #include "graphics_device.h"
 #include "input_replay.h"
@@ -39,6 +44,7 @@
 #include "menu/game_choice.h"
 #include "menu/settings.h"
 #include "menu/dlc.h"
+#include "menu/content_manager.h"
 #include "menu/input_gate.h"
 #include "menu/shortcut.h"
 #include "menu/update_checker.h"
@@ -56,6 +62,16 @@
 #include "wine.h"
 #endif
 
+#ifndef _WIN32
+#include <unistd.h>
+#include <fcntl.h>
+#include <cerrno>
+#endif
+
+REXCVAR_DEFINE_STRING(data_root, "", "narutorise/Storage",
+                      "Data folder for this session (--data_root or REX_DATA_ROOT; no automatic legacy import)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 REXCVAR_DEFINE_BOOL(show_fps_overlay, false, "narutorise/UI",
                     "Show FPS and frametime overlay (Settings > Advanced)");
 
@@ -64,6 +80,9 @@ REXCVAR_DEFINE_BOOL(setup, false, "narutorise/UI",
 REXCVAR_DEFINE_BOOL(show_startup_menu, true, "narutorise/UI",
                     "Show the initial menu before the game (Settings > Advanced)");
 REXCVAR_DEFINE_BOOL(check_for_updates, true, "narutorise/UI", "Notify when a new release is available");
+REXCVAR_DEFINE_BOOL(crash_reporting, false, "narutorise/Reporting", "Allow crash reports and startup timing to be sent to Sentry");
+REXCVAR_DEFINE_STRING(sentry_test, "", "narutorise/Internal", "Developer verification: error or crash; requires crash_reporting=true")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_UINT32(restart_wait_pid, 0, "narutorise/Internal", "Wait for the previous process during a settings restart");
 
 REXCVAR_DEFINE_STRING(dlc_source_path, "dlc", "Content",
@@ -139,49 +158,77 @@ class NarutoriseApp : public rex::ReXApp {
     return std::filesystem::is_directory(path, ec) || std::filesystem::is_regular_file(path, ec);
   }
 
-  void OnConfigurePaths(rex::PathConfig& paths) override {
+  bool SetupEnvironment() override {
 #ifdef _WIN32
+    // A settings restart must release the previous writer's lease first.
     if (const auto parent = REXCVAR_GET(restart_wait_pid); parent && parent != GetCurrentProcessId()) {
       if (HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, parent)) {
         WaitForSingleObject(process, INFINITE); CloseHandle(process);
       }
     }
 #endif
-    // Only the command line has set the root by now: the configuration loads after this.
-    command_line_root_ = !paths.game_data_root.empty();
-    const auto exe_dir = rex::filesystem::GetExecutableFolder();
-    // CLI/environment strings are UTF-8. The SDK's initial narrow path
-    // conversion uses the Windows code page; resolve the effective root here.
-    const auto explicit_user_root = REXCVAR_GET(user_data_root);
-    const auto explicit_cache_root = REXCVAR_GET(cache_root);
-    if (!explicit_user_root.empty()) {
-      paths.user_data_root = std::filesystem::absolute(std::filesystem::u8path(explicit_user_root)).lexically_normal();
-      if (explicit_cache_root.empty()) paths.cache_root = paths.user_data_root / "cache";
-    }
-    if (!explicit_cache_root.empty())
-      paths.cache_root = std::filesystem::absolute(std::filesystem::u8path(explicit_cache_root)).lexically_normal();
-    const std::filesystem::path toml_path = exe_dir / "narutorise.toml";
-    std::optional<toml::table> toml_tbl;
-    if (std::filesystem::exists(toml_path)) {
-      try {
-        std::ifstream input(toml_path, std::ios::binary);
-        toml_tbl = toml::parse(input);
-      } catch (...) {
+    using namespace narutorise::data;
+    try {
+      auto environment = CaptureEnvironment(rex::filesystem::GetExecutableFolder());
+      if (!environment) return FailDataBootstrap(environment.error);
+      Overrides cli;
+      for (auto [name, value] : {std::pair{"data_root", &cli.data_root},
+                                 std::pair{"user_data_root", &cli.user_data_root},
+                                 std::pair{"cache_root", &cli.cache_root}}) {
+        if (rex::cvar::GetFlagSource(name) == rex::cvar::Source::kCommandLine)
+          *value = rex::cvar::GetFlagByName(name);
       }
+      auto paths = ResolvePaths(*environment.value, cli);
+      if (!paths) return FailDataBootstrap(paths.error);
+      auto prepared = PrepareData(*paths.value, *environment.value, cli);
+      if (!prepared) return FailDataBootstrap(prepared.error);
+      prepared_data_ = std::move(*prepared.value);
+      if (const auto source = rex::cvar::GetFlagSource("game_data_root");
+          source == rex::cvar::Source::kCommandLine || source == rex::cvar::Source::kEnvironment) {
+        const auto game = rex::to_path(REXCVAR_GET(game_data_root));
+        if (!game.empty()) restart_game_root_ = (game.is_absolute() ? game : environment.value->initial_cwd / game).lexically_normal();
+      }
+      auto writable = ValidateWritablePaths(prepared_data_->paths);
+      if (!writable) return FailDataBootstrap(writable.error);
+      data_environment_ = std::move(*environment.value);
+      data_cli_ = cli;
+      if (!rex::ReXApp::SetupEnvironment()) {
+        narutorise::reporting::Close();
+        return false;
+      }
+      const auto sentry_test = REXCVAR_GET(sentry_test);
+      if (!sentry_test.empty()) {
+        const bool verified = narutorise::reporting::Verify(sentry_test);
+        narutorise::reporting::Close();
+        rex::FlushLogging();
+        std::_Exit(verified ? 0 : 2);
+      }
+      return true;
+    } catch (const std::exception& e) {
+      return FailDataBootstrap(e.what());
     }
+  }
+
+  void OnConfigurePaths(rex::PathConfig& paths) override {
+    // Only CLI/environment have loaded; the SDK reads the active TOML next.
+    command_line_root_ = !paths.game_data_root.empty();
+    const auto& active = prepared_data_->paths;
+    paths.user_data_root = active.user_data_root;
+    paths.cache_root = active.cache_root;
+    paths.config_path = active.config_path;
+    paths.log_dir = active.log_dir;
+    const auto explicit_game = REXCVAR_GET(game_data_root);
+    if (!explicit_game.empty()) {
+      auto game = rex::to_path(explicit_game);
+      paths.game_data_root = (game.is_absolute() ? game : active.initial_cwd / game).lexically_normal();
+    }
+    const auto& toml_path = active.config_path;
+    std::optional<toml::table> toml_tbl;
+    std::ifstream input(toml_path, std::ios::binary);
+    if (!input) throw std::runtime_error("Cannot reopen the active TOML: " + rex::path_to_utf8(toml_path));
+    toml_tbl = toml::parse(input);
     if (toml_tbl) {
       Localization::SetLanguageCode((*toml_tbl)["launcher_language"].value_or(std::string("en")));
-      // The retired launcher passed this TOML setting to the SDK as a CLI
-      // argument. Resolve it here before the SDK constructs the runtime paths.
-      // CLI/environment overrides are already in the cvars and keep priority.
-      if (REXCVAR_GET(user_data_root).empty()) {
-        const auto configured = (*toml_tbl)["user_data_root"].value_or(std::string());
-        if (!configured.empty()) {
-          auto root = std::filesystem::u8path(configured);
-          paths.user_data_root = root.is_relative() ? exe_dir / root : root;
-          if (REXCVAR_GET(cache_root).empty()) paths.cache_root = paths.user_data_root / "cache";
-        }
-      }
     }
     if (paths.game_data_root.empty() || !IsGameDataRoot(paths.game_data_root)) {
       if (toml_tbl) {
@@ -191,15 +238,15 @@ class NarutoriseApp : public rex::ReXApp {
           if (!v->empty() && IsGameDataRoot(std::filesystem::u8path(*v))) {
             paths.game_data_root = std::filesystem::canonical(std::filesystem::u8path(*v), ec);
             REXLOG_INFO("[narutorise] Using custom_game_root from TOML: {}",
-                        paths.game_data_root.string());
+                        rex::path_to_utf8(paths.game_data_root));
           }
         }
       }
 
       if (paths.game_data_root.empty()) {
-        paths.game_data_root = narutorise::game_image::FindNearbyGame(exe_dir);
+        paths.game_data_root = narutorise::game_image::FindNearbyGame(active.distribution_dir);
         if (!paths.game_data_root.empty()) {
-          REXLOG_INFO("[narutorise] Auto-detected game_data_root: {}", paths.game_data_root.string());
+          REXLOG_INFO("[narutorise] Auto-detected game_data_root: {}", rex::path_to_utf8(paths.game_data_root));
         }
       }
     }
@@ -210,6 +257,13 @@ class NarutoriseApp : public rex::ReXApp {
   // Which game the data root holds, once the log exists: the recompiled code
   // only runs with the default.xex it was generated from (game_image.h).
   void OnPostInitLogging() override {
+    const auto& active = prepared_data_->paths;
+    narutorise::reporting::Initialize(rex::filesystem::GetExecutableFolder(), active.cache_root,
+                                    narutorise::Version(), REXCVAR_GET(crash_reporting));
+    REXLOG_INFO("[narutorise] Data root: {}", rex::path_to_utf8(active.data_root));
+    REXLOG_INFO("[narutorise] Active config: {}", rex::path_to_utf8(active.config_path));
+    for (const auto& message : prepared_data_->diagnostics)
+      REXLOG_INFO("[narutorise] {}", message);
     if (game_data_root().empty()) return;
     LogGameData(game_data_root());
   }
@@ -217,7 +271,7 @@ class NarutoriseApp : public rex::ReXApp {
     using narutorise::game_image::Status;
     game_identity_ = narutorise::game_image::Identify(root);
     const auto line = fmt::format("[narutorise] Game data: {} ({}); Title ID {:08X}, default.xex {}: {}",
-                                  root.string(), game_identity_.disc_image ? "disc image" : "folder",
+                                  rex::path_to_utf8(root), game_identity_.disc_image ? "disc image" : "folder",
                                   game_identity_.title_id, game_identity_.xex_digest,
                                   narutorise::game_image::StatusName(game_identity_.status));
     if (game_identity_.status == Status::kReady)
@@ -264,8 +318,7 @@ class NarutoriseApp : public rex::ReXApp {
   void ConfigureUpdateDataRoot(rex::PathConfig& paths) {
     if (paths.game_data_root.empty()) return;
 
-    const auto exe_dir = rex::filesystem::GetExecutableFolder();
-    const std::filesystem::path toml_path = exe_dir / "narutorise.toml";
+    const auto& toml_path = prepared_data_->paths.config_path;
 
     // 1. Explicit TOML setting.
     if (std::filesystem::exists(toml_path)) {
@@ -277,7 +330,7 @@ class NarutoriseApp : public rex::ReXApp {
           if (!v->empty() && std::filesystem::is_directory(std::filesystem::u8path(*v), ec)) {
             paths.update_data_root = std::filesystem::canonical(std::filesystem::u8path(*v), ec);
             REXLOG_INFO("[narutorise] Using update_data_root from TOML: {}",
-                        paths.update_data_root.string());
+                        rex::path_to_utf8(paths.update_data_root));
             return;
           }
         }
@@ -293,7 +346,7 @@ class NarutoriseApp : public rex::ReXApp {
       if (std::filesystem::is_directory(candidate, ec)) {
         paths.update_data_root = std::filesystem::canonical(candidate, ec);
         REXLOG_INFO("[narutorise] Using update_data_root from cvar: {}",
-                    paths.update_data_root.string());
+                    rex::path_to_utf8(paths.update_data_root));
         return;
       }
     }
@@ -310,7 +363,7 @@ class NarutoriseApp : public rex::ReXApp {
       if (std::filesystem::is_directory(candidate, ec)) {
         paths.update_data_root = std::filesystem::canonical(candidate, ec);
         REXLOG_INFO("[narutorise] Auto-detected update_data_root: {}",
-                    paths.update_data_root.string());
+                    rex::path_to_utf8(paths.update_data_root));
         return;
       }
     }
@@ -336,7 +389,8 @@ class NarutoriseApp : public rex::ReXApp {
   }
 
   void OnPostSetup() override {
-    narutorise::translation::Initialize(rex::filesystem::GetExecutableFolder());
+    narutorise::reporting::FinishStartup();
+    narutorise::translation::Initialize(prepared_data_->paths.mods_dir);
     narutorise::crash_report::Install();  // After the SDK's exception handler.
     // The game's name and version in place of the SDK's name and build stamp.
     if (window()) window()->SetTitle(narutorise::WindowTitle());
@@ -426,6 +480,7 @@ class NarutoriseApp : public rex::ReXApp {
   }
 
   void OnShutdown() override {
+    narutorise::reporting::Close();
     game_running_ = false;
     narutorise::menu::input_blocked = false;
     CloseSetupScreen();
@@ -441,7 +496,43 @@ class NarutoriseApp : public rex::ReXApp {
     ui_.Shutdown();
   }
 
+  void OnClosing(rex::ui::UIEvent& event) override {
+    // The SDK uses _Exit here, so destructors and OnShutdown cannot flush it.
+    narutorise::reporting::Close();
+    rex::ReXApp::OnClosing(event);
+  }
+
  private:
+  bool FailDataBootstrap(const std::string& error) {
+    std::string message = "Could not prepare the data folder.\n" + error;
+    // The selected root may be locked, read-only or not resolved at all.
+    // Use the SDK logger in temporary storage, never a second root's saves.
+    try {
+      bootstrap_log_file_ = REXCVAR_GET(log_file);
+      auto config = rex::BuildLogConfig(bootstrap_log_file_.empty() ? nullptr : bootstrap_log_file_.c_str(),
+                                        REXCVAR_GET(log_level), {});
+#ifdef _WIN32
+      const auto process = GetCurrentProcessId();
+#else
+      const auto process = getpid();
+#endif
+      const auto directory = std::filesystem::temp_directory_path() / "narutorise/bootstrap";
+      config.app_name = "narutorise_bootstrap_" + std::to_string(process);
+      config.log_dir = rex::path_to_utf8(directory);
+      rex::InitLogging(config);
+      REXLOG_ERROR("[narutorise] {}", message);
+      rex::FlushLogging();
+      message += "\nDiagnostic log: " + (bootstrap_log_file_.empty() ? config.log_dir : bootstrap_log_file_);
+    } catch (const std::exception& e) {
+      message += "\nCould not open diagnostic log: " + std::string(e.what());
+    }
+    message += "\nResolve the reported issue and retry. Use --data_root or REX_DATA_ROOT to select an isolated writable folder.";
+    std::fprintf(stderr, "%s\n", message.c_str());
+    std::fflush(stderr);
+    rex::ShowSimpleMessageBox(rex::SimpleMessageBoxType::Error, message);
+    return false;
+  }
+
   static bool IsHexString(std::string_view s) {
     return !s.empty() &&
            s.find_first_not_of("0123456789abcdefABCDEF") == std::string_view::npos;
@@ -454,29 +545,10 @@ class NarutoriseApp : public rex::ReXApp {
   // extraction destination).
   static bool MirrorDlcDirectory(const std::filesystem::path& source,
                                  const std::filesystem::path& destination) {
-    std::error_code ec;
-    std::filesystem::create_directories(destination, ec);
-    bool ok = true;
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(
-             source, std::filesystem::directory_options::skip_permission_denied,
-             ec)) {
-      std::error_code entry_ec;
-      if (!entry.is_regular_file(entry_ec) || IsStfsFile(entry.path())) {
-        continue;
-      }
-      auto rel = std::filesystem::relative(entry.path(), source, entry_ec);
-      if (entry_ec) {
-        ok = false;
-        continue;
-      }
-      const auto dst = destination / rel;
-      std::filesystem::create_directories(dst.parent_path(), entry_ec);
-      std::filesystem::copy_file(entry.path(), dst,
-                                 std::filesystem::copy_options::update_existing,
-                                 entry_ec);
-      if (entry_ec) ok = false;
-    }
-    return ok;
+    std::string error;
+    const bool copied = launcher_content::MirrorDlcTree(source, destination, error);
+    if (!copied) REXLOG_WARN("[narutorise] DLC mirror preserved conflicting content: {}", error);
+    return copied;
   }
 
   static std::string TruncatePackageName(std::string_view name, size_t max_bytes) {
@@ -568,18 +640,13 @@ class NarutoriseApp : public rex::ReXApp {
     if (dlc_path_cvar.empty()) {
       REXLOG_INFO("[narutorise] DLC auto-install disabled (dlc_source_path is empty)");
     } else {
-      std::filesystem::path root =
-          rex::filesystem::GetExecutableFolder() / dlc_path_cvar;
+      const auto root = DlcSource();
       if (!std::filesystem::is_directory(root, ec)) {
         REXLOG_INFO("[narutorise] DLC folder not found ({}); running without DLC",
                     dlc_path_cvar);
       } else {
-        // Marker file from older versions: the already-installed check in the
-        // install loop below replaces it.
-        std::filesystem::remove(root / ".installed", ec);
-
         for (const auto& entry : std::filesystem::directory_iterator(root, ec)) {
-          const auto filename = entry.path().filename().string();
+          const auto filename = rex::path_to_utf8(entry.path().filename());
 
           if (entry.is_regular_file(ec)) {
             if (IsStfsFile(entry.path())) {
@@ -634,8 +701,8 @@ class NarutoriseApp : public rex::ReXApp {
         int new_packages = 0;
         for (const auto& pkg : packages) {
           std::error_code rel_ec;
-          auto rel = std::filesystem::relative(pkg, root, rel_ec).string();
-          if (rel.empty()) rel = pkg.filename().string();
+          auto rel = rex::path_to_utf8(std::filesystem::relative(pkg, root, rel_ec));
+          if (rel.empty()) rel = rex::path_to_utf8(pkg.filename());
 
           const auto file_name = rex::path_to_utf8(pkg.filename());
           rex::system::xam::XCONTENT_AGGREGATE_DATA probe{};
@@ -844,7 +911,7 @@ class NarutoriseApp : public rex::ReXApp {
     }
     if (seeded) {
       REXLOG_INFO("[narutorise] Seeded {} shader cache file(s) into {}", seeded,
-                  shareable.string());
+                  rex::path_to_utf8(shareable));
     }
   }
 
@@ -863,7 +930,7 @@ class NarutoriseApp : public rex::ReXApp {
   // frame while a document is shown. The frame rate counts the Swaps there,
   // and is the guest's with Xenos (the presenter's paints without it).
   void SetupUi() {
-    menu_settings_.Initialize(rex::filesystem::GetExecutableFolder(), NativeRenderer());
+    menu_settings_.Initialize(rex::filesystem::GetExecutableFolder(), NativeRenderer(), prepared_data_->paths.config_path);
     rex::ui::ImmediateDrawer* drawer = immediate_drawer();
     rex::ui::Presenter* presenter = XenosPresenter();
     if (presenter) {
@@ -947,6 +1014,7 @@ class NarutoriseApp : public rex::ReXApp {
     setup_paths_ = paths;
     setup_reason_ = reason;
     setup_resume_ = std::move(resume);
+    REXLOG_INFO("[narutorise] Setup presentation ready");
     return true;
   }
 #ifdef NARUTORISE_NATIVE_RENDERER_BOOTSTRAP
@@ -997,6 +1065,9 @@ class NarutoriseApp : public rex::ReXApp {
     resume(setup_paths_);
   }
   void OpenSettings() {
+    menu_settings_.SetDataFolder(prepared_data_->paths, pending_data_root_, [this](narutorise::data::Mode mode) {
+      app_context().CallInUIThreadDeferred([this, mode] { RequestDataLocation(mode); });
+    });
 #ifdef NARUTORISE_NATIVE_RENDERER_BOOTSTRAP
     if (NativeRenderer()) menu_settings_.SetLiveSettings(
       [](const std::string& key, const GameConfig& config) -> uint64_t {
@@ -1029,6 +1100,10 @@ class NarutoriseApp : public rex::ReXApp {
       if (key == "show_fps_overlay") {
         rex::cvar::SetFlagByName(key, menu_settings_.config().show_fps_overlay ? "true" : "false");
         SetFpsVisible(menu_settings_.config().show_fps_overlay);
+      } else if (key == "crash_reporting") {
+        const bool consent = menu_settings_.config().crash_reporting;
+        rex::cvar::SetFlagByName(key, consent ? "true" : "false");
+        if (!narutorise::reporting::SetConsent(consent) && consent) OfferSettingsRestart();
       } else if (key == "fullscreen") {
         rex::cvar::SetFlagByName(key, menu_settings_.config().fullscreen ? "true" : "false");
       } else if (key == "skip_intro_videos") {
@@ -1043,8 +1118,42 @@ class NarutoriseApp : public rex::ReXApp {
       else if (ui_.OverlayShown()) OpenGameMenu();
     });
   }
+  void RequestDataLocation(narutorise::data::Mode mode) {
+    if (closing_.load() || prepared_data_->paths.session_override) return;
+    std::filesystem::path target;
+    if (mode == narutorise::data::Mode::kCustom) {
+      const auto choice = narutorise::menu::ChooseFile(window()->GetNativeWindowHandle(), true);
+      if (!choice.error.empty()) {
+        REXLOG_WARN("[narutorise] Data folder picker: {}", choice.error);
+        ShowDataLocationError(); return;
+      }
+      if (choice.path.empty() || closing_.load()) return;
+      target = choice.path;
+    }
+    const auto result = narutorise::data::RequestLocation(*prepared_data_, *data_environment_, mode, target, data_cli_);
+    if (!result) {
+      REXLOG_WARN("[narutorise] Data location selection: {}", result.error);
+      ShowDataLocationError(); return;
+    }
+    if (result.value->pending_source || result.value->mode != prepared_data_->paths.mode)
+      pending_data_root_ = result.value->data_root;
+    else pending_data_root_.reset();
+    menu_settings_.SetPendingDataLocation(pending_data_root_);
+    if (pending_data_root_) OfferSettingsRestart();
+  }
+  void ShowDataLocationError() {
+    using narutorise::menu::Text;
+    ui_.ShowDialog(Text("storage-error"), Text("storage-error-help"), {{Text("cancel"), {}}});
+  }
+  std::filesystem::path DlcSource() const {
+    const auto source = rex::cvar::GetFlagSource("dlc_source_path");
+    const auto& base = source == rex::cvar::Source::kConfig
+        ? prepared_data_->config_base : prepared_data_->paths.install_dir;
+    return narutorise::data::ResolveDlcSource(prepared_data_->paths,
+        REXCVAR_GET(dlc_source_path), base);
+  }
   void OpenDlc() {
-    menu_dlc_.Open(ui_, rex::filesystem::GetExecutableFolder(), user_data_root(), window()->GetNativeWindowHandle(),
+    menu_dlc_.Open(ui_, DlcSource(), user_data_root(), window()->GetNativeWindowHandle(),
         [this](std::function<void()> action) { app_context().CallInUIThreadDeferred(std::move(action)); }, [this] {
           if (setup_resume_) ui_.RefreshSetup({setup_reason_, game_identity_, narutorise::Version(), setup_paths_.game_data_root});
         });
@@ -1052,7 +1161,7 @@ class NarutoriseApp : public rex::ReXApp {
   void OfferSettingsRestart() {
     if (closing_.load()) return;
     using narutorise::menu::Text;
-    std::string message = Text("changed");
+    std::string message = Text(pending_data_root_ ? "storage-pending-help" : "changed");
     if (game_running_) message += std::string("\n\n") + Text("exit-confirm");
     ui_.ShowDialog(Text("restart-required"), message, {
         {Text("restart-now"), [this] {
@@ -1060,28 +1169,67 @@ class NarutoriseApp : public rex::ReXApp {
         }},
         {Text("later"), {}}});
   }
-  void RestartForSettings() {
-#ifdef _WIN32
-    // Start a fresh process with the saved API/card and the setup gate. The
-    // current process closes in its normal order, including its screen engine.
-    const auto executable = rex::filesystem::GetExecutableFolder() / L"narutorise.exe";
-    if (menu_settings_.config().custom_game_root.empty() && !game_data_root().empty()) {
-      std::string error;
-      if (!narutorise::menu::SaveGameRoot(executable.parent_path() / "narutorise.toml", game_data_root(), error)) return;
+  std::vector<std::string> SessionExtraArguments() const {
+    std::vector<std::string> arguments;
+    if (restart_game_root_) arguments.push_back("--game_data_root=" + rex::path_to_utf8(*restart_game_root_));
+    const auto source = rex::cvar::GetFlagSource("log_file");
+    if (source == rex::cvar::Source::kCommandLine || source == rex::cvar::Source::kEnvironment) {
+      const auto value = rex::to_path(rex::cvar::GetFlagByName("log_file"));
+      if (!value.empty()) arguments.push_back("--log_file=" + rex::path_to_utf8(
+          (value.is_absolute() ? value : prepared_data_->paths.initial_cwd / value).lexically_normal()));
     }
-    const std::wstring command = narutorise::launch::QuoteArgument(executable.wstring()) + L" --setup " +
-        narutorise::launch::UserDataArgument(user_data_root()) + L" --restart_wait_pid=" + std::to_wstring(GetCurrentProcessId());
+    return arguments;
+  }
+  void RestartForSettings() {
+    if (closing_.load()) return;
+    auto arguments = narutorise::launch::StorageArguments(prepared_data_->paths);
+    const auto extra = SessionExtraArguments();
+    arguments.insert(arguments.end(), extra.begin(), extra.end());
+    arguments.push_back("--setup");
+    bool started = false;
+#ifdef _WIN32
+    const auto executable = prepared_data_->paths.install_dir / L"narutorise.exe";
+    arguments.push_back("--restart_wait_pid=" + std::to_string(GetCurrentProcessId()));
+    auto command = narutorise::launch::QuoteArgument(executable.wstring()) + L" " +
+        narutorise::launch::CommandLine(arguments);
     STARTUPINFOW startup{sizeof(startup)};
     PROCESS_INFORMATION process{};
-    auto writable = command;
-    if (CreateProcessW(executable.c_str(), writable.data(), nullptr, nullptr, FALSE, 0, nullptr,
-                       rex::filesystem::GetExecutableFolder().c_str(), &startup, &process)) {
+    started = CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr,
+        prepared_data_->paths.initial_cwd.c_str(), &startup, &process) != 0;
+    if (started) {
       REXLOG_INFO("[narutorise] Restarting for saved settings: process {}", process.dwProcessId);
       CloseHandle(process.hThread); CloseHandle(process.hProcess);
-      RemoveLaunchMarker();
-      RequestExit();
-    } else ui_.ShowDialog(narutorise::menu::Text("restart"), narutorise::menu::Text("save-failed"), {{narutorise::menu::Text("cancel"), {}}});
+    }
+#else
+    // Restart the external AppImage, never its temporary mount. The child waits
+    // on EOF until the old process exits and the OS releases its data lease.
+    const auto image = std::getenv("APPIMAGE");
+    auto executable = image && *image ? rex::to_path(image) : prepared_data_->paths.install_dir / "narutorise";
+    if (executable.is_relative()) executable = prepared_data_->paths.initial_cwd / executable;
+    std::vector<std::string> values{rex::path_to_utf8(executable)};
+    values.insert(values.end(), arguments.begin(), arguments.end());
+    std::vector<char*> argv;
+    for (auto& value : values) argv.push_back(value.data());
+    argv.push_back(nullptr);
+    int wait_pipe[2];
+    if (access(executable.c_str(), X_OK) == 0 && pipe2(wait_pipe, O_CLOEXEC) == 0) {
+      const auto child = fork();
+      if (child == 0) {
+        close(wait_pipe[1]);
+        char byte;
+        while (read(wait_pipe[0], &byte, 1) < 0 && errno == EINTR) {}
+        close(wait_pipe[0]);
+        execv(executable.c_str(), argv.data());
+        _exit(127);
+      }
+      close(wait_pipe[0]);
+      if (child > 0) { restart_wait_fd_ = wait_pipe[1]; started = true; }
+      else close(wait_pipe[1]);
+    }
 #endif
+    if (started) { RemoveLaunchMarker(); RequestExit(); }
+    else ui_.ShowDialog(narutorise::menu::Text("restart"), narutorise::menu::Text("save-failed"),
+                        {{narutorise::menu::Text("cancel"), {}}});
   }
   void UpdateMenuShortcut() {
     const auto& options = menu_settings_.menu_options();
@@ -1107,7 +1255,7 @@ class NarutoriseApp : public rex::ReXApp {
   void ToggleGameMenu() { if (ui_.OverlayShown()) CloseGameMenu(); else OpenGameMenu(); }
   void CreateDesktopShortcut() {
     const bool ok = narutorise::menu::WriteShortcut(narutorise::menu::DesktopShortcut(),
-        rex::filesystem::GetExecutableFolder() / "narutorise.exe", user_data_root());
+        prepared_data_->paths.install_dir / "narutorise.exe", prepared_data_->paths, SessionExtraArguments());
     ui_.Notify(narutorise::menu::Text(ok ? "shortcut-done" : "save-failed"));
   }
   void CheckUpdates() {
@@ -1172,10 +1320,11 @@ class NarutoriseApp : public rex::ReXApp {
       using narutorise::game_image::Status;
       if (result->game.status == Status::kReady) {
         std::string error;
-        if (!narutorise::menu::SaveGameRoot(rex::filesystem::GetExecutableFolder() / "narutorise.toml", result->root, error)) {
+        if (!narutorise::menu::SaveGameRoot(prepared_data_->paths.config_path, result->root, error)) {
           ui_.ShowDialog(narutorise::menu::Text("save-failed"), error, {{narutorise::menu::Text("cancel"), {}}});
           return;
         }
+        restart_game_root_ = result->root;
         if (!setup_resume_) {
           menu_settings_.Reload(); OpenSettings();
           using narutorise::menu::Text;
@@ -1193,7 +1342,7 @@ class NarutoriseApp : public rex::ReXApp {
         // Reuse the current callbacks and refresh the ready state without
         // replacing the screen's engine or its resume continuation.
         ui_.RefreshSetup({setup_reason_, game_identity_, narutorise::Version(), setup_paths_.game_data_root});
-        REXLOG_INFO("[narutorise] Game selected: {}", result->root.string());
+        REXLOG_INFO("[narutorise] Game selected: {}", rex::path_to_utf8(result->root));
       } else {
         using narutorise::menu::Text;
         const char* title = Text(result->game.status == Status::kOtherVersion ? "unsupported" :
@@ -1246,6 +1395,17 @@ class NarutoriseApp : public rex::ReXApp {
     ui_.Draw(context);
   }
 
+  // Declared first so it outlives menu writers. ReXApp::OnDestroy tears down
+  // the guest/runtime before member destruction; do not release in OnShutdown.
+  std::optional<narutorise::data::PreparedData> prepared_data_;
+  std::optional<narutorise::data::Environment> data_environment_;
+  narutorise::data::Overrides data_cli_;
+  std::optional<std::filesystem::path> pending_data_root_;
+  std::string bootstrap_log_file_;
+  std::optional<std::filesystem::path> restart_game_root_;
+#ifndef _WIN32
+  int restart_wait_fd_ = -1;  // Deliberately held until process exit (lease teardown).
+#endif
   FullscreenShortcuts fullscreen_shortcuts_;
   std::unique_ptr<rex::ui::ImmediateDrawer> native_drawer_;  // Before ui_: it outlives the Ui.
   narutorise::menu::Ui ui_;

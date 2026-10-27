@@ -49,18 +49,19 @@ def main():
                           dlc_source_path=str(source / 'dlc'))
             if root:
                 config['custom_game_root'] = str(root)
-            (product / 'narutorise.toml').write_text(
+            (product / 'data').mkdir(exist_ok=True)
+            (product / 'data/narutorise.toml').write_text(
                 '\n'.join(f'{key} = {json.dumps(value)}' for key, value in config.items()), encoding='utf-8')
-            before = set((product / 'logs').glob('*.log'))
+            before = set((product / 'data/logs').glob('*.log'))
             with (output / (name + '-console.log')).open('wb') as console:
                 process = subprocess.Popen([str(product / 'narutorise.exe'), '--setup'], cwd=product,
-                                           env=dict(os.environ, REX_USER_DATA_ROOT=str(user)),
+                                           env=dict(os.environ, REX_DATA_ROOT=str(product / "data"), REX_USER_DATA_ROOT=str(user)),
                                            stdout=console, stderr=subprocess.STDOUT)
                 log = None
 
                 def text():
                     nonlocal log
-                    logs = set((product / 'logs').glob('*.log')) - before
+                    logs = set((product / 'data/logs').glob('*.log')) - before
                     if logs:
                         log = max(logs, key=lambda path: path.stat().st_mtime)
                     return log.read_text(encoding='utf-8', errors='replace') if log else ''

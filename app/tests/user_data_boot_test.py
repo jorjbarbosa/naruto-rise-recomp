@@ -1,4 +1,4 @@
-"""Check legacy TOML user roots, Unicode and override precedence in the real app.
+"""Check active TOML user roots, Unicode and override precedence in the real app.
 
 Usage: python -I app/tests/user_data_boot_test.py <product> <game.iso> <new output>
 All configured roots are private test folders. The first cases stop in setup.
@@ -25,6 +25,8 @@ def main():
     for item in source.iterdir():
         if item.name == 'narutorise.exe' or item.suffix.lower() == '.dll':
             shutil.copy2(item, product / item.name)
+    data = product / 'data'
+    data.mkdir()
     results = []
     for name in ('toml-relative-unicode', 'environment', 'command-line', 'cli-over-env',
                  'relative-cli', 'trailing-cli', 'direct', 'cache-override'):
@@ -39,9 +41,11 @@ def main():
         sentinel.write_bytes(b'existing save')
         config = {'renderer': 'native', 'native_backend': 'd3d12', 'fullscreen': False,
                   'custom_game_root': str(iso), 'user_data_root': str(configured.relative_to(product)),
-                  'check_for_updates': False, 'log_level': 'debug', 'skip_intro_videos': True}
-        (product / 'narutorise.toml').write_text('\n'.join(f'{k} = {json.dumps(v, ensure_ascii=False)}' for k, v in config.items()), encoding='utf-8')
+                  'check_for_updates': False, 'log_level': 'debug', 'skip_intro_videos': True,
+                  'show_startup_menu': name != 'direct'}
+        (data / 'narutorise.toml').write_text('\n'.join(f'{k} = {json.dumps(v, ensure_ascii=False)}' for k, v in config.items()), encoding='utf-8')
         env = {k: v for k, v in os.environ.items() if k not in ('REX_USER_DATA_ROOT', 'REX_CACHE_ROOT')}
+        env['REX_DATA_ROOT'] = str(data)
         if name in ('environment', 'cli-over-env'): env['REX_USER_DATA_ROOT'] = str(env_root)
         args = [] if name == 'direct' else ['--setup']
         if name in ('command-line', 'cli-over-env'): args += ['--user_data_root=' + str(cli_root)]
@@ -49,19 +53,19 @@ def main():
         if name == 'trailing-cli': args += ['--user_data_root=' + str(cli_root) + '\\']
         if name == 'direct': args += ['--game_data_root=' + str(iso)]
         if name == 'cache-override': args += ['--cache_root=' + str(expected_cache)]
-        before = set((product / 'logs').glob('*.log'))
+        before = set((data / 'logs').glob('*.log'))
         process = subprocess.Popen([str(product / 'narutorise.exe'), *args], cwd=case, env=env)
         log = None
         try:
             hwnd = win.wait_for(lambda: win.window(process.pid), process)
             def text():
                 nonlocal log
-                logs = set((product / 'logs').glob('*.log')) - before
+                logs = set((data / 'logs').glob('*.log')) - before
                 if logs: log = max(logs, key=lambda p: p.stat().st_mtime)
                 if not log: return ''
-                data = log.read_bytes()
-                try: return data.decode('utf-8')
-                except UnicodeDecodeError: return data.decode('mbcs')
+                raw = log.read_bytes()
+                try: return raw.decode('utf-8')
+                except UnicodeDecodeError: return raw.decode('mbcs')
             if name == 'direct':
                 win.wait_for(lambda: 'Native renderer backend:' in text(), process)
                 time.sleep(1)

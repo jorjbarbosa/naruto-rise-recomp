@@ -36,7 +36,8 @@ def main():
         for item in source.iterdir():
             if item.name == 'narutorise.exe' or item.suffix.lower() == '.dll':
                 shutil.copy2(item, product / item.name)
-        config_path = product / 'narutorise.toml'
+        (product / 'data').mkdir(exist_ok=True)
+        config_path = product / 'data/narutorise.toml'
         basic = dict(renderer='native', native_backend=api, fullscreen=False,
                      skip_intro_videos=True, frame_rate=60, input_backend='sdl',
                      mnk_mode=True, mnk_mouse=True, custom_game_root=str(game),
@@ -57,14 +58,14 @@ def main():
             return tomllib.loads(config_path.read_text(encoding='utf-8'))
 
         def run(restarted):
-            before_logs = set((product / 'logs').glob('*.log'))
+            before_logs = set((product / 'data/logs').glob('*.log'))
             process = subprocess.Popen([str(product / 'narutorise.exe'), '--setup'], cwd=product,
-                                       env=dict(os.environ, REX_USER_DATA_ROOT=str(product / 'user')))
+                                       env=dict(os.environ, REX_DATA_ROOT=str(product / "data"), REX_USER_DATA_ROOT=str(product / 'user')))
             try:
                 hwnd = win.wait_for(lambda: win.window(process.pid), process)
 
                 def log():
-                    files = set((product / 'logs').glob('*.log')) - before_logs
+                    files = set((product / 'data/logs').glob('*.log')) - before_logs
                     return max(files, key=lambda p: p.stat().st_mtime).read_text(encoding='utf-8', errors='replace') if files else ''
 
                 win.wait_for(lambda: 'Setup screen:' in log(), process, timeout=45)
@@ -190,7 +191,7 @@ def main():
                 process.wait(timeout=25)
                 assert process.returncode == 0, process.returncode
                 shutil.copy2(config_path, output / f'{api}-{"restarted" if restarted else "first"}.toml')
-                files = set((product / 'logs').glob('*.log')) - before_logs
+                files = set((product / 'data/logs').glob('*.log')) - before_logs
                 if files:
                     shutil.copy2(max(files, key=lambda p: p.stat().st_mtime), output / f'{api}-{"restarted" if restarted else "first"}.log')
                 result = dict(api=api, restarted=restarted, passed=True, exit=process.returncode, product=str(product))

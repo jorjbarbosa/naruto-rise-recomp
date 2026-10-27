@@ -6,6 +6,7 @@
 #include "wine.h"
 #include "../menu/game_languages.h"
 #include "../menu/graphics_devices.h"
+#include "menu/folders.h"
 #include "../menu/key_names.h"
 #include <algorithm>
 #include <cmath>
@@ -23,10 +24,13 @@ namespace {
 std::string Utf8(const std::filesystem::path& path) { const auto s = path.u8string(); return {s.begin(), s.end()}; }
 std::string Bool(bool value) { return Text(value ? "on" : "off"); }
 }
-void Settings::Initialize(std::filesystem::path directory, bool native_controls) {
+void Settings::Initialize(std::filesystem::path directory, bool native_controls,
+                          std::filesystem::path config_path) {
   edited_flags_.clear();
   controls_enabled_ = native_controls;
-  directory_ = std::move(directory); Reload(); initial_ = config_;
+  directory_ = std::move(directory);
+  config_path_ = config_path.empty() ? directory_ / "narutorise.toml" : std::move(config_path);
+  Reload(); initial_ = config_;
   const auto effective_backend=rex::cvar::GetFlagByName("input_backend");
   controls::SetBackend(effective_backend.empty()?config_.input_backend:effective_backend);
   if(!controls_enabled_){controls::Publish({});initial_menu_options_=menu_options_;return;}
@@ -38,14 +42,19 @@ void Settings::Initialize(std::filesystem::path directory, bool native_controls)
   controls::Publish(config_.controls);
   initial_menu_options_ = menu_options_;
 }
+void Settings::SetPendingDataLocation(std::optional<std::filesystem::path> pending) {
+  pending_data_root_ = std::move(pending);
+  if (ui_ && panel_revision_ == ui_->ViewRevision())
+    Redraw(pending_data_root_ ? "data-pending" : "data-active");
+}
 void Settings::Reload() {
-  const auto path=directory_ / "narutorise.toml";
+  const auto& path=config_path_;
   const bool loaded=ConfigManager::Load(path, config_);
   load_failed_=std::filesystem::exists(path)&&!loaded;
   if (controls_enabled_ && config_.controls.version) controls::Publish(config_.controls);
   Localization::SetLanguageCode(config_.launcher_language);
   try {
-    std::ifstream input(directory_ / "narutorise.toml", std::ios::binary);
+    std::ifstream input(config_path_, std::ios::binary);
     const auto table = toml::parse(input);
     menu_options_.key = table["bind_game_menu"].value_or(std::string("F1"));
     menu_options_.chord = table["game_menu_chord"].value_or(std::string("Back+Start"));
@@ -54,7 +63,7 @@ void Settings::Reload() {
   } catch (...) {}
 }
 bool Settings::Save(const GameConfig& config) {
-  const auto path = directory_ / "narutorise.toml";
+  const auto& path = config_path_;
   auto temporary = path; temporary += ".settings.tmp";
   try {
     if(load_failed_)throw std::runtime_error("Refusing to replace a configuration that could not be loaded");
@@ -172,7 +181,8 @@ std::vector<PanelRow> Settings::Rows(int group) {
   if (group == 0) {
     rows.push_back({"custom_game_root", Tr(TextId::TabGameFiles), config_.custom_game_root, Text("game-hint"), false,
         in_game_, {}, 0, {}, choose_game_});
-    const auto mods = launcher_ui::DiscoverTranslationMods(directory_);
+    const auto mods = launcher_ui::DiscoverTranslationMods(
+        data_paths_ ? data_paths_->mods_dir : config_path_.parent_path() / "mods");
     const auto languages = launcher_ui::GameLanguages(config_, mods);
     std::vector<std::string> names;
     for (const auto& language : languages.options) names.push_back(language.label);
@@ -287,11 +297,40 @@ std::vector<PanelRow> Settings::Rows(int group) {
         [](GameConfig& config, int value) { config.max_frame_latency = value + 1; });
     toggle("triple_buffering", TextId::TripleBufferingLabel, TextId::TripleBufferingDescription, &GameConfig::triple_buffering);
     toggle("show_fps_overlay", TextId::FpsOverlayLabel, TextId::FpsOverlayDescription, &GameConfig::show_fps_overlay, false);
+    rows.push_back({"crash_reporting", Text("crash-reporting"), Bool(config_.crash_reporting), Text("crash-reporting-help"),
+        config_.crash_reporting != initial_.crash_reporting, true, {Text("off"), Text("on")}, config_.crash_reporting ? 1 : 0,
+        [this](int value) { Change("crash_reporting", [value](GameConfig& config) { config.crash_reporting = value != 0; }); }, {}});
     rows.push_back({"show_shader_indicator", Text("shader-option"), Bool(menu_options_.shaders), Text("shader-option"),
         menu_options_.shaders != initial_menu_options_.shaders, false, {Text("off"), Text("on")}, menu_options_.shaders ? 1 : 0,
         [this](int value) { auto next = menu_options_; next.shaders = value != 0; SaveMenuOptions("show_shader_indicator", next); }, {}});
     if (updates_) rows.push_back({"updates", Tr(TextId::UpdatesCheck), "", Text("update-hint"), false, false, {}, 0, {}, updates_});
     if (shortcut_) rows.push_back({"shortcut", Text("shortcut"), "", Text("shortcut"), false, false, {}, 0, {}, shortcut_});
+    if (data_paths_) {
+      const auto active = data_paths_->data_root;
+      const bool blocked = data_paths_->session_override;
+      PanelRow current{"data-active", Text("storage-active"), Utf8(active),
+          std::string(Text("storage-help")) + "\n\n" + Utf8(active)};
+      current.section = Text("storage-section"); rows.push_back(std::move(current));
+      rows.push_back({"data-open", Text("storage-open"), "", Utf8(active), false, false, {}, 0, {},
+          [active] { launcher_ui::OpenFolder(active); }});
+      if (data_paths_->user_source != data::Source::kDefault) {
+        const auto guest = data_paths_->user_data_root;
+        rows.push_back({"data-guest", Text("storage-guest"), Utf8(guest),
+            std::string(Text("storage-guest-help")) + "\n\n" + Utf8(guest), false, false, {}, 0, {},
+            [guest] { launcher_ui::OpenFolder(guest); }});
+      }
+      const auto action = [&](const char* id, const char* label, data::Mode mode) {
+        PanelRow row{id, Text(label), "", Text(blocked ? "storage-override" : "storage-help"), false, true};
+        if (!blocked && select_data_location_) row.activate = [fn = select_data_location_, mode] { fn(mode); };
+        rows.push_back(std::move(row));
+      };
+      action("data-choose", "storage-choose", data::Mode::kCustom);
+      action("data-portable", "storage-portable", data::Mode::kPortable);
+      action("data-default", "storage-default", data::Mode::kDefault);
+      if (pending_data_root_)
+        rows.push_back({"data-pending", Text("storage-pending"), Utf8(*pending_data_root_),
+            std::string(Text("storage-pending-help")) + "\n\n" + Utf8(*pending_data_root_), true, true});
+    }
   }
   for (auto& row : rows) {
     if (controls_enabled_ && request_live_ && (row.id == "resolution_scale" || row.id == "brightness" ||
@@ -332,7 +371,7 @@ void Settings::Controls() {
 }
 bool Settings::ApplyBeforeGame() const {
   try {
-    std::ifstream input(directory_ / "narutorise.toml", std::ios::binary);
+    std::ifstream input(config_path_, std::ios::binary);
     const auto table = toml::parse(input);
     // The SDK already loaded the initial configuration with CLI/environment
     // precedence. Only explicit menu edits may override those session values.

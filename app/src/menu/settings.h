@@ -2,6 +2,7 @@
 // configuration, language packages and key binding rules, without its ImGui UI.
 #pragma once
 #include "menu/panel.h"
+#include "data_paths.h"
 #include "../menu/config_manager.h"
 #include <filesystem>
 #include <functional>
@@ -16,10 +17,17 @@ class Settings {
   void SetUtilities(std::function<void()> shortcut, std::function<void()> updates) {
     shortcut_ = std::move(shortcut); updates_ = std::move(updates);
   }
-  void Initialize(std::filesystem::path directory, bool native_controls = true);
+  void Initialize(std::filesystem::path directory, bool native_controls = true,
+                  std::filesystem::path config_path = {});
   void Open(Ui& ui, int tab, bool in_game, std::function<void()> choose_game,
             std::function<void(const std::string&)> changed, std::function<void()> closed);
   void Reload();
+  void SetDataFolder(data::DataPaths active, std::optional<std::filesystem::path> pending,
+                     std::function<void(data::Mode)> select) {
+    data_paths_ = std::move(active); pending_data_root_ = std::move(pending);
+    select_data_location_ = std::move(select);
+  }
+  void SetPendingDataLocation(std::optional<std::filesystem::path> pending);
   const GameConfig& config() const { return config_; }
   struct LiveResult { uint64_t revision = 0; bool applied = false; };
   void SetLiveSettings(std::function<uint64_t(const std::string&, const GameConfig&)> request,
@@ -36,6 +44,10 @@ class Settings {
   void Controls();
   void SaveMenuOptions(const std::string& key, MenuOptions next);
   std::filesystem::path directory_;
+  std::filesystem::path config_path_;
+  std::optional<data::DataPaths> data_paths_;
+  std::optional<std::filesystem::path> pending_data_root_;
+  std::function<void(data::Mode)> select_data_location_;
   GameConfig config_, initial_;
   std::unordered_set<std::string> edited_flags_;
   MenuOptions menu_options_, initial_menu_options_;

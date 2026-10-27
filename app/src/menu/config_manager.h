@@ -83,6 +83,7 @@ struct GameConfig {
   bool present_dither = false;
   bool show_fps_overlay = false;
   bool show_startup_menu = true;
+  bool crash_reporting = false;
 
   // 0.0 = 16:9 native (default), 2.3889 = 21:9, 3.5556 = 32:9
   double ultrawide_target_aspect = 0.0;

@@ -1,4 +1,8 @@
-# narutorise - runtime configuration (auto-read on startup)
+# narutorise - immutable factory template; copied once to the active data folder.
+# Select the data folder in Settings > Advanced or with --data_root / REX_DATA_ROOT.
+# Runtime preferences are read from that folder, never written to this template.
+# dlc_source_path = "dlc" uses data/dlc; "" disables scanning.
+# Custom user_data_root selects the exact guest content tree, with no saves/ suffix.
 
 gpu_plugin = "xenos"
 # Renderer: "native" (the default) or "xenos" (the emulated GPU),
@@ -17,9 +21,14 @@ graphics_device = ""
 d3d12_readback_resolve = true
 skip_intro_videos = true
 
+# Optional uploads of native crash dumps, technical details and startup timing.
+# Dumps may contain personal data. Saves and game files are never attached.
+# Also available in Settings > Advanced. Restart to enable.
+crash_reporting = false
+
 # Game language: 1 = English, 4 = French, 3 = German, 5 = Spanish, 6 = Italian.
 user_language = 1
-# Folder under mods/ next to the executable. Example: "pt-br-demo".
+# Folder under mods/ in the active data folder. Example: "pt-br-demo".
 # Translation mods currently use English as their base; restart after changing.
 translation_mod = ""
 
@@ -104,7 +113,7 @@ triple_buffering = false
 # 0.0 = native 16:9; 2.3889 = 21:9 (3440x1440); 3.5556 = 32:9.
 ultrawide_target_aspect = 0.0
 
-# Launcher interface: "en" (default), "pt_BR", "fr", "de", "es", "it", "ru".
+# Menu language: "en" (default), "pt_BR", "fr", "de", "es", "it", "ru".
 launcher_language = "en"
 
 # -----------------------------------------------------------------------------
@@ -118,7 +127,7 @@ launcher_language = "en"
 # -----------------------------------------------------------------------------
 # Optional: Custom game data: the folder with the extracted files, or the disc
 # image itself (.iso, read in place).
-# If empty, the executable auto-detects "game/" or "game_root/" next to it.
+# If empty, detect game/ or game_root/ beside the distribution (the external AppImage on Linux).
 # -----------------------------------------------------------------------------
 # custom_game_root = "C:/Games/Naruto - Rise of a Ninja/game"
 # custom_game_root = "C:/Games/Naruto - Rise of a Ninja.iso"

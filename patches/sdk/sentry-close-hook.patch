@@ -1,0 +1,11 @@
+diff --git a/include/rex/rex_app.h b/include/rex/rex_app.h
+--- a/include/rex/rex_app.h
++++ b/include/rex/rex_app.h
+@@ -279,3 +279,7 @@
+   // WindowListener overrides
++ protected:
++  // Applications may flush reporting before delegating to the SDK hard exit.
+   void OnClosing(ui::UIEvent& e) override;
++
++ private:
+   bool OnCloseRequested(ui::UIEvent& e) override;

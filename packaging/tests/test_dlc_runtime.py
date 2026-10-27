@@ -75,7 +75,9 @@ def run(args):
         shutil.copy2(dll, runtime)
     if (args.package / "shader_cache").is_dir():
         shutil.copytree(args.package / "shader_cache", runtime / "shader_cache")
-    (runtime / "narutorise.toml").write_text(
+    data = runtime / "data"
+    data.mkdir()
+    (data / "narutorise.toml").write_text(
         'gpu_plugin = "xenos"\nfullscreen = false\nvsync = true\n'
         'skip_intro_videos = true\ndlc_source_path = ""\nlog_level = "debug"\n'
         'ultrawide_target_aspect = 0.0\nresolution_scale = 1\n'
@@ -99,7 +101,7 @@ def run(args):
             shutil.copy2(args.content / header, user / header)
         log = args.output / name / "runtime.log"
         command = [str(runtime / "narutorise.exe"), f"--game_data_root={args.game}",
-                   f"--user_data_root={user}", f"--log_file={log}"]
+                   f"--data_root={data}", f"--user_data_root={user}", f"--log_file={log}"]
         startup = subprocess.STARTUPINFO()
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startup.wShowWindow = 0  # SW_HIDE: no new console/helper window

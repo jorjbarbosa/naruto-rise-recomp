@@ -7,10 +7,10 @@
 #include "mods/translation_data.h"
 
 namespace launcher_ui {
-std::vector<TranslationMod> DiscoverTranslationMods(const std::filesystem::path& base_dir) {
+std::vector<TranslationMod> DiscoverTranslationMods(const std::filesystem::path& mods_dir) {
   std::vector<TranslationMod> mods;
   std::error_code error;
-  std::filesystem::directory_iterator it(base_dir / "mods", error), end;
+  std::filesystem::directory_iterator it(mods_dir, error), end;
   while (!error && it != end) {
     const auto& entry = *it;
     std::error_code entry_error;

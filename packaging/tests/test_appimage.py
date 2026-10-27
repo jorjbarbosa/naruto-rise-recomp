@@ -15,7 +15,8 @@ work = Path(tempfile.mkdtemp(prefix='naruto-appimage-check-',
 home = work / 'usuário com espaços'
 home.mkdir()
 env = {**os.environ, 'HOME': str(home), 'XDG_CACHE_HOME': str(home / 'cache'),
-       'XDG_CONFIG_HOME': str(home / 'config'), 'XDG_STATE_HOME': str(home / 'state')}
+       'XDG_CONFIG_HOME': str(home / 'config'), 'XDG_STATE_HOME': str(home / 'state'),
+       'XDG_DATA_HOME': str(home / 'data')}
 report = {'appimage': str(image), 'work': str(work), 'checks': {}}
 
 def run(command, label, **kwargs):
@@ -31,21 +32,14 @@ def check(condition, label):
 
 first = run([str(image), '--appimage-extract-and-run', '--test-audio-wait'], 'runtime-extract-run')
 check(first.returncode == 0 and b'PASS:' in first.stdout, 'actual runtime and bundled audio wait test')
-config = home / 'config/narutorise/narutorise.toml'
-check(config.is_file(), 'writable user config outside image')
-config.write_text(config.read_text() + '\n# AppImage persistence check\n')
-config_bytes = config.read_bytes()
+check(not (home / 'config/narutorise/narutorise.toml').exists(), 'audio probe does not create app configuration')
 second = run([str(image), '--test-audio-wait'], 'runtime-fuse')
 report['fuse_execution'] = {'exit_code': second.returncode}
 if second.returncode != 0:
     second = run([str(image), '--appimage-extract-and-run', '--test-audio-wait'], 'runtime-second-extract-run')
 check(second.returncode == 0 and b'PASS:' in second.stdout, 'second invocation')
-check(config.read_bytes() == config_bytes, 'config persists across invocations')
-deployments = list((home / 'cache/narutorise/appimage').glob('*/.ready'))
-check(len(deployments) == 1, 'single versioned deployment reused')
-cache = deployments[0].parent
-check((cache / 'narutorise.toml').resolve() == config, 'cached executable uses user config')
-check((cache / 'logs').resolve() == home / 'state/narutorise/logs', 'writable user logs')
+check(not list((home / 'cache/narutorise/appimage').glob('*/.ready')), 'no payload deployment in cache')
+check(not (home / 'data/narutorise/narutorise.toml').exists(), 'audio probe has no storage side effects')
 
 extract = work / 'extracted'
 extract.mkdir()
@@ -53,6 +47,13 @@ result = run([str(image), '--appimage-extract'], 'extract', cwd=extract)
 check(result.returncode == 0, 'AppImage extraction')
 appdir = extract / 'squashfs-root'
 metadata = json.loads((appdir / 'packaging-info.json').read_text())
+check(metadata.get('payload_execution') == 'appdir', 'image declares direct payload execution')
+payload_root = appdir / 'usr/lib/narutorise'
+check((payload_root / 'defaults/narutorise.toml').is_file() and not (payload_root / 'narutorise.toml').exists(), 'factory template is immutable and separate')
+check(not any((payload_root / name).exists() for name in ('data', 'logs', 'dlc', 'mods', '.ready')), 'image has no mutable data layout')
+for name in ('mod.toml', 'texts.json'):
+    check((payload_root / 'defaults/mods/pt-br' / name).read_bytes() == (root / 'mods/pt-br' / name).read_bytes(),
+          'curated immutable PT-BR seed ' + name)
 for name, expected in metadata['binaries'].items():
     check(hashlib.sha256((appdir / 'usr/lib/narutorise' / name).read_bytes()).hexdigest() == expected,
           'unchanged binary ' + name)
@@ -65,13 +66,11 @@ payload.mkdir(parents=True)
 (stub / 'build-id').write_text('wrapper-fixture\n')
 (stub / 'AppRun').write_bytes((root / 'packaging/appimage/AppRun').read_bytes())
 (stub / 'AppRun').chmod(0o755)
-(payload / 'narutorise.toml').write_text('renderer = "native"\n')
+(payload / 'defaults').mkdir()
+(payload / 'defaults/narutorise.toml').write_text('renderer = "native"\n')
 stub_exe = payload / 'narutorise'
 stub_exe.write_text('#!/bin/sh\nprintf "%s\\0" "$@" > "$CAPTURE_ARGS"\npwd > "$CAPTURE_CWD"\n')
 stub_exe.chmod(0o755)
-nearby = work / 'game_root'
-nearby.mkdir()
-(nearby / 'default.xex').touch()
 cwd = work / 'cwd diferente'
 cwd.mkdir()
 stub_env = {**env, 'APPDIR': str(stub), 'APPIMAGE': str(work / 'Jogo com espaços.AppImage'),
@@ -85,11 +84,11 @@ check((work / 'cwd').read_text().strip() == str(cwd), 'relative paths retain ori
 result = run([str(stub / 'AppRun'), '--setup'], 'nearby-game', env=stub_env, cwd=cwd)
 check(result.returncode == 0, 'wrapper nearby launch')
 recorded = (work / 'argv').read_bytes().split(b'\0')[:-1]
-check(recorded == [b'--setup', ('--game_data_root=' + str(nearby)).encode()], 'game data discovered beside AppImage')
+check(recorded == [b'--setup'], 'nearby discovery remains in native app without overriding its saved ISO')
 
 report['glibc_versions_used'] = sorted(set(
     __import__('re').findall(r'GLIBC_(\d+\.\d+)', subprocess.check_output(
-        ['readelf', '--version-info', str(cache / 'narutorise'), str(cache / 'librexruntime.so')], text=True))),
+        ['readelf', '--version-info', str(appdir / 'usr/lib/narutorise/narutorise'), str(appdir / 'usr/lib/narutorise/librexruntime.so')], text=True))),
     key=lambda version: tuple(map(int, version.split('.'))))
 (work / 'result.json').write_text(json.dumps(report, indent=2))
 print(json.dumps({'status': 'PASS', 'checks': len(report['checks']), 'fuse_execution': report['fuse_execution'],

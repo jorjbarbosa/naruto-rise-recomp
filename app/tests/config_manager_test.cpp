@@ -42,6 +42,21 @@ int main(int argc, char** argv) {
                 unicode_table["user_data_root"].value<std::string>() == "user",
             "Saving through a Unicode path erased unmanaged user settings");
 
+    const auto reporting_path = unicode_dir / "reporting.toml";
+    Write(reporting_path, "personal_setting = 'keep'\n");
+    GameConfig reporting;
+    Require(!reporting.crash_reporting, "Crash reporting requires explicit consent");
+    Require(ConfigManager::Load(reporting_path, reporting) && !reporting.crash_reporting,
+            "Existing configurations must not opt players into reporting");
+    reporting.crash_reporting = true;
+    Require(ConfigManager::Save(reporting_path, reporting), "Could not persist reporting consent");
+    GameConfig opted_in;
+    Require(ConfigManager::Load(reporting_path, opted_in) && opted_in.crash_reporting,
+            "Reporting consent did not survive reload");
+    opted_in.crash_reporting = false;
+    Require(ConfigManager::Save(reporting_path, opted_in) && ConfigManager::Load(reporting_path, opted_in)
+                && !opted_in.crash_reporting, "Reporting revocation did not survive reload");
+
     Write(path, "launcher_language = 'pt_BR'\n");
     GameConfig legacy;
     Require(legacy.show_startup_menu, "Initial menu must default to enabled");

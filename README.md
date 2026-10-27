@@ -85,9 +85,9 @@ See [Renderers and frame rate](docs/renderers.md) for how it works, its limits, 
 
 ## Installing
 
-Download `naruto-rise-recomp-win-amd64.zip` from the [Releases page](https://github.com/jorjbarbosa/naruto-rise-recomp/releases). Extract it to a writable folder and run `narutorise.exe`. Game data is supplied separately.
+Download `naruto-rise-recomp-win-amd64.zip` from the [Releases page](https://github.com/jorjbarbosa/naruto-rise-recomp/releases). Extract it to a writable folder and run `narutorise.exe`. Game data is supplied separately. The ZIP creates `data/` for preferences, logs, saves and DLC packages; `defaults/narutorise.toml` is the factory template. Settings → Advanced can show, open or change the data folder after restart. Linux AppImage uses the XDG data directory by default. See [Data folder and recovery](docs/data-folder.md).
 
-On first launch, choose your original Xbox 360 ISO or `default.xex` from a complete extracted copy. The game validates the supported revision and reads the ISO directly. Later launches go straight to the game. Hold **Shift** while opening, or run `narutorise.exe --setup`, to return to setup.
+On first launch, choose your original Xbox 360 ISO or `default.xex` from a complete extracted copy. The game validates the supported revision and reads the ISO directly. Later launches follow the Show menu at startup preference. Hold **Shift** while opening, or run `narutorise.exe --setup`, to return to setup.
 
 Press **F1** or **Back+Start** while playing for Settings, DLC and Exit game. Create a desktop shortcut from **Settings → Advanced**. See the [DLC guide](docs/dlc.md) for additional content.
 
@@ -95,7 +95,7 @@ Press **F1** or **Back+Start** while playing for Settings, DLC and Exit game. Cr
 
 The game checks GitHub Releases in the background and offers to open the release page. It does not download or install updates. Release eligibility follows GitHub's published/pre-release flag; a `beta` tag can still be eligible. Checks are cached; playing offline works.
 
-Close the game, download the new ZIP, and replace the package files while **keeping your existing `narutorise.toml`**. Preserve `game/`, `game_root/`, saves, DLC and community mods. Updates refresh the bundled `mods/pt-br/mod.toml` and `texts.json`; keep personal translation changes in another mod folder.
+Close the game, download the new ZIP, and replace the package files while **keeping the active `data/` folder and `data_location.json` selection file**. Preserve `game/`, `game_root/`, saves, DLC and mods. All active mods and translations live in the active data folder's `mods/`; eligible old mods are copied there with originals preserved. Updates refresh only the immutable `defaults/mods/pt-br` seed and preserve active personalizations. To update an active translation, back it up and merge the new seed deliberately. See [data-folder recovery](docs/data-folder.md).
 
 For an installed **0.3.0-beta** copy, use the separately attached `NarutoRiseInstaller.exe` compatibility bridge. The old launcher's updater can hand off to it using `/MODE=update`. It keeps the installation folder and user data, replaces the known shortcuts to open `narutorise.exe`, and removes the old launcher. You can also run the bridge manually, choose **Update an existing installation** and select the PC port folder. There is no ISO import step.
 
@@ -122,7 +122,7 @@ Planned work, in no particular order:
 
 ## Contributing
 
-Read the [technical analysis](docs/architecture.md) before changing the runtime or code generation files. When reporting an issue, include reproduction steps, version/build, CPU, GPU, driver, the renderer and frame rate you use, your configuration, and logs from `logs/` next to the executable. Also mention whether you use ultrawide, DLCs, or a Title Update.
+Read the [technical analysis](docs/architecture.md) before changing the runtime or code generation files. When reporting an issue, include reproduction steps, version/build, CPU, GPU, driver, the renderer and frame rate you use, your configuration, and logs from `logs/` inside the active data folder shown in Settings → Advanced. Also mention whether you use ultrawide, DLCs, or a Title Update.
 
 Keep game files, content packages, derived shader data, and generated recompiled code out of commits. SDK changes should include reproducible patches in `patches/sdk/`.
 

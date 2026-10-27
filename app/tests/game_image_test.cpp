@@ -109,6 +109,11 @@ void SyntheticTests(const fs::path& dir) {
   Check(image.status == Status::kOtherVersion, "naruto.iso: other-version");
   Check(image.disc_image, "naruto.iso: disc image");
   Check(image.title_id == 0x555307E5, "naruto.iso: Title ID");
+  const auto unicode_image = dir / fs::path(u"\u65e5\u672c\u8a9e.iso");
+  Write(unicode_image, Image({{"default.xex", naruto}}));
+  const auto unicode_identity = Identify(unicode_image);
+  Check(unicode_identity.status == Status::kOtherVersion && unicode_identity.disc_image,
+        "Unicode filename: disc identification without locale conversion");
   const auto folder = Identify(dir / "folder");
   Check(folder.status == Status::kOtherVersion && !folder.disc_image, "folder: other-version");
   Check(folder.xex_digest == image.xex_digest, "folder and image: same default.xex digest");

@@ -72,7 +72,7 @@ std::optional<uint32_t> XexTitleId(std::string_view xex) {
 }
 
 bool IsDefaultXex(const std::filesystem::path& path) {
-  std::string name = path.filename().string();
+  std::string name = rex::path_to_utf8(path.filename());
   std::transform(name.begin(), name.end(), name.begin(),
                  [](unsigned char c) { return char(std::tolower(c)); });
   return name == "default.xex";

@@ -12,22 +12,28 @@ def main():
     forbidden = {'narutorise_launcher.exe', 'narutorise_setup_helper.exe', 'extract-xiso.exe',
                  'install.ps1', 'NarutoRiseInstaller.exe'}
     required = {'narutorise.exe', 'narutorise_ai2c.dll', 'rexruntime.dll', 'rexgpu-xenos.dll',
-                'narutorise.toml', 'narutorise.version', 'README.txt', 'mods/pt-br/mod.toml',
-                'mods/pt-br/texts.json', 'licenses/README.txt', 'licenses/rmlui.txt',
+                'defaults/narutorise.toml', 'narutorise.version', 'README.txt', 'defaults/mods/pt-br/mod.toml',
+                'defaults/mods/pt-br/texts.json', 'licenses/README.txt', 'licenses/rmlui.txt',
                 'licenses/freetype.txt', 'licenses/roboto-condensed.txt'}
     with zipfile.ZipFile(archive) as package:
         assert package.testzip() is None, 'ZIP integrity failure'
         names = {item.filename for item in package.infolist() if not item.is_dir()}
         assert required <= names, sorted(required - names)
         assert not {Path(name).name for name in names} & forbidden
+        assert 'narutorise.toml' not in names and 'data_location.json' not in names
+        assert not any(name.startswith(('data/', 'logs/', 'dlc/', 'mods/')) for name in names)
         assert not any(name.startswith(('game/', 'game_root/', 'assets/')) for name in names)
+        if 'sentry-notices.txt' in names:
+            assert {'crashpad_handler.exe', 'crashpad_wer.dll'} <= names, 'Missing Sentry crash handler'
+        assert not any(name.lower().endswith('.pdb') for name in names), 'Debug symbols belong outside the public ZIP'
         for name in names:
             assert not Path(name).is_absolute() and '..' not in Path(name).parts
             assert hashlib.sha256(package.read(name)).digest() == hashlib.sha256((staged / name).read_bytes()).digest(), name
         assert names == {path.relative_to(staged).as_posix() for path in staged.rglob('*') if path.is_file()}
-        config = tomllib.loads(package.read('narutorise.toml').decode('utf-8-sig'))
+        config = tomllib.loads(package.read('defaults/narutorise.toml').decode('utf-8-sig'))
         assert not config.get('custom_game_root')
         assert not config.get('user_data_root')
+        assert not config.get('crash_reporting', False), 'Distributed defaults must require reporting consent'
         assert not config.get('dlc_source_path', '').startswith('C:')
         assert package.read('narutorise.version').strip()
         print(f'PASS: {len(names)} ZIP files match staging; required modules/notices, clean defaults and obsolete-file exclusions')

@@ -121,16 +121,18 @@ def main():
                   'check_for_updates': False, 'show_startup_menu': show_menu}
         if not first:
             config['custom_game_root'] = str(root)
-        (product/'narutorise.toml').write_text('\n'.join(f'{key} = {json.dumps(value, ensure_ascii=False)}' for key,value in config.items()), encoding='utf-8')
-        before = set((product/'logs').glob('*.log'))
+        data = product / 'data'
+        data.mkdir(exist_ok=True)
+        (data/'narutorise.toml').write_text('\n'.join(f'{key} = {json.dumps(value, ensure_ascii=False)}' for key,value in config.items()), encoding='utf-8')
+        before = set((data/'logs').glob('*.log'))
         process = subprocess.Popen([str(product/'narutorise.exe'), *args], cwd=product,
-                                   env=dict(os.environ, REX_USER_DATA_ROOT=str(user)))
+                                   env=dict(os.environ, REX_DATA_ROOT=str(data), REX_USER_DATA_ROOT=str(user)))
         log = None
         try:
             hwnd = wait_for(lambda: window(process.pid), process)
             def text():
                 nonlocal log
-                new = set((product/'logs').glob('*.log')) - before
+                new = set((data/'logs').glob('*.log')) - before
                 if new:
                     log = max(new, key=lambda p:p.stat().st_mtime)
                 return log.read_text(encoding='utf-8', errors='replace') if log else ''

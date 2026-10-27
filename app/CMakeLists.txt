@@ -51,6 +51,38 @@ endif()
 
 add_subdirectory(../third_party/nlohmann_json third_party/nlohmann_json)
 
+# Data selection is independent of the SDK and guest runtime, including tests.
+add_library(narutorise_data_paths STATIC src/data_paths.cpp)
+target_include_directories(narutorise_data_paths PUBLIC src)
+target_link_libraries(narutorise_data_paths PRIVATE narutorise::json)
+if(WIN32)
+    target_link_libraries(narutorise_data_paths PRIVATE shell32 ole32 uuid)
+endif()
+
+add_library(narutorise_data_migration STATIC src/data_migration.cpp)
+target_include_directories(narutorise_data_migration PUBLIC src)
+# Header-only TOML parser already used by the application, without SDK runtime.
+target_include_directories(narutorise_data_migration SYSTEM PRIVATE
+    ../sdk/thirdparty/tomlplusplus/include ../sdk/thirdparty/xxHash)
+target_link_libraries(narutorise_data_migration PUBLIC narutorise_data_paths PRIVATE narutorise::json)
+add_executable(narutorise_data_migration_test EXCLUDE_FROM_ALL tests/data_migration_test.cpp)
+target_link_libraries(narutorise_data_migration_test PRIVATE narutorise_data_migration narutorise::json)
+add_executable(narutorise_data_logging_test EXCLUDE_FROM_ALL tests/data_logging_test.cpp)
+target_link_libraries(narutorise_data_logging_test PRIVATE narutorise_data_paths rex::runtime)
+add_executable(narutorise_data_achievements_test EXCLUDE_FROM_ALL tests/data_achievements_test.cpp)
+target_link_libraries(narutorise_data_achievements_test PRIVATE rex::runtime)
+add_executable(narutorise_launch_arguments_test EXCLUDE_FROM_ALL tests/launch_arguments_test.cpp)
+target_link_libraries(narutorise_launch_arguments_test PRIVATE narutorise_data_paths)
+if(WIN32)
+    target_link_libraries(narutorise_launch_arguments_test PRIVATE shell32)
+endif()
+add_executable(narutorise_data_paths_test EXCLUDE_FROM_ALL tests/data_paths_test.cpp)
+target_link_libraries(narutorise_data_paths_test PRIVATE narutorise_data_paths narutorise::json)
+if(WIN32)
+    target_link_libraries(narutorise_data_paths_test PRIVATE advapi32)
+    target_link_libraries(narutorise_data_migration_test PRIVATE advapi32)
+endif()
+
 # The UI of the menus: RmlUi 6.3 over FreeType 2.15.0 (third_party submodules),
 # both static. FreeType without its optional dependencies (the fonts are plain
 # TTF) and RmlUi without samples; RmlUi takes the FreeType target, not a
@@ -161,7 +193,7 @@ if(WIN32)
 else()
     add_executable(narutorise ${NARUTORISE_SOURCES})
 endif()
-target_link_libraries(narutorise PRIVATE narutorise::json RmlUi::Core)
+target_link_libraries(narutorise PRIVATE narutorise::json RmlUi::Core narutorise_data_migration)
 add_library(narutorise_menu_components STATIC src/menu/text.cpp src/menu/panel.cpp src/menu/pad_input.cpp
             src/controls/config.cpp
             src/controls/service.cpp
@@ -178,7 +210,7 @@ target_sources(narutorise_menu_components PRIVATE src/menu/update_checker.cpp)
 target_sources(narutorise_menu_components PRIVATE src/menu/game_logo.cpp)
 target_include_directories(narutorise_menu_components PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/thirdparty/stb)
 target_include_directories(narutorise_menu_components PUBLIC src)
-target_link_libraries(narutorise_menu_components PUBLIC rex::runtime RmlUi::Core narutorise::json)
+target_link_libraries(narutorise_menu_components PUBLIC rex::runtime RmlUi::Core narutorise::json narutorise_data_paths)
 if(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP)
     target_compile_definitions(narutorise_menu_components PUBLIC NARUTORISE_MENU_NATIVE_RENDERER=1)
 endif()
@@ -188,6 +220,11 @@ if(NARUTORISE_NATIVE_VULKAN)
 endif()
 
 add_executable(narutorise_dlc_test EXCLUDE_FROM_ALL tests/dlc_test.cpp)
+add_executable(narutorise_data_menu_test EXCLUDE_FROM_ALL tests/data_menu_test.cpp
+    src/menu/ui.cpp src/menu/assets.cpp src/menu/render_interface.cpp src/menu/setup_screen.cpp
+    src/menu/dlc.cpp src/menu/game_choice.cpp src/game_image.cpp)
+target_link_libraries(narutorise_data_menu_test PRIVATE narutorise_menu_components)
+
 add_executable(narutorise_controls_config_test EXCLUDE_FROM_ALL tests/controls_config_test.cpp)
 target_link_libraries(narutorise_controls_config_test PRIVATE narutorise_menu_components)
 add_executable(narutorise_controls_service_test EXCLUDE_FROM_ALL tests/controls_service_test.cpp)
@@ -423,14 +460,34 @@ if(NARUTORISE_GAME_VERSION_LINE MATCHES "\"([^\"]+)\"")
     target_compile_definitions(narutorise PRIVATE NARUTORISE_VERSION="${CMAKE_MATCH_1}")
 endif()
 
-# Runtime config: narutorise.toml ao lado do exe. Um target ALL separado
-# garante a sincronização mesmo quando somente o TOML muda e o executável não
-# precisa ser relinkado (POST_BUILD, sozinho, não cobre esse caso).
+# Immutable defaults only; rebuilding must never replace active preferences.
+include(cmake/sentry.cmake)
+
+if(UNIX AND NOT APPLE)
+    # Exercise the exact SDK signal-chain source, including recoverable faults,
+    # without linking a guest image or starting a graphics device.
+    add_executable(narutorise_signal_chain_test EXCLUDE_FROM_ALL
+        tests/signal_chain_test.cpp ../sdk/src/core/exception_handler_posix.cpp)
+    target_link_libraries(narutorise_signal_chain_test PRIVATE rex::runtime)
+endif()
+
 add_custom_target(narutorise_runtime_config ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:narutorise>/defaults
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_CURRENT_SOURCE_DIR}/narutorise.toml
-            $<TARGET_FILE_DIR:narutorise>/narutorise.toml)
+            $<TARGET_FILE_DIR:narutorise>/defaults/narutorise.toml)
 add_dependencies(narutorise narutorise_runtime_config)
+
+# Immutable curated seeds only. Active mods belong to the selected data root;
+# neither a rebuild nor package update may replace personal translations.
+add_custom_target(narutorise_runtime_mods ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:narutorise>/defaults/mods/pt-br
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_CURRENT_SOURCE_DIR}/../mods/pt-br/mod.toml
+            ${CMAKE_CURRENT_SOURCE_DIR}/../mods/pt-br/texts.json
+            $<TARGET_FILE_DIR:narutorise>/defaults/mods/pt-br
+    VERBATIM)
+add_dependencies(narutorise narutorise_runtime_mods)
 
 # Bundled Xenos shader storage (555307E5.xsh/.xpso), seeded into the user cache
 # on first run. It holds the game's shader microcode, so it stays out of the

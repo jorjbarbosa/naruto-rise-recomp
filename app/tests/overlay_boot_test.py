@@ -35,14 +35,15 @@ def main():
                 shutil.copy2(item, product/item.name)
         user = product/'user'
         record = product/'input.txt'
-        config = dict(renderer='native', native_backend=api, fullscreen=False, skip_intro_videos=True,
+        config = dict(renderer='native', native_backend=api, fullscreen=False, skip_intro_videos=True, show_startup_menu=False,
                       frame_rate=60, mnk_mode=True, mnk_mouse=False, custom_game_root=str(iso),
                       check_for_updates=False, show_fps_overlay=False)
-        (product/'narutorise.toml').write_text('\n'.join(f'{key} = {json.dumps(value)}' for key,value in config.items()), encoding='utf-8')
+        (product / 'data').mkdir(exist_ok=True)
+        (product/'data/narutorise.toml').write_text('\n'.join(f'{key} = {json.dumps(value)}' for key,value in config.items()), encoding='utf-8')
         process = subprocess.Popen([str(product/'narutorise.exe')], cwd=product,
-                                   env=dict(os.environ, REX_USER_DATA_ROOT=str(user), REX_NATIVE_INPUT_RECORD=str(record)))
+                                   env=dict(os.environ, REX_DATA_ROOT=str(product / "data"), REX_USER_DATA_ROOT=str(user), REX_NATIVE_INPUT_RECORD=str(record)))
         def log():
-            files = list((product/'logs').glob('*.log'))
+            files = list((product/'data/logs').glob('*.log'))
             return max(files, key=lambda p:p.stat().st_mtime).read_text(encoding='utf-8', errors='replace') if files else ''
         def states():
             text = record.read_text(encoding='utf-8') if record.exists() else ''
@@ -85,7 +86,7 @@ def main():
             key(0x28); key(0x28); key(0x27)
             time.sleep(.2)
             shot('fps-option')
-            saved = tomllib.loads((product/'narutorise.toml').read_text(encoding='utf-8'))
+            saved = tomllib.loads((product/'data/narutorise.toml').read_text(encoding='utf-8'))
             assert saved['show_fps_overlay'] is True
             key(27); key(0x27); key(13); shot('dlc'); key(27)
             key(0x70)
@@ -99,7 +100,7 @@ def main():
             for _ in range(3): key(0x22) # Controls.
             for _ in range(2): key(0x28) # Configure controls, backend, then the global menu shortcut.
             key(13); key(0x71) # Capture F2.
-            saved = tomllib.loads((product/'narutorise.toml').read_text(encoding='utf-8'))
+            saved = tomllib.loads((product/'data/narutorise.toml').read_text(encoding='utf-8'))
             assert saved['bind_game_menu'] == 'F2'
             key(27); key(0x71) # Back, close with the new key.
             count = log().count('Game menu opened;')
@@ -110,7 +111,7 @@ def main():
             process.wait(timeout=25)
             assert process.returncode == 0, process.returncode
             shutil.copy2(record, output/(api+'-input.txt'))
-            shutil.copy2(max((product/'logs').glob('*.log'), key=lambda p:p.stat().st_mtime), output/(api+'.log'))
+            shutil.copy2(max((product/'data/logs').glob('*.log'), key=lambda p:p.stat().st_mtime), output/(api+'.log'))
             result = dict(api=api, passed=True, exit=process.returncode, guest_reads_while_menu=after[1]-before[1],
                           neutral_packet=neutral[3], resumed_packet=after[3])
             results.append(result)

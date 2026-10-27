@@ -43,6 +43,14 @@ The script checks tools, initializes submodules, downloads `extract-xiso.exe`, a
 
 The translation loader and menus use the pinned JSON parser in `third_party/nlohmann_json`, through the `narutorise::json` CMake target. This application dependency does not require the SDK's private inja headers or a separate download.
 
+The application build refreshes only `defaults/narutorise.toml` and the curated
+PT-BR seed in `defaults/mods/pt-br`. Active translations and other mods are read
+from the resolved data folder's `mods/`, alongside the active TOML. Rebuilds
+preserve those files; eligible old executable/AppRun mods are imported by a
+recoverable copy. See [data-folder recovery](data-folder.md) before cleaning old
+payload caches or updating a personalized translation.
+
+
 If the SDK and extractor are already available, still make sure the local patches have been applied before building the SDK:
 
 ```powershell
@@ -160,7 +168,7 @@ narutorise_ai2c3.dll       # Choji & Temari engine (DLC module builds only)
 rexruntime.dll
 rexgpu-xenos.dll
 amd_fidelityfx_dx12.dll   # when provided by the SDK
-narutorise.toml
+defaults/narutorise.toml
 shader_cache/              # when packaging/private/shader_cache has the storage
 ```
 
@@ -197,7 +205,7 @@ pwsh -File .\packaging\package-bridge.ps1
 
 The script always refreshes the build before packaging; unchanged sources are not recompiled. `-Build` is still accepted, but changes nothing.
 
-Outputs in `dist/`: `naruto-rise-recomp-win-amd64/`, a ZIP with the same name. The separate bridge command adds `NarutoRiseInstaller.exe` from that payload and its recorded version. Packaging requires `llvm-readobj.exe` to inspect binary dependencies and the Xenos shader storage of the game (`555307E5.xsh` and `555307E5.rtv.d3d12.xpso`) in `packaging/private/shader_cache/`. That folder is ignored by Git because the storage holds the game's shader microcode. The Xenos renderer writes these files to `Documents/narutorise/cache/shaders/shareable/` while you play; copy them from there, or configure the application with `-DNARUTORISE_SHADER_STORAGE_DIR=<folder>` (a CMake cache variable, not an environment variable) to use another folder that has them. When the build includes the native renderer, its shader cache is already inside `narutorise.exe`, and packaging adds the Plume, D3D12 Memory Allocator, and XenosRecomp notices to `licenses/`. See the [packaging guide](../packaging/README.md).
+Outputs in `dist/`: `naruto-rise-recomp-win-amd64/`, a ZIP with the same name. The separate bridge command adds `NarutoRiseInstaller.exe` from that payload and its recorded version. Packaging requires `llvm-readobj.exe` to inspect binary dependencies and the Xenos shader storage of the game (`555307E5.xsh` and `555307E5.rtv.d3d12.xpso`) in `packaging/private/shader_cache/`. That folder is ignored by Git because the storage holds the game's shader microcode. The Xenos renderer writes these files to `<effective cache_root>/shaders/shareable/` while you play; copy them from there, or configure the application with `-DNARUTORISE_SHADER_STORAGE_DIR=<folder>` (a CMake cache variable, not an environment variable) to use another folder that has them. When the build includes the native renderer, its shader cache is already inside `narutorise.exe`, and packaging adds the Plume, D3D12 Memory Allocator, and XenosRecomp notices to `licenses/`. See the [packaging guide](../packaging/README.md).
 
 ## Configuration and localization regression tests
 
@@ -212,7 +220,7 @@ $testData = Join-Path $env:TEMP ("narutorise-config-" + [guid]::NewGuid())
 
 ## Linux
 
-The game builds natively on Linux x86_64, without Wine or Proton: the native renderer on Vulkan, with the window on Wayland or X11 through SDL3. The Linux renderer was tested on Ubuntu 26.04 with Clang 21 and CMake 4.2, building in WSL and running on a desktop with Mesa's RADV. Acceptance of the integrated menus and DLC modules on Linux remains pending; settings can also be edited in `narutorise.toml`.
+The game builds natively on Linux x86_64, without Wine or Proton: the native renderer on Vulkan, with the window on Wayland or X11 through SDL3. The Linux renderer was tested on Ubuntu 26.04 with Clang 21 and CMake 4.2, building in WSL and running on a desktop with Mesa's RADV. AppImage data persistence, integrated settings, folder selection, restart and real DLC installation were also verified in WSL using X11 and Mesa's lavapipe. Settings can also be edited in the active `narutorise.toml`.
 
 ### Prerequisites
 
@@ -256,19 +264,19 @@ cmake --build app/out/build/linux-amd64-release
 
 ### Run
 
-`app/out/build/linux-amd64-release/` holds `narutorise`, the SDK runtime `librexruntime.so`, the `libnarutorise_ai2c*.so` modules, and `narutorise.toml`. Copy them together; the executable finds the libraries next to itself.
+`app/out/build/linux-amd64-release/` holds `narutorise`, the SDK runtime `librexruntime.so`, the `libnarutorise_ai2c*.so` modules, and `defaults/narutorise.toml`. Copy them together; the executable finds the libraries next to itself.
 
 ```bash
 ./app/out/build/linux-amd64-release/narutorise --game_data_root="$PWD/game_root"
 ```
 
-Without `--game_data_root`, the game looks for `game/` or `game_root/` next to the executable. Saves go to `~/.local/share/narutorise` (`$XDG_DATA_HOME/narutorise`; `REX_USER_DATA_ROOT` points them elsewhere), and the logs to `logs/` next to the executable. `F11` or `Alt+Enter` toggle fullscreen. SDL picks Wayland or X11; `SDL_VIDEO_DRIVER=x11` forces X11, and the log names the one in use (`SDL video driver`).
+Without `--game_data_root`, the game looks for `game/` or `game_root/` next to the executable. Data, active TOML and logs go to `${XDG_DATA_HOME:-$HOME/.local/share}/narutorise`; cache uses `${XDG_CACHE_HOME:-$HOME/.cache}/narutorise`. An AppImage reads its payload in place and finds nearby game folders beside the external image. See [Data folder and recovery](data-folder.md) for session overrides, legacy import and explicit portable mode. `F11` or `Alt+Enter` toggle fullscreen. SDL picks Wayland or X11; `SDL_VIDEO_DRIVER=x11` forces X11, and the log names the one in use (`SDL video driver`).
 
 ### Known limitations
 
 - Bink videos play at about 10 FPS, with stuttering audio. The cause is not established yet.
 - The first launch builds the pipelines with a cold driver cache, which took about a minute on RADV; the game is slower meanwhile. Later launches use the driver's disk cache.
 - The diagnostics that depend on Windows (minidumps, the stack sampler, heap watch) are not available. The crash report in the log works.
-- Native file dialogs, shortcut creation and restart handling still have Windows-specific dependencies. Proton/Game Mode and physical-controller acceptance remain unverified for the integrated menus.
+- Native file dialogs use SDL's desktop portal or Zenity on Linux; restart reopens the external AppImage after the previous writer exits. Folder selection and restart were verified with Zenity on X11, including data migration and normal shutdown. Desktop shortcut creation remains Windows-only. Wayland portals, Proton/Game Mode and physical-controller acceptance remain unverified for the integrated menus.
 
 macOS and ARM64 presets are inherited from the SDK structure; they are not tested.

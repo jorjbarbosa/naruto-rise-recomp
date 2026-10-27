@@ -20,7 +20,8 @@ int main(int argc, char** argv) {
   std::ofstream(config) << "invalid = [";
   if (SaveGameRoot(config, root, error)) return 5;
   GameChoice choice;
-  if (!choice.Start(root / "default.xex") || choice.Start(root)) return 6;
+  const auto selected = std::filesystem::is_regular_file(root) ? root : root / "default.xex";
+  if (!choice.Start(selected) || choice.Start(root)) return 6;
   int ticks = 0;
   while (choice.Busy()) {
     ++ticks;

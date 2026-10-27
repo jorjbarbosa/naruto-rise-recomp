@@ -46,6 +46,10 @@ DisableWelcomePage=yes
 PrivilegesRequired=lowest
 SetupIconFile=..\app\ui\narutorise.ico
 UninstallDisplayIcon={app}\narutorise.exe
+; The bridge installs the full current payload. Old uninstall records owned
+; mods/pt-br and would delete personalized legacy files after this migration.
+; Own only the current immutable payload; preserve retired resource trees.
+UninstallLogMode=overwrite
 DefaultGroupName=NarutoRisePC
 DisableProgramGroupPage=yes
 OutputDir=..\dist
@@ -82,7 +86,7 @@ russian.LanguageName=7. Русский
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-; Binários e DLLs da distribuição
+; Distribution binaries and DLLs
 Source: "{#PackageDir}\narutorise.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PackageDir}\narutorise_ai2c.dll"; DestDir: "{app}"; Flags: ignoreversion
 ; Each character DLC engine revision needs its corresponding native module.
@@ -91,17 +95,24 @@ Source: "{#PackageDir}\narutorise_ai2c2.dll"; DestDir: "{app}"; Flags: ignorever
 Source: "{#PackageDir}\narutorise_ai2c3.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PackageDir}\rexgpu-xenos.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PackageDir}\rexruntime.dll"; DestDir: "{app}"; Flags: ignoreversion
+; Sentry-enabled payloads require Crashpad and redistribution notices. The
+; Sentry DLL is present only when the SDK was built as a separate shared library.
+#if FileExists(PackageDir + "\sentry-notices.txt")
+Source: "{#PackageDir}\sentry.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PackageDir}\crashpad_handler.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PackageDir}\crashpad_wer.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PackageDir}\sentry-notices.txt"; DestDir: "{app}"; Flags: ignoreversion
+#endif
 ; AMD FidelityFX runtime DLL - optional (only present when the build enabled
 ; FidelityFX). rexruntime.dll imports it, so installed copies need it to launch.
 Source: "{#PackageDir}\amd_fidelityfx_dx12.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PackageDir}\README.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PackageDir}\shader_cache\555307E5.*"; DestDir: "{app}\shader_cache"; Flags: ignoreversion
 Source: "{#PackageDir}\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion
-; Bundled translation: install on new copies and refresh on updates.
-; Only these owned files are replaced; community packages are left untouched.
-Source: "{#PackageDir}\mods\pt-br\mod.toml"; DestDir: "{app}\mods\pt-br"; Flags: ignoreversion
-Source: "{#PackageDir}\mods\pt-br\texts.json"; DestDir: "{app}\mods\pt-br"; Flags: ignoreversion
-Source: "{#PackageDir}\narutorise.toml"; DestDir: "{app}"; Flags: onlyifdoesntexist uninsneveruninstall
+; Refresh immutable seeds only. Active and legacy mods remain user-owned.
+Source: "{#PackageDir}\defaults\mods\pt-br\mod.toml"; DestDir: "{app}\defaults\mods\pt-br"; Flags: ignoreversion
+Source: "{#PackageDir}\defaults\mods\pt-br\texts.json"; DestDir: "{app}\defaults\mods\pt-br"; Flags: ignoreversion
+Source: "{#PackageDir}\defaults\narutorise.toml"; DestDir: "{app}\defaults"; Flags: ignoreversion
 
 [Dirs]
 Name: "{app}\game"; Flags: uninsneveruninstall
@@ -412,7 +423,7 @@ begin
     ReleaseLauncher;
     if not HadConfig then
     begin
-      ConfigPath := ExpandConstant('{app}\narutorise.toml');
+      ConfigPath := ExpandConstant('{app}\defaults\narutorise.toml');
       if ActiveLanguage = 'brazilianportuguese' then LanguageValue := 'pt_BR'
       else if ActiveLanguage = 'french' then LanguageValue := 'fr'
       else if ActiveLanguage = 'german' then LanguageValue := 'de'
@@ -489,7 +500,8 @@ begin
   Result := DestinationError;
   if Result <> '' then Exit;
   ReleaseLauncher;
-  HadConfig := FileExists(ExpandConstant('{app}\narutorise.toml'));
+  HadConfig := FileExists(ExpandConstant('{app}\narutorise.toml')) or
+    FileExists(ExpandConstant('{app}\data\narutorise.toml'));
   if FileExists(ExpandConstant('{app}\narutorise_launcher.exe')) and (LauncherHandle = -1) then
   begin
     { Write access refuses a mapped executable; retaining it prevents a new

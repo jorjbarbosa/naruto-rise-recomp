@@ -3,56 +3,13 @@ set -eu
 
 appdir=${APPDIR:-$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)}
 payload="$appdir/usr/lib/narutorise"
-build_id=$(cat "$appdir/build-id")
-config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/narutorise"
-state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/narutorise"
-cache_parent="${XDG_CACHE_HOME:-$HOME/.cache}/narutorise/appimage"
-cache="$cache_parent/$build_id"
-mkdir -p -- "$config_dir" "$state_dir/logs" "$cache_parent"
-
-# The unmodified game writes beside its executable. Deploy its immutable
-# payload once into a versioned cache and keep settings/logs outside that cache.
-if [ ! -e "$config_dir/narutorise.toml" ]; then
-    (set -C; cat "$payload/narutorise.toml" > "$config_dir/narutorise.toml") 2>/dev/null ||
-        [ -f "$config_dir/narutorise.toml" ]
-fi
-if [ ! -f "$cache/.ready" ]; then
-    stage=$(mktemp -d "$cache_parent/.stage-$build_id-XXXXXX")
-    trap 'if [ -n "${stage:-}" ]; then rm -rf -- "$stage"; fi' EXIT HUP INT TERM
-    cp -a -- "$payload/." "$stage/"
-    ln -sf -- "$config_dir/narutorise.toml" "$stage/narutorise.toml"
-    ln -s -- "$state_dir/logs" "$stage/logs"
-    touch "$stage/.ready"
-    if mv -T -- "$stage" "$cache" 2>/dev/null; then
-        stage=
-    else
-        # Another launch may have completed the same atomic deployment.
-        [ -f "$cache/.ready" ]
-        rm -rf -- "$stage"
-        stage=
-    fi
-    trap - EXIT HUP INT TERM
-fi
-export LD_LIBRARY_PATH="$cache/bundled-libs:$cache${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="$payload/bundled-libs:$payload${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 if [ "${1:-}" = "--test-audio-wait" ]; then
     shift
-    exec "$cache/narutorise_posix_wait_test" "$@"
+    exec "$payload/narutorise_posix_wait_test" "$@"
 fi
 
-# Preserve explicit and relative CLI paths by retaining the original cwd.
-# Nearby data is found beside the AppImage, rather than inside its mount/cache.
-explicit_game=0
-for argument do
-    case "$argument" in --game_data_root|--game_data_root=*) explicit_game=1 ;; esac
-done
-if [ "$explicit_game" = 0 ] && [ -n "${APPIMAGE:-}" ]; then
-    image_dir=$(CDPATH= cd -- "$(dirname -- "$APPIMAGE")" && pwd)
-    for candidate in "$image_dir/game_root" "$image_dir/game"; do
-        if [ -f "$candidate/default.xex" ]; then
-            set -- "$@" "--game_data_root=$candidate"
-            break
-        fi
-    done
-fi
-exec "$cache/narutorise" "$@"
+# Data/config/log/cache roots and nearby game discovery belong to the native
+# application. APPIMAGE identifies the external distribution; keep cwd/argv.
+exec "$payload/narutorise" "$@"

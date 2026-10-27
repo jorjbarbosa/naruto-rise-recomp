@@ -14,7 +14,7 @@ struct TranslationMod {
 };
 
 // Validate with the game's package reader, then retain only display metadata.
-std::vector<TranslationMod> DiscoverTranslationMods(const std::filesystem::path& base_dir);
+std::vector<TranslationMod> DiscoverTranslationMods(const std::filesystem::path& mods_dir);
 
 struct GameLanguageOption {
   std::string label;

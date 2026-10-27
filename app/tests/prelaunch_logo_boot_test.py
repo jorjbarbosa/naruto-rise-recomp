@@ -147,16 +147,17 @@ def main():
                           launcher_language='pt_BR', check_for_updates=False)
             if root:
                 config['custom_game_root'] = str(root)
-            (product/'narutorise.toml').write_text('\n'.join(f'{k} = {json.dumps(v)}' for k,v in config.items()), encoding='utf-8')
-            before = set((product/'logs').glob('*.log'))
+            (product / 'data').mkdir(exist_ok=True)
+            (product/'data/narutorise.toml').write_text('\n'.join(f'{k} = {json.dumps(v)}' for k,v in config.items()), encoding='utf-8')
+            before = set((product/'data/logs').glob('*.log'))
             log = None
             with (output/(name+'.console.log')).open('wb') as console:
                 process = subprocess.Popen([str(product/'narutorise.exe'), '--setup'], cwd=product,
-                    env=dict(os.environ, REX_USER_DATA_ROOT=str(product/('user-'+name))),
+                    env=dict(os.environ, REX_DATA_ROOT=str(product / "data"), REX_USER_DATA_ROOT=str(product/('user-'+name))),
                     stdout=console, stderr=subprocess.STDOUT)
                 def text():
                     nonlocal log
-                    logs = set((product/'logs').glob('*.log')) - before
+                    logs = set((product/'data/logs').glob('*.log')) - before
                     if logs:
                         log = max(logs, key=lambda p: p.stat().st_mtime)
                     return log.read_text(encoding='utf-8', errors='replace') if log else ''

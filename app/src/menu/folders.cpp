@@ -1,6 +1,11 @@
 #include "folders.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#else
 #include <SDL3/SDL.h>
+#endif
 
 namespace launcher_ui {
 
@@ -10,9 +15,16 @@ std::string PathText(const std::filesystem::path& path) {
 }
 
 void OpenFolder(const std::filesystem::path& folder) {
+#ifdef _WIN32
+  // The Windows shell expects a native UTF-16 path, not an encoded file URI.
+  auto native_path = folder;
+  native_path.make_preferred();
+  ShellExecuteW(nullptr, L"open", native_path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
   const auto path = folder.generic_u8string();
   // Encode reserved URI bytes so paths with spaces, accents or '#' open correctly.
-  std::string url = "file:///";
+  std::string url = path.starts_with(u8"//") ? "file:" :
+      !path.empty() && path.front() == u8'/' ? "file://" : "file:///";
   constexpr char hex[] = "0123456789ABCDEF";
   for (unsigned char c : path) {
     if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
@@ -23,6 +35,7 @@ void OpenFolder(const std::filesystem::path& folder) {
     }
   }
   SDL_OpenURL(url.c_str());
+#endif
 }
 
 }  // namespace launcher_ui

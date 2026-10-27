@@ -49,7 +49,7 @@ cmake --build $AppBuildDir --target $targets
 if ($LASTEXITCODE -ne 0) { throw "Build failed ($LASTEXITCODE). Existing releases were not changed." }
 
 $binaries = @('narutorise.exe', 'narutorise_ai2c.dll',
-    'rexgpu-xenos.dll', 'rexruntime.dll', 'narutorise.toml')
+    'rexgpu-xenos.dll', 'rexruntime.dll', 'defaults\narutorise.toml')
 foreach ($name in $binaries) {
     $path = Join-Path $AppBuildDir $name
     if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Item -LiteralPath $path).Length -eq 0) {
@@ -57,6 +57,21 @@ foreach ($name in $binaries) {
     }
 }
 # Optional AMD FidelityFX runtime DLL (staged when REXGLUE_ENABLE_FIDELITYFX=ON).
+$sentryCache = Get-Content -LiteralPath (Join-Path $AppBuildDir 'CMakeCache.txt') -Raw
+$sentryEnabled = $sentryCache -match '(?m)^NARUTORISE_ENABLE_SENTRY:BOOL=(ON|TRUE|YES|1)\s*$'
+if ($sentryEnabled) {
+    $sentryRuntime = @('crashpad_handler.exe', 'crashpad_wer.dll', 'sentry-notices.txt')
+    if ($sentryCache -match '(?m)^NARUTORISE_SENTRY_SHARED:INTERNAL=(ON|TRUE|YES|1)\s*$') {
+        $sentryRuntime += 'sentry.dll'
+    }
+    foreach ($name in $sentryRuntime) {
+        $path = Join-Path $AppBuildDir $name
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Item -LiteralPath $path).Length -eq 0) {
+            throw "Missing Sentry runtime file: $path"
+        }
+        $binaries += $name
+    }
+}
 $FidelityFxDll = 'amd_fidelityfx_dx12.dll'
 if (Test-Path (Join-Path $AppBuildDir $FidelityFxDll)) {
     $binaries += $FidelityFxDll
@@ -143,9 +158,13 @@ foreach ($dir in @('shader_cache', 'licenses')) {
     New-Item -ItemType Directory -Path (Join-Path $Portable $dir) | Out-Null
 }
 try {
-    foreach ($name in $binaries) { Copy-Item -LiteralPath (Join-Path $AppBuildDir $name) -Destination $Portable }
-    foreach ($name in $BundledModFiles) {
+    foreach ($name in $binaries) {
         $destination = Join-Path $Portable $name
+        New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $AppBuildDir $name) -Destination $destination
+    }
+    foreach ($name in $BundledModFiles) {
+        $destination = Join-Path $Portable (Join-Path 'defaults' $name)
         New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force | Out-Null
         Copy-Item -LiteralPath (Join-Path $RootDir $name) -Destination $destination
     }
@@ -189,7 +208,7 @@ FIRST LAUNCH:
 Extract the ZIP to a writable folder and run narutorise.exe.
 Choose your original Xbox 360 ISO or the default.xex of a complete extracted
 copy. The ISO is read directly; no extraction or installer is needed.
-Later launches go straight to the game. Hold Shift while opening, or use
+Later launches follow the Show menu at startup preference. Hold Shift while opening, or use
 narutorise.exe --setup, to return to the setup screen.
 
 IN GAME:
@@ -202,17 +221,28 @@ Create a desktop shortcut from Settings > Advanced.
 
 UPDATES:
 The game notifies you about new releases and opens the release page.
-Close the game, keep your narutorise.toml, and replace the other package files
-with the new ZIP. Preserve game/, saves, DLC and community mods.
+Close the game and extract the new ZIP over the existing package files.
+Keep data/ and data_location.json, game/, game_root/ and community mods.
+The ZIP contains only defaults/narutorise.toml; your active settings, logs,
+saves, mods and DLC packages live in data/. Settings > Advanced shows the active
+folder and can select another location after restart. Explicit user_data_root
+continues to select its exact save/content folder, without a saves/ suffix.
+The first launch copies eligible legacy data and keeps the originals. Back up
+the active data folder and any explicit save/content folder before updating.
+If import reports a conflict, preserve both copies and resolve the differing
+files before retrying. Do not delete .narutorise-migration metadata.
 The old narutorise_launcher.exe from a portable copy can be deleted manually.
 Registered 0.3.0 installations can use the separately distributed
 NarutoRiseInstaller.exe bridge. It replaces shortcuts and removes the launcher
 while preserving game data and configuration. Later updates use the ZIP.
 
 TRANSLATIONS:
-Brazilian Portuguese is bundled in mods\pt-br. Select it under Settings > Game
-> Game language. Updates replace the two bundled translation files; put your
-own changes in a separate mod folder. The selected language is preserved.
+Brazilian Portuguese is bundled as an immutable seed in defaults\mods\pt-br.
+First launch copies it to the active data folder's mods\pt-br if absent,
+after importing eligible legacy mods. Select it under Settings > Game > Game
+language. Updates and rebuilds preserve active mods, including customized or
+partial PT-BR packages. To update a translation, back it up and merge the new
+defaults deliberately. The selected language stays in the active TOML.
 
 Microsoft Visual C++ 2015-2022 Redistributable (x64) is required.
 Alt+F4 closes the game.

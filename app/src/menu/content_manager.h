@@ -6,7 +6,7 @@
 
 namespace launcher_content {
 // The in-game UI supplies its effective runtime root (CLI/environment included).
-// An empty override retains the launcher's default Documents directory.
+// Must be initialized before any content operation; no implicit cwd fallback.
 void SetUserDataRoot(std::filesystem::path root);
 
 struct ContentInfo {
@@ -15,8 +15,7 @@ struct ContentInfo {
   bool is_stfs = false;
 };
 
-// Returns the default user data root used by narutorise.exe
-// (Documents/narutorise on Windows).
+// Returns the effective root published by the application.
 std::filesystem::path GetUserDataRoot();
 
 // Returns the DLC content root for this title:
@@ -30,14 +29,18 @@ bool EnsureDlcFolders(std::string& error);
 bool InstallLooseDlc(const std::filesystem::path& source, std::string& error);
 
 // Installs a DLC folder selected by the user. STFS packages found inside are
-// staged into the dlc/ folder next to narutorise.exe; the game installs them
+// staged into the explicit staging folder; the game installs them
 // on the next launch via ContentManager::InstallContent (which writes the
 // content header with the license from the package itself). Folders with
 // already-extracted content fall back to a direct copy into the user data
 // tree. Returns the number of staged STFS packages.
 int InstallDlc(const std::filesystem::path& source,
-               const std::filesystem::path& exe_dir,
+               const std::filesystem::path& staging_root,
                std::string& error);
+
+// Mirrors loose content without replacing differing files or copying STFS containers.
+bool MirrorDlcTree(const std::filesystem::path& source, const std::filesystem::path& destination,
+                   std::string& error);
 
 // Lists installed DLC folders (extracted content in the user data tree), named
 // by the content header the game wrote when it installed them, else by folder.

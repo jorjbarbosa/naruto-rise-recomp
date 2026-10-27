@@ -29,7 +29,8 @@ def main():
         if item.name == 'narutorise.exe' or item.suffix.lower() == '.dll': shutil.copy2(item, product/item.name)
     config = dict(renderer='native', native_backend='d3d12', fullscreen=False, custom_game_root=str(iso),
                   launcher_language='pt_BR', check_for_updates=False)
-    (product/'narutorise.toml').write_text('\n'.join(f'{key} = {json.dumps(value)}' for key,value in config.items()), encoding='utf-8')
+    (product / 'data').mkdir(exist_ok=True)
+    (product/'data/narutorise.toml').write_text('\n'.join(f'{key} = {json.dumps(value)}' for key,value in config.items()), encoding='utf-8')
     content = product/'sample-dlc'
     content.mkdir(); (content/'content.bin').write_bytes(b'dlc integration test')
     helper = output/'select-folder.ps1'
@@ -77,9 +78,9 @@ $button = $elements | Where-Object { $_.Current.AutomationId -eq '1' -and $_.Cur
 $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
 ''', encoding='utf-8')
     process = subprocess.Popen([str(product/'narutorise.exe'), '--setup'], cwd=product,
-                               env=dict(os.environ, REX_USER_DATA_ROOT=str(product/'user')))
+                               env=dict(os.environ, REX_DATA_ROOT=str(product / "data"), REX_USER_DATA_ROOT=str(product/'user')))
     def log():
-        files = list((product/'logs').glob('*.log'))
+        files = list((product/'data/logs').glob('*.log'))
         return max(files, key=lambda p:p.stat().st_mtime).read_text(encoding='utf-8', errors='replace') if files else ''
     try:
         hwnd = win.wait_for(lambda:win.window(process.pid), process)
@@ -110,8 +111,8 @@ $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).In
             if hwnd: win.user32.PostMessageW(hwnd, 0x10, 0, 0)
             try: process.wait(timeout=20)
             except subprocess.TimeoutExpired: process.kill(); process.wait()
-        if (product/'logs').exists():
-            for item in (product/'logs').glob('*.log'): shutil.copy2(item, output/item.name)
+        if (product/'data/logs').exists():
+            for item in (product/'data/logs').glob('*.log'): shutil.copy2(item, output/item.name)
 
 
 if __name__ == '__main__': main()

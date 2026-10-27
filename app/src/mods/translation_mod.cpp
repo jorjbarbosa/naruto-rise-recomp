@@ -40,7 +40,7 @@
 #include "mods/translation_data.h"
 
 REXCVAR_DEFINE_STRING(translation_mod, "", "Mods",
-                      "Translation mod folder under mods/ next to the executable; empty disables "
+                      "Translation mod folder under mods/ in the active data folder; empty disables "
                       "it. Requires restart and English game language.")
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
@@ -130,7 +130,7 @@ void ReplaceRead(Scope& scope, uint32_t input, uint32_t size_address, PPCContext
 }
 }  // namespace
 
-void Initialize(const std::filesystem::path& executable_root) {
+void Initialize(const std::filesystem::path& mods_dir) {
   std::call_once(initialized, [&] {
     const std::string selected = REXCVAR_GET(translation_mod);
     if (selected.empty())
@@ -146,12 +146,15 @@ void Initialize(const std::filesystem::path& executable_root) {
       return;
     }
     std::string error;
-    if (!LoadPackage(executable_root / "mods" / selected, package, error)) {
+    const auto path = mods_dir / selected;
+    if (!LoadPackage(path, package, error)) {
       REXLOG_ERROR("[translation] cannot load {}: {}", selected, error);
       return;
     }
-    REXLOG_INFO("[translation] loaded {} ({}) with {} text IDs; restart required for changes",
-                package.name, package.id, package.texts.size());
+    const auto native_path = path.u8string();
+    REXLOG_INFO("[translation] loaded {} ({}) with {} text IDs from {}; restart required for changes",
+                package.name, package.id, package.texts.size(),
+                std::string(native_path.begin(), native_path.end()));
     enabled.store(!package.texts.empty(), std::memory_order_release);
   });
 }
