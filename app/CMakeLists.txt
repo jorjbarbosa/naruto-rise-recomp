@@ -109,6 +109,7 @@ block()
     set(RMLUI_FONT_ENGINE freetype)
     add_subdirectory(../third_party/rmlui third_party/rmlui EXCLUDE_FROM_ALL)
 endblock()
+include(cmake/rmlui_patches.cmake)
 
 # The native renderer (opt-in): its own D3D boundary and engine, chosen at
 # launch in place of the Xenos plugin (renderer = "native" in narutorise.toml).

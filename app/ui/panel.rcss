@@ -10,7 +10,7 @@ body.setup #veil { background-color: #0e1220b3; }
 button { font-family: "Roboto Condensed"; border-width: 0; background-color: transparent; color: #e9ecf4; tab-index: auto; focus: auto; }
 .tab { position: relative; display: block; height: 30.667dp; margin-right: 5.333dp; padding: 0; nav: horizontal; }
 .tab-plate { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background-color: #1f2640; transform: skewX(-15deg); }
-.tab-label { display: block; position: relative; font-size: 17.333dp; line-height: 30.667dp; font-weight: bold; text-transform: uppercase; color: #9aa3b5; text-align: center; }
+.tab-label { display: block; position: relative; padding: 0 8dp; font-size: 17.333dp; line-height: 30.667dp; font-weight: bold; text-transform: uppercase; color: #9aa3b5; text-align: center; white-space: nowrap; }
 .tab.selected .tab-plate, .tab:focus .tab-plate { background-color: #f2701f; }
 .tab.selected .tab-label, .tab:focus .tab-label { color: #0e1220; }
 #panel-title { display: none; position: absolute; left: 24dp; top: 10.667dp; font-size: 22.667dp; font-weight: bold; }

@@ -99,8 +99,9 @@ void Panel::Layout(int width, int height, float ratio) {
   auto* tabs = document_->GetElementById("tabs");
   const float scale = std::min(1.0f, (w - 90) / 600.0f);
   for (int i = 0; i < tabs->GetNumChildren(); ++i) {
+    // The v4 widths are minimums: a longer translated label widens its tab.
     const float sizes[] = {80, 80, 126.667f, 126.667f, 120};
-    tabs->GetChild(i)->SetProperty("width", dp(scale * (tabs_ == 5 ? sizes[i] : 72)));
+    tabs->GetChild(i)->SetProperty("min-width", dp(scale * (tabs_ == 5 ? sizes[i] : 72)));
   }
 }
 void Panel::SetGamepadHints(bool gamepad) {

@@ -1,0 +1,67 @@
+diff --git a/ElementText.cpp b/ElementText.cpp
+--- a/ElementText.cpp
++++ b/ElementText.cpp
+@@ -568,6 +568,42 @@ void ElementText::GenerateDecoration(Mesh& mesh, const FontFaceHandle font_face_
+ 	}
+ }
+ 
++// Case mapping for text-transform beyond ASCII: Latin-1, Latin Extended-A and basic Cyrillic. Only letters whose case
++// pair has the same UTF-8 length are mapped, so a transformed token keeps the byte offsets of its source text.
++static char32_t ToUpperCase(char32_t c)
++{
++	if (c >= 0xE0 && c <= 0xFE && c != 0xF7)
++		return c - 0x20;
++	if (c == 0xFF)
++		return 0x178;
++	if ((c >= 0x100 && c <= 0x12F) || (c >= 0x132 && c <= 0x137) || (c >= 0x14A && c <= 0x177))
++		return c & ~char32_t(1);
++	if ((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E))
++		return (c & 1) ? c : c - 1;
++	if (c >= 0x430 && c <= 0x44F)
++		return c - 0x20;
++	if (c >= 0x450 && c <= 0x45F)
++		return c - 0x50;
++	return c;
++}
++
++static char32_t ToLowerCase(char32_t c)
++{
++	if (c >= 0xC0 && c <= 0xDE && c != 0xD7)
++		return c + 0x20;
++	if (c == 0x178)
++		return 0xFF;
++	if ((c >= 0x100 && c <= 0x12F) || (c >= 0x132 && c <= 0x137) || (c >= 0x14A && c <= 0x177))
++		return c | 1;
++	if ((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E))
++		return (c & 1) ? c + 1 : c;
++	if (c >= 0x410 && c <= 0x42F)
++		return c + 0x20;
++	if (c >= 0x400 && c <= 0x40F)
++		return c + 0x50;
++	return c;
++}
++
+ static bool BuildToken(String& token, const char*& token_begin, const char* string_end, bool first_token, bool collapse_white_space,
+ 	bool break_at_endline, Style::TextTransform text_transformation, bool decode_escape_characters)
+ {
+@@ -689,6 +725,20 @@ static bool BuildToken(String& token, const char*& token_begin, const char* stri
+ 					character -= ('A' - 'a');
+ 			}
+ 
++			// A two-byte UTF-8 letter is transformed as a whole and keeps its length.
++			const bool change_case =
++				text_transformation == Style::TextTransform::Uppercase || text_transformation == Style::TextTransform::Lowercase;
++			if (change_case && (character & 0b1110'0000) == 0b1100'0000 && string_end - token_begin >= 2 &&
++				(token_begin[1] & 0b1100'0000) == 0b1000'0000)
++			{
++				const char32_t code = (char32_t(character & 0b0001'1111) << 6) | char32_t(token_begin[1] & 0b0011'1111);
++				const char32_t mapped = text_transformation == Style::TextTransform::Uppercase ? ToUpperCase(code) : ToLowerCase(code);
++				token += char(0b1100'0000 | (mapped >> 6));
++				token += char(0b1000'0000 | (mapped & 0b0011'1111));
++				token_begin += 2;
++				continue;
++			}
++
+ 			token += character;
+ 		}
+ 
