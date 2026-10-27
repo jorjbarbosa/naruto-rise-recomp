@@ -338,7 +338,7 @@ Result<DataPaths> ApplyStorageOverrides(const DataPaths& paths,
         source = Source::kConfig;
       }
     };
-    result.user_data_root = paths.data_root;
+    result.user_data_root = paths.data_root / kUserFolder;
     select(cli.user_data_root, env.user_data_root, config.user_data_root,
            result.user_data_root, result.user_source);
     result.cache_root.clear();

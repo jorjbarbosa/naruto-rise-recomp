@@ -129,7 +129,7 @@ def main():
     custom_translation = b'{"15132":"Personal active translation"}'
     (data / 'mods/pt-br/texts.json').write_bytes(custom_translation)
     assert legacy.read_bytes() == legacy_bytes, 'source TOML changed'
-    assert (data / save).read_bytes() == b'isolated old save bytes'
+    assert (data / 'user' / save).read_bytes() == b'isolated old save bytes' and not (data / save).exists()
     assert (data / 'dlc/pending').read_bytes() == b'old staging bytes'
     assert (data / 'logs/legacy/xdg/old.log').read_bytes() == b'legacy diagnostic'
     active = data / 'narutorise.toml'
@@ -143,8 +143,8 @@ def main():
     assert active.read_bytes() == config
     assert (data / 'mods/pt-br/texts.json').read_bytes() == custom_translation
     assert (data / 'mods/community/payload').read_bytes() == b'legacy community mod'
-    assert (data / save).read_bytes() == b'isolated old save bytes'
-    assert (data / header).read_bytes() == b'isolated header/license'
+    assert (data / 'user' / save).read_bytes() == b'isolated old save bytes'
+    assert (data / 'user' / header).read_bytes() == b'isolated header/license'
     assert (data / 'dlc/pending').read_bytes() == b'old staging bytes'
     assert not list((home / 'cache/narutorise/appimage').glob('*/.ready'))
     assert not any(p.name in ('narutorise', 'librexruntime.so')
@@ -159,7 +159,7 @@ def main():
     assert (portable / 'mods/community/payload').read_bytes() == b'legacy community mod'
     assert (portable / 'mods/community/.stfs_stage/payload').read_bytes() == b'mod-owned resource'
     assert (data / 'mods/pt-br/texts.json').read_bytes() == custom_translation
-    assert (portable / save).read_bytes() == (data / save).read_bytes()
+    assert (portable / 'user' / save).read_bytes() == (data / 'user' / save).read_bytes()
     assert (portable / 'dlc/pending').read_bytes() == (data / 'dlc/pending').read_bytes()
     assert 'pending_source' not in json.loads((distribution / 'data_location.json').read_text())
     assert legacy.read_bytes() == legacy_bytes and historical_log.read_bytes() == b'legacy diagnostic'

@@ -13,8 +13,8 @@
     Game data folder containing default.xex, used for Title Updates.
 
 .PARAMETER UserDataRoot
-    Exact guest root used by the game. Supply the active folder shown in
-    Settings > Advanced, or your custom user_data_root. DLC operations require
+    Exact guest root used by the game: the user folder inside the active data
+    folder shown in Settings > Advanced, or your custom user_data_root. DLC operations require
     an explicit value or REX_USER_DATA_ROOT; Documents is never assumed.
 
 .PARAMETER PrepareDlcFolders
@@ -32,11 +32,11 @@
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tools/install-content.ps1 `
-        -UserDataRoot "C:\Games\Naruto - Rise of a Ninja\data" -PrepareDlcFolders
+        -UserDataRoot "C:\Games\Naruto - Rise of a Ninja\data\user" -PrepareDlcFolders
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tools/install-content.ps1 `
-        -UserDataRoot "C:\Games\Naruto - Rise of a Ninja\data" `
+        -UserDataRoot "C:\Games\Naruto - Rise of a Ninja\data\user" `
         -InstallLoose "C:\Users\You\Downloads\NarutoRiseShikamaru"
 
 .EXAMPLE

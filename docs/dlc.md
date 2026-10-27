@@ -37,13 +37,14 @@ Japanese Voices does not contain an engine DLL. When multiple character packs ar
 <active data folder>/       # Windows default: <exe>/data/
 ├── dlc/
 │   └── <user-supplied STFS packages>
-└── 0000000000000000/
-    └── 555307E5/
-        ├── 00000002/
-        │   └── <contents of each package>/
-        └── Headers/
-            └── 00000002/
-                └── <.header metadata>
+└── user/                   # the guest root (user_data_root)
+    └── 0000000000000000/
+        └── 555307E5/
+            ├── 00000002/
+            │   └── <contents of each package>/
+            └── Headers/
+                └── 00000002/
+                    └── <.header metadata>
 ```
 
 You can also place packages directly in `<active data folder>/dlc/` and launch the game. The default `dlc_source_path = "dlc"` follows the active data folder. A custom value preserves its historical base and is shared by the menu and runtime; an empty string disables scanning that source, but does not remove installed content or disable its repair step.

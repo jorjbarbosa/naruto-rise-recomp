@@ -208,9 +208,9 @@ Confirmed changes save automatically and apply live after a successful write. Ca
 | Factory template | `<exe>/defaults/narutorise.toml` |
 | Active configuration | `<exe>/data/narutorise.toml` |
 | Logs | `<exe>/data/logs/` |
-| Saves, profiles and achievements | Xbox trees directly under `<exe>/data/` |
+| Saves, profiles and achievements | Xbox trees under `<exe>/data/user/` |
 | Cache | `<exe>/data/cache/` |
-| Installed DLCs | `<exe>/data/0000000000000000/555307E5/00000002/` and adjacent `Headers/` |
+| Installed DLCs | `<exe>/data/user/0000000000000000/555307E5/00000002/` and adjacent `Headers/` |
 | DLC packages awaiting import | `<exe>/data/dlc/` |
 
 Linux defaults to `${XDG_DATA_HOME:-$HOME/.local/share}/narutorise`, with cache

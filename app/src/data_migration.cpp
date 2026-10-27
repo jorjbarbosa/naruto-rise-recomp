@@ -328,6 +328,32 @@ bool HexName(const fs::path& path, size_t size) {
     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
   });
 }
+// A top-level entry of a guest root: a profile or the shared content (XUID),
+// a title's data, or the achievements.
+bool GuestTree(const fs::path& path) {
+  return HexName(path, 16) || HexName(path, 8) || path.filename() == "achievements";
+}
+// Data folders before the user folder kept the guest trees at their root. Each
+// moves into it whole, by a rename on the same volume, so an interrupted move
+// resumes at the next preparation. A tree found in both places is left to the
+// player: neither copy is chosen by date.
+void MoveGuestTreesIntoUser(const fs::path& root, const fs::path& user) {
+  std::vector<fs::path> trees;
+  for (const auto& entry : fs::directory_iterator(root))
+    if (GuestTree(entry.path())) trees.push_back(entry.path());
+  if (trees.empty()) return;
+  std::sort(trees.begin(), trees.end());
+  MakeDirectory(user);
+  for (const auto& tree : trees) {
+    SafePath(tree);
+    Require(fs::is_directory(Status(tree)), "Expected guest directory: " + Utf8(tree));
+    const auto target = user / tree.filename();
+    SafePath(target);
+    Require(!Exists(target), "Saves and content exist both in " + Utf8(tree) + " and in " + Utf8(target) +
+            ". Keep one of them (back up the other) and start the game again.");
+    fs::rename(tree, target);
+  }
+}
 Json MakeSource(std::string_view kind, const fs::path& from, const fs::path& to) {
   return Json{{"kind", kind}, {"from", Utf8(from.lexically_normal())}, {"to", to.empty() ? "" : Utf8(to)}};
 }
@@ -378,10 +404,12 @@ Json Inventory(const Json& sources, const fs::path& root, Json& skipped) {
       std::vector<fs::path> children;
       for (const auto& child : fs::directory_iterator(from)) children.push_back(child.path());
       std::sort(children.begin(), children.end());
+      // Imported guest content goes to the default guest root (the source
+      // identity keeps the data folder, so completed imports stay complete).
       for (const auto& child : children) {
-        if (HexName(child, 16) || HexName(child, 8) || child.filename() == "achievements") {
+        if (GuestTree(child)) {
           Require(fs::is_directory(Status(child)), "Expected guest directory: " + Utf8(child));
-          AddTree(child, child.filename(), inventory, skipped);
+          AddTree(child, fs::path(kUserFolder) / child.filename(), inventory, skipped);
         } else skipped.push_back(Utf8(child));
       }
     } else {
@@ -689,11 +717,18 @@ Result<PreparedData> PrepareData(const DataPaths& paths, const Environment& env,
     Require(static_cast<bool>(effective), effective.error);
     prepared.paths = std::move(*effective.value);
     prepared.config_base = base;
+    // The default guest root is the user folder; the trees of the older layout,
+    // at the data folder's root, move into it before anything is imported.
+    if (prepared.paths.user_source == Source::kDefault) MoveGuestTreesIntoUser(root, root / kUserFolder);
     if (paths.allow_legacy_import && !previous_complete) {
       if (prepared.paths.user_source == Source::kDefault) {
         fs::path guest;
-        if (paths.pending_source) guest = *paths.pending_source;
-        else if (env.platform == Platform::kWindows) {
+        if (paths.pending_source) {
+          // A previous data folder keeps its guest content in its user folder,
+          // or at its root when it is older than that folder.
+          add(MakeSource("guest", *paths.pending_source / kUserFolder, {}));
+          guest = *paths.pending_source;
+        } else if (env.platform == Platform::kWindows) {
           auto documents = options.documents ? options.documents() : DiscoverDocuments();
           locations.Add(documents);
           SafePath(documents);

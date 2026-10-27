@@ -17,7 +17,7 @@ int main(int argc, char** argv) {
     const auto root = fs::absolute(argv[1]);
     data::DataPaths paths;
     paths.data_root = root / fs::path(u8"data 日本語");
-    paths.user_data_root = paths.data_root;
+    paths.user_data_root = paths.data_root / "user";
     paths.cache_root = paths.data_root / "cache";
     check(launch::StorageArguments(paths).empty(), "Derived default roots must not become overrides");
     for (auto source : {data::Source::kUserDescriptor, data::Source::kPortableDescriptor}) {

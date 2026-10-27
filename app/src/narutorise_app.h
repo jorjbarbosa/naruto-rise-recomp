@@ -312,11 +312,11 @@ class NarutoriseApp : public rex::ReXApp {
     // The launch marker: there from here until the game's first frame, so a
     // start that dies before it (the engine of a card or API that fails) opens
     // the setup screen next time. The boots that name their game have none.
-    if (!command_line_root_ && !user_data_root().empty()) {
-      launch_marker_ = user_data_root() / "launch.marker";
+    if (!command_line_root_ && !prepared_data_->paths.data_root.empty()) {
+      launch_marker_ = prepared_data_->paths.data_root / "launch.marker";
       std::error_code ec;
       start_failed_ = std::filesystem::exists(launch_marker_, ec);
-      std::filesystem::create_directories(user_data_root(), ec);
+      std::filesystem::create_directories(prepared_data_->paths.data_root, ec);
       std::ofstream(launch_marker_) << "started\n";
     }
     namespace menu = narutorise::menu;
@@ -1000,7 +1000,7 @@ class NarutoriseApp : public rex::ReXApp {
       ui_.SetTick([this] { ServiceMenu(); });
       menu_settings_.SetUtilities([this] { CreateDesktopShortcut(); }, [this] { CheckUpdates(); });
       if (REXCVAR_GET(check_for_updates))
-        updates_ = std::make_unique<launcher_updates::Checker>(narutorise::Version(), user_data_root() / "menu-updates.json");
+        updates_ = std::make_unique<launcher_updates::Checker>(narutorise::Version(), prepared_data_->paths.data_root / "menu-updates.json");
     }
     SetFpsVisible(REXCVAR_GET(show_fps_overlay));
   }
@@ -1290,7 +1290,7 @@ class NarutoriseApp : public rex::ReXApp {
     ui_.Notify(narutorise::menu::Text(ok ? "shortcut-done" : "save-failed"));
   }
   void CheckUpdates() {
-    if (!updates_) updates_ = std::make_unique<launcher_updates::Checker>(narutorise::Version(), user_data_root() / "menu-updates.json");
+    if (!updates_) updates_ = std::make_unique<launcher_updates::Checker>(narutorise::Version(), prepared_data_->paths.data_root / "menu-updates.json");
     using narutorise::menu::Text;
     if (updates_->status() == launcher_updates::Status::Available) {
       const auto release = updates_->release();

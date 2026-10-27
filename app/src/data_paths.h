@@ -26,6 +26,12 @@ enum class Source {
 };
 enum class Mode { kDefault, kPortable, kCustom };
 
+// The default guest root inside the data folder: the Xbox content trees
+// (profiles, shared content such as DLC, title data, achievements) live there,
+// apart from the application's files. An explicit user_data_root names the
+// guest root itself.
+inline constexpr std::string_view kUserFolder = "user";
+
 // All discovered directories are absolute native paths. Tests inject these
 // values without changing HOME, Known Folders or any personal storage.
 struct Environment {

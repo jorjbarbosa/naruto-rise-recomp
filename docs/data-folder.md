@@ -1,8 +1,11 @@
 # Data folder and recovery
 
 The active folder is shown under **Settings → Advanced**. It contains one active
-`narutorise.toml`, `logs/`, active mods in `mods/`, pending DLC packages in `dlc/`, and the Xbox content
-and profile trees directly at its root. Saves do not gain a `saves/` prefix.
+`narutorise.toml`, `logs/`, active mods in `mods/`, pending DLC packages in `dlc/`, and the guest
+root in `user/`: the Xbox content and profile trees (saves, installed DLC, title data and
+achievements). A folder from an earlier version, with those trees at its root, has them moved
+into `user/` on the next start; a tree present in both places stops the start with a message
+instead of choosing one. An explicit `user_data_root` names the guest root itself.
 Game ISOs/extracted data and native modules stay separate.
 
 | Distribution/mode | Data folder | Default cache |
@@ -77,8 +80,9 @@ without inventing a guest override from a derived default.
 ## Legacy import and backups
 
 Windows discovers the real system Documents folder, including redirection, and
-imports eligible `narutorise` saves/content. Linux recognizes the original XDG
-guest tree in place. Old executable-side TOML/logs/DLC and the previous AppRun
+imports eligible `narutorise` saves/content into `user/`. On Linux the original XDG
+guest tree is the data folder itself, so its trees move into `user/` in place.
+Old executable-side TOML/logs/DLC and the previous AppRun
 XDG configuration/logs/staging are copied as appropriate; old logs are namespaced
 under `logs/legacy/`. All profiles, headers, licenses and achievements retain
 their relative trees and bytes. Existing active TOML takes precedence, including

@@ -66,8 +66,8 @@ void WindowsPolicy(const fs::path& root) {
   auto env = Fixture(root, Platform::kWindows);
   auto paths = Value(ResolvePaths(env));
   Check(paths.data_root == env.install_dir / "data" &&
-            paths.user_data_root == paths.data_root,
-        "ZIP defaults to exe/data with the guest tree directly inside");
+            paths.user_data_root == paths.data_root / "user",
+        "ZIP defaults to exe/data with the guest tree in its user folder");
   Check(paths.cache_root == paths.data_root / "cache" &&
             paths.log_dir == paths.data_root / "logs" &&
             paths.config_path == paths.data_root / "narutorise.toml" &&

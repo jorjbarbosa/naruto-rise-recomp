@@ -3,6 +3,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <vector>
@@ -246,9 +247,10 @@ void SuccessAndRepeat(const fs::path& directory) {
   auto paths = prepared.paths;
   for (const auto& [path, bytes] : before) {
     if (path == "unknown.txt" || path == "launch.marker" || *path.begin() == "cache") continue;
-    Check(Read(paths.data_root / path) == bytes, "guest bytes and case preserved: " + Utf8(path));
+    Check(Read(paths.user_data_root / path) == bytes, "guest bytes and case preserved: " + Utf8(path));
   }
-  Check(fs::is_directory(paths.data_root / "E000000000000003/555307E5/empty"), "empty directory preserved");
+  Check(paths.user_data_root == paths.data_root / "user", "the default guest root is the user folder");
+  Check(fs::is_directory(paths.user_data_root / "E000000000000003/555307E5/empty"), "empty directory preserved");
   Check(Read(paths.config_path) == config, "TOML including comments and unknown keys copied byte-for-byte");
   Check(Read(paths.log_dir / "legacy/install/narutorise.log") == "historical log", "logs are namespaced");
   Check(Read(paths.dlc_dir / ".installed") == "old marker", "staging marker copied without modifying source");
@@ -301,7 +303,7 @@ void ConfigSnapshotChanges(const fs::path& directory) {
   legacy.options.checkpoint = {};
   auto retried = Value(legacy.Prepare());
   Check(retried.paths.user_data_root == legacy.env.install_dir / "selected guest" &&
-        !fs::exists(retried.paths.data_root / "E000000000000001"), "retry resolves the new explicit guest setting before choosing import sources");
+        !fs::exists(retried.paths.data_root / "user/E000000000000001"), "retry resolves the new explicit guest setting before choosing import sources");
   Fixture active(directory / "active");
   auto current = Value(active.Prepare());
   const auto config = current.paths.config_path;
@@ -345,15 +347,15 @@ void Selections(const fs::path& directory) {
   Check(selected.data_root == target && selected.pending_source == original, "next process resolves the pending selection");
   Check(!PrepareData(selected, f.env, {}, f.options), "next process refuses a still-active source writer");
   const auto save = fs::path("E000000000000001/555307E5/00000001/PlayerSave1.ninjasave/SaveData");
-  Write(original / save, "save made after requesting selection");
+  Write(original / "user" / save, "save made after requesting selection");
   Write(original / "narutorise.toml", "unknown_after_selection = 42\n");
   active.lease.reset();
   auto moved = Value(PrepareData(selected, f.env, {}, f.options));
-  Check(Read(target / save) == "save made after requesting selection", "restart copies the final source state, not a live snapshot");
+  Check(Read(target / "user" / save) == "save made after requesting selection", "restart copies the final source state, not a live snapshot");
   Check(Read(target / "narutorise.toml") == "unknown_after_selection = 42\n", "config edits before exit arrive at the selected location");
   Check(!nlohmann::json::parse(Read(descriptor)).contains("pending_source") && !moved.paths.pending_source,
         "successful activation clears the durable pending marker");
-  Write(target / save, "newer save at the active destination");
+  Write(target / "user" / save, "newer save at the active destination");
   Write(f.Guest() / save, "stale Documents save");
   moved.lease.reset();
   // Keep the original bytes as a backup, while proving they are no longer
@@ -363,8 +365,8 @@ void Selections(const fs::path& directory) {
         !original.lexically_relative(f.root).empty(), "fixture move stays inside the isolated task directory");
   fs::rename(original, backup);
   auto repeated = Value(f.Prepare());
-  Check(Read(target / save) == "newer save at the active destination", "inherited completion prevents stale personal reimport");
-  Check(Read(backup / save) == "save made after requesting selection", "original backup remains intact");
+  Check(Read(target / "user" / save) == "newer save at the active destination", "inherited completion prevents stale personal reimport");
+  Check(Read(backup / "user" / save) == "save made after requesting selection", "original backup remains intact");
   Fixture activation(directory / "activation");
   GuestTree(activation.Guest());
   auto old_active = Value(activation.Prepare());
@@ -381,7 +383,7 @@ void Selections(const fs::path& directory) {
   fs::rename(old_root, retained);
   activation.options.checkpoint = {};
   auto recovered = Value(activation.Prepare());
-  Check(Read(recovered.paths.data_root / save) == Read(retained / save) && !recovered.paths.pending_source,
+  Check(Read(recovered.paths.user_data_root / save) == Read(retained / "user" / save) && !recovered.paths.pending_source,
         "descriptor activation resumes from committed journal without requiring the source again");
   Fixture isolated(directory / "override");
   Overrides cli; cli.data_root = Utf8(isolated.root / "session");
@@ -409,10 +411,10 @@ void Repeat(const fs::path& directory) {
   auto paths = first.paths;
   first.lease.reset();
   const auto save = fs::path("E000000000000001/555307E5/00000001/PlayerSave1.ninjasave/SaveData");
-  Write(paths.data_root / save, "new active save");
+  Write(paths.user_data_root / save, "new active save");
   Write(f.Guest() / save, "older application changed it");
   auto second = Value(f.Prepare());
-  Check(Read(paths.data_root / save) == "new active save", "completed source never reimported");
+  Check(Read(paths.user_data_root / save) == "new active save", "completed source never reimported");
   Check(Read(f.Guest() / save) == "older application changed it", "repeat never changes source");
   Check(Read(paths.config_path) == Read(f.env.install_dir / "defaults/narutorise.toml"), "defaults initialized once");
   second.lease.reset();
@@ -437,7 +439,7 @@ void Repeat(const fs::path& directory) {
   fs::rename(portable.env.install_dir, relocated);
   portable.env.install_dir = relocated;
   auto reopened = Value(portable.Prepare());
-  Check(Read(reopened.paths.data_root / save) == std::string("save\0bytes", 10), "completed portable data survives moving the ZIP folder");
+  Check(Read(reopened.paths.user_data_root / save) == std::string("save\0bytes", 10), "completed portable data survives moving the ZIP folder");
 }
 
 void ConfigAndOverrides(const fs::path& directory) {
@@ -501,7 +503,9 @@ void LinuxAndPending(const fs::path& directory) {
   auto prepared = Value(f.Prepare());
   Check(Read(prepared.paths.config_path) == "unknown='XDG'\n", "AppRun config has priority over installed TOML");
   Check(Read(prepared.paths.log_dir / "legacy/xdg/old.log") == "xdg log", "AppRun logs imported");
-  for (const auto& [path, bytes] : before) Check(Read(f.Guest() / path) == bytes, "in-place XDG guest left unchanged");
+  for (const auto& [path, bytes] : before)
+    Check(Read(prepared.paths.user_data_root / path) == bytes && !fs::exists(f.Guest() / path),
+          "in-place XDG guest moved into the user folder");
   Check(!fs::exists(prepared.paths.data_root / ".narutorise-migration/0.bin"), "completed stages cleaned");
   auto source = prepared.paths.data_root;
   auto old_paths = prepared.paths;
@@ -515,7 +519,8 @@ void LinuxAndPending(const fs::path& directory) {
   prepared.lease.reset();
   auto moved = Value(PrepareData(paths, f.env, {}, f.options));
   Check(Read(moved.paths.config_path) == "unknown='XDG'\n", "pending selection imports config");
-  for (const auto& [path, bytes] : before) Check(Read(paths.data_root / path) == bytes, "pending selection preserves all guest content");
+  for (const auto& [path, bytes] : before)
+    Check(Read(moved.paths.user_data_root / path) == bytes, "pending selection preserves all guest content");
   Check(Read(source / "narutorise.toml") == "unknown='XDG'\n", "pending copy retains source config");
   moved.lease.reset();
   paths.pending_source = paths.data_root;
@@ -539,7 +544,7 @@ void Interruptions(const fs::path& directory) {
     Check(Snapshot(f.Guest()) == before, "interruption preserves originals");
     f.options.checkpoint = {};
     auto resumed = Value(f.Prepare());
-    for (const auto& [path, bytes] : before) Check(Read(resumed.paths.data_root / path) == bytes, "resume finishes complete tree");
+    for (const auto& [path, bytes] : before) Check(Read(resumed.paths.user_data_root / path) == bytes, "resume finishes complete tree");
     auto state = nlohmann::json::parse(Read(resumed.paths.data_root / ".narutorise-migration/state.json"));
     Check(!state.contains("transaction"), "completion recorded only after verified publication");
   }
@@ -578,15 +583,15 @@ void ConflictsAndChanges(const fs::path& directory) {
   GuestTree(conflict.Guest());
   const auto save = fs::path("E000000000000001/555307E5/00000001/PlayerSave1.ninjasave/SaveData");
   auto paths = conflict.Paths();
-  Write(paths.data_root / save, "different destination");
+  Write(paths.data_root / "user" / save, "different destination");
   auto before = Snapshot(conflict.Guest());
   auto result = conflict.Prepare();
   Check(!result && result.error.find("Migration conflict") != std::string::npos, "divergent save blocks all publication");
-  Check(Read(paths.data_root / save) == "different destination" && before == Snapshot(conflict.Guest()), "both conflict versions preserved");
+  Check(Read(paths.data_root / "user" / save) == "different destination" && before == Snapshot(conflict.Guest()), "both conflict versions preserved");
   Check(!fs::exists(paths.config_path), "preflight conflict prevents even config publication");
-  Write(paths.data_root / save, before.at(save));
+  Write(paths.data_root / "user" / save, before.at(save));
   auto identical = Value(conflict.Prepare());
-  Check(Read(identical.paths.data_root / save) == before.at(save), "identical destination recognized on retry");
+  Check(Read(identical.paths.user_data_root / save) == before.at(save), "identical destination recognized on retry");
 
   Fixture changing(directory / "source changed");
   GuestTree(changing.Guest());
@@ -603,7 +608,7 @@ void ConflictsAndChanges(const fs::path& directory) {
   Check(!changing.Prepare(), "changed source remains blocked across retries");
   Write(changing.Guest() / save, std::string("save\0bytes", 10));
   auto recovered = Value(changing.Prepare());
-  Check(Read(recovered.paths.data_root / save) == std::string("save\0bytes", 10), "restored source resumes safely");
+  Check(Read(recovered.paths.user_data_root / save) == std::string("save\0bytes", 10), "restored source resumes safely");
 
   Fixture full(directory / "disk full");
   GuestTree(full.Guest());
@@ -623,6 +628,58 @@ void ConflictsAndChanges(const fs::path& directory) {
   before_copy.options.checkpoint = {};
   Write(before_copy.Guest() / save, std::string("save\0bytes", 10));
   Check(static_cast<bool>(before_copy.Prepare()), "restored inventory can resume after early source mutation");
+}
+
+void UserFolderLayout(const fs::path& directory) {
+  // A data folder of the older layout: guest trees at its root.
+  Fixture f(directory / "older layout");
+  auto first = Value(f.Prepare());
+  const auto root = first.paths.data_root;
+  first.lease.reset();
+  GuestTree(root);
+  Write(root / "logs/narutorise_001.log", "application log");
+  Write(root / "launch.marker", "started");
+  // The lock file is held by the open preparation and names no content.
+  const auto unlocked = [](Files files) { files.erase(".narutorise.lock"); return files; };
+  const auto trees = unlocked(Snapshot(root));
+  auto moved = Value(f.Prepare());
+  const std::set<fs::path> guest_tops{"E000000000000001", "E000000000000002", "E000000000000003",
+                                      "0000000000000000", "555307E5", "achievements"};
+  for (const auto& [path, bytes] : trees) {
+    if (!guest_tops.contains(*path.begin())) {
+      Check(Read(root / path) == bytes, "application files stay at the root: " + Utf8(path));
+      continue;
+    }
+    Check(Read(moved.paths.user_data_root / path) == bytes && !fs::exists(root / path),
+          "guest tree moved into the user folder: " + Utf8(path));
+  }
+  Check(fs::is_directory(moved.paths.user_data_root / "E000000000000003/555307E5/empty"), "empty tree moved");
+  moved.lease.reset();
+  const auto settled = Snapshot(moved.paths.user_data_root);
+  auto again = Value(f.Prepare());
+  Check(Snapshot(again.paths.user_data_root) == settled, "a moved layout is left as it is");
+  again.lease.reset();
+
+  // The same tree in both places blocks preparation and keeps both.
+  Write(root / "E000000000000001/555307E5/00000001/Other/data", "copied back by hand");
+  const auto both = unlocked(Snapshot(root));
+  auto blocked = f.Prepare();
+  Check(!blocked && blocked.error.find("exist both") != std::string::npos, "a tree in both places blocks preparation");
+  Check(unlocked(Snapshot(root)) == both, "both copies are kept");
+  fs::remove_all(root / "E000000000000001");
+  Check(static_cast<bool>(f.Prepare()), "removing one copy lets preparation resume");
+
+  // A custom guest root leaves the data folder's trees where they are.
+  Fixture custom(directory / "custom guest");
+  auto initial = Value(custom.Prepare());
+  const auto custom_root = initial.paths.data_root;
+  initial.lease.reset();
+  Write(custom_root / "narutorise.toml", "user_data_root = 'elsewhere'\n");
+  Write(custom_root / "E000000000000001/555307E5/00000001/Save/data", "left in place");
+  auto chosen = Value(custom.Prepare());
+  Check(chosen.paths.user_data_root == custom.env.install_dir / "elsewhere", "custom guest root resolved");
+  Check(Read(custom_root / "E000000000000001/555307E5/00000001/Save/data") == "left in place" &&
+        !fs::exists(custom_root / "user"), "a custom guest root moves nothing");
 }
 
 void LinksAndInvalidState(const fs::path& directory) {
@@ -658,7 +715,7 @@ void LinksAndInvalidState(const fs::path& directory) {
     Check(!through.Prepare(), "nested symlink below a linked ancestor rejected");
     fs::remove(escape);
     const auto linked = Value(through.Prepare());
-    Check(Read(linked.paths.data_root / "E000000000000001/555307E5/00000001/PlayerSave1.ninjasave/SaveData") ==
+    Check(Read(linked.paths.user_data_root / "E000000000000001/555307E5/00000001/PlayerSave1.ninjasave/SaveData") ==
               std::string("save\0bytes", 10), "storage below a linked ancestor prepared");
   }
   auto ok = Value(f.Prepare());
@@ -738,7 +795,7 @@ void Processes(const fs::path& directory) {
     auto before = Snapshot(crash.Guest());
     Check(RunChild(mode, crash.root) == 73, "process actually terminated without destructors");
     auto resumed = Value(crash.Prepare());
-    for (const auto& [path, bytes] : before) Check(Read(resumed.paths.data_root / path) == bytes, "OS releases crashed lock and journal resumes");
+    for (const auto& [path, bytes] : before) Check(Read(resumed.paths.user_data_root / path) == bytes, "OS releases crashed lock and journal resumes");
   }
 }
 }  // namespace
@@ -779,6 +836,7 @@ int main(int argc, char** argv) {
     Interruptions(root / "interruptions");
     HistoricalAppRun(root / "historical AppRun");
     ConflictsAndChanges(root / "conflicts");
+    UserFolderLayout(root / "user folder");
     LinksAndInvalidState(root / "links");
     Processes(root / "processes");
     std::cout << "PASS: " << checks << " checks; legacy copy, TOML, overrides, resume, conflicts, links, locks, process death\n";
