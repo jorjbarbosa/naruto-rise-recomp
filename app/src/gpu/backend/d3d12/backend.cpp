@@ -3505,10 +3505,10 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
     bound.rtv = rtv;
     bound.dsv = dsv;
   }
-  // The viewport and the scissor come in guest pixels.
+  // The viewport and the scissor come in guest pixels (regions.h).
   const auto& k = state_->render_mode.scale;
-  const D3D12_VIEWPORT viewport{r.viewport[0] * k.x, r.viewport[1] * k.y, r.viewport[2] * k.x, r.viewport[3] * k.y,
-                                r.viewport[4], r.viewport[5]};
+  const HostViewport host = ViewportInHost(k, r.viewport);
+  const D3D12_VIEWPORT viewport{host.x, host.y, host.width, host.height, r.viewport[4], r.viewport[5]};
   if (!bindings_valid || std::memcmp(&bound.viewport, &viewport, sizeof(viewport))) {
     list->RSSetViewports(1, &viewport);
     bound.viewport = viewport;

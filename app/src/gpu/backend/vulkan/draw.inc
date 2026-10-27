@@ -398,8 +398,8 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fence, std::string& ev
   }
   if (color) color->last_use = s.batch.sequence;
   if (depth) depth->last_use = s.batch.sequence;
-  VkViewport viewport{r.viewport[0] * scale.x, r.viewport[1] * scale.y, r.viewport[2] * scale.x,
-                       r.viewport[3] * scale.y, r.viewport[4], r.viewport[5]};
+  const HostViewport host = ViewportInHost(scale, r.viewport);  // regions.h
+  VkViewport viewport{host.x, host.y, host.width, host.height, r.viewport[4], r.viewport[5]};
   const int32_t left = std::clamp(scale.X(r.scissor[0]), 0, int32_t(target.desc.width));
   const int32_t top = std::clamp(scale.Y(r.scissor[1]), 0, int32_t(target.desc.height));
   VkRect2D scissor{{left, top}, {uint32_t(std::max(0, std::min(scale.X(r.scissor[2]), int32_t(target.desc.width)) - left)),

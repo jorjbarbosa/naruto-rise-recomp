@@ -4,6 +4,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -27,6 +28,28 @@ inline bool ClearRect(const ResolutionScale& k, const ClearRequest& request, uin
   rect.right = std::min(rect.right, int32_t(width));
   rect.bottom = std::min(rect.bottom, int32_t(height));
   return rect.right > rect.left && rect.bottom > rect.top;
+}
+
+// A draw viewport (x, y, width, height of the request, in guest pixels) in host
+// pixels. Its whole guest edges map as the surfaces' and the scissor's do,
+// rounded at a fractional scale, so the viewport covers exactly the host rows
+// and columns of the guest pixels it spans. Scaling the extent instead gives a
+// target one guest row high (two host rows at 1.5x) a viewport 1.5 rows high:
+// once the half-pixel offset moves the geometry, no host pixel center is left
+// inside, and a post-processing ramp drawn there stays black. Fractional guest
+// edges, and every edge at an integer scale, scale as before.
+struct HostViewport {
+  float x = 0, y = 0, width = 0, height = 0;
+};
+inline float HostViewportEdge(float guest, float k) {
+  const float whole = std::round(guest);
+  if (k == 1.0f || guest != whole) return guest * k;
+  return float(std::lround(double(whole) * k));
+}
+inline HostViewport ViewportInHost(const ResolutionScale& k, const std::array<float, 6>& viewport) {
+  const float x = HostViewportEdge(viewport[0], k.x), y = HostViewportEdge(viewport[1], k.y);
+  return {x, y, HostViewportEdge(viewport[0] + viewport[2], k.x) - x,
+          HostViewportEdge(viewport[1] + viewport[3], k.y) - y};
 }
 
 // A resolve in host pixels: the destination's size, the source rectangle and
