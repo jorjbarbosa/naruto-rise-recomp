@@ -291,22 +291,27 @@ std::vector<PanelRow> Settings::Rows(int group) {
         config_.show_startup_menu != initial_.show_startup_menu, false,
         {Text("off"), Text("on")}, config_.show_startup_menu ? 1 : 0,
         [this](int value) { Change("show_startup_menu", [value](GameConfig& c) { c.show_startup_menu = value != 0; }); }, {}});
+    if (updates_) rows.push_back({"updates", Tr(TextId::UpdatesCheck), "", Text("update-hint"), false, false, {}, 0, {}, updates_});
+    if (shortcut_) rows.push_back({"shortcut", Text("shortcut"), "", Text("shortcut"), false, false, {}, 0, {}, shortcut_});
+    toggle("show_fps_overlay", TextId::FpsOverlayLabel, TextId::FpsOverlayDescription, &GameConfig::show_fps_overlay, false);
+    rows.push_back({"show_shader_indicator", Text("shader-option"), Bool(menu_options_.shaders), Text("shader-option"),
+        menu_options_.shaders != initial_menu_options_.shaders, false, {Text("off"), Text("on")}, menu_options_.shaders ? 1 : 0,
+        [this](int value) { auto next = menu_options_; next.shaders = value != 0; SaveMenuOptions("show_shader_indicator", next); }, {}});
     choice("max_frame_latency", TextId::FrameLatencyLabel, TextId::FrameLatencyDescription,
         config_.native_backend == "vulkan" ? std::vector<std::string>{Tr(TextId::FrameLatencyLowest)} :
         std::vector<std::string>{Tr(TextId::FrameLatencyLowest), "2", "3"}, config_.max_frame_latency - 1,
         config_.max_frame_latency != initial_.max_frame_latency, true,
         [](GameConfig& config, int value) { config.max_frame_latency = value + 1; });
     toggle("triple_buffering", TextId::TripleBufferingLabel, TextId::TripleBufferingDescription, &GameConfig::triple_buffering);
-    toggle("show_fps_overlay", TextId::FpsOverlayLabel, TextId::FpsOverlayDescription, &GameConfig::show_fps_overlay, false);
     rows.push_back({"crash_reporting", Text("crash-reporting"), Bool(config_.crash_reporting), Text("crash-reporting-help"),
         config_.crash_reporting != initial_.crash_reporting, true, {Text("off"), Text("on")}, config_.crash_reporting ? 1 : 0,
         [this](int value) { Change("crash_reporting", [value](GameConfig& config) { config.crash_reporting = value != 0; }); }, {}});
     if (!incident::Directory().empty()) {
       rows.push_back({"diagnostics-open", Text("diagnostics-open"), "", Text("diagnostics-help"), false, false, {}, 0, {},
           [] { launcher_ui::OpenFolder(incident::ReportsDirectory()); }});
-      rows.push_back({"diagnostics-snapshot", Text("diagnostics-snapshot"), "", Text("diagnostics-help"), false, false, {}, 0, {},
+      rows.push_back({"diagnostics-snapshot", Text("diagnostics-snapshot"), "", Text("diagnostics-snapshot-help"), false, false, {}, 0, {},
           [this] { incident::RequestSnapshot(); ui_->Notify(Text("diagnostics-requested")); }});
-      rows.push_back({"diagnostics-export", Text("diagnostics-export"), "", Text("diagnostics-help"), false, false, {}, 0, {},
+      rows.push_back({"diagnostics-export", Text("diagnostics-export"), "", Text("diagnostics-export-help"), false, false, {}, 0, {},
           [this] {
             // The newest session, and the newest failed one when that is older:
             // a player often reopens the game a few times before exporting.
@@ -325,11 +330,6 @@ std::vector<PanelRow> Settings::Rows(int group) {
             launcher_ui::OpenFolder(exports);
           }});
     }
-    rows.push_back({"show_shader_indicator", Text("shader-option"), Bool(menu_options_.shaders), Text("shader-option"),
-        menu_options_.shaders != initial_menu_options_.shaders, false, {Text("off"), Text("on")}, menu_options_.shaders ? 1 : 0,
-        [this](int value) { auto next = menu_options_; next.shaders = value != 0; SaveMenuOptions("show_shader_indicator", next); }, {}});
-    if (updates_) rows.push_back({"updates", Tr(TextId::UpdatesCheck), "", Text("update-hint"), false, false, {}, 0, {}, updates_});
-    if (shortcut_) rows.push_back({"shortcut", Text("shortcut"), "", Text("shortcut"), false, false, {}, 0, {}, shortcut_});
     if (data_paths_) {
       const auto active = data_paths_->data_root;
       const bool blocked = data_paths_->session_override;
@@ -380,6 +380,10 @@ std::vector<PanelRow> Settings::Rows(int group) {
     if (group == 3 && row.id == "input_backend") row.section = Text("input-section");
     if (group == 3 && row.id == "mnk_mode") row.section = Text("keyboard-mouse");
     if (group == 3 && row.id == "bind_game_menu") row.section = Text("menu-section");
+    if (group == 4 && row.id == "show_startup_menu") row.section = Text("general-section");
+    if (group == 4 && row.id == "show_fps_overlay") row.section = Text("overlay-section");
+    if (group == 4 && row.id == "max_frame_latency") row.section = Text("performance-section");
+    if (group == 4 && row.id == "crash_reporting") row.section = Text("diagnostics-section");
   }
   return rows;
 }

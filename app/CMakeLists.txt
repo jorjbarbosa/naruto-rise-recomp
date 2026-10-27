@@ -109,6 +109,7 @@ block()
     set(RMLUI_FONT_ENGINE freetype)
     add_subdirectory(../third_party/rmlui third_party/rmlui EXCLUDE_FROM_ALL)
 endblock()
+include(cmake/rmlui_patches.cmake)
 
 # The native renderer (opt-in): its own D3D boundary and engine, chosen at
 # launch in place of the Xenos plugin (renderer = "native" in narutorise.toml).
@@ -137,6 +138,7 @@ endif()
 if(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP)
     add_executable(native_draw_storage_test src/gpu/common/tests/draw_storage_test.cpp)
     target_include_directories(native_draw_storage_test PRIVATE src)
+    target_link_libraries(native_draw_storage_test PRIVATE rex::runtime) # gpu/common/frame_event.h uses rex/thread.h.
     add_executable(native_descriptor_writes_test src/gpu/backend/vulkan/tests/descriptor_writes_test.cpp)
     target_include_directories(native_descriptor_writes_test PRIVATE src)
     list(APPEND NARUTORISE_SOURCES
@@ -418,12 +420,11 @@ if(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP)
             target_link_libraries(native_engine_bindings_test PRIVATE native_engine_test_units)
             foreach(_stage IN ITEMS vs ps)
                 add_custom_command(OUTPUT "${_draw_cache_shaders}/bindings_${_stage}.h"
-                    COMMAND "${_draw_cache_thirdparty}/dxc-bin/bin/x64/dxc.exe"
+                    COMMAND ${NARUTORISE_DXC_ENV} "${NARUTORISE_DXC}"
                         -T ${_stage}_6_0 -E ${_stage}_main -HV 2021
                         -Vn kBindings_${_stage} -Fh "${_draw_cache_shaders}/bindings_${_stage}.h"
                         "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/backend/d3d12/tests/bindings.hlsl"
-                    DEPENDS src/gpu/backend/d3d12/tests/bindings.hlsl
-                            "${_draw_cache_thirdparty}/dxc-bin/bin/x64/dxc.exe" VERBATIM)
+                    DEPENDS src/gpu/backend/d3d12/tests/bindings.hlsl "${NARUTORISE_DXC}" VERBATIM)
                 target_sources(native_engine_bindings_test PRIVATE "${_draw_cache_shaders}/bindings_${_stage}.h")
             endforeach()
             target_include_directories(native_engine_bindings_test PRIVATE "${_draw_cache_shaders}")
