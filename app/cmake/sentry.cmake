@@ -6,6 +6,7 @@ set(NARUTORISE_SENTRY_DSN "https://a63d5e2aa01f37d95830c319efe87b5a@o45123254524
 set(NARUTORISE_SENTRY_ENVIRONMENT "production" CACHE STRING "Sentry environment for this build")
 add_library(narutorise_reporting STATIC src/sentry_reporting.cpp)
 target_link_libraries(narutorise_reporting PRIVATE rex::runtime)
+target_link_libraries(narutorise_reporting PRIVATE narutorise_incidents)
 target_link_libraries(narutorise PRIVATE narutorise_reporting)
 if(NOT NARUTORISE_ENABLE_SENTRY)
     return()

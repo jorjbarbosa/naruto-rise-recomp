@@ -9,6 +9,7 @@
 // chunk of the dump with the free that released it; the hook of that free
 // lives in engine_free.cpp.
 #include "gpu/diagnostics/crash_dump.h"
+#include "diagnostics/incident.h"
 #include "gpu/diagnostics/heap_watch.h"
 #include <windows.h>
 #include <dbghelp.h>
@@ -91,6 +92,10 @@ LONG WINAPI Filter(EXCEPTION_POINTERS* pointers) {
 void Install() {
   const char* text = std::getenv("REX_NATIVE_CRASH_DUMP");
   if (!text || std::string_view(text) != "1" || installed) return;
+  if (narutorise::incident::CollectorReady()) {
+    narutorise::incident::Event("legacy-full-dump", "skipped", "Crashpad owns the fatal exception filter");
+    return;
+  }
   SetUnhandledExceptionFilter(Filter);
   installed = true;
 }

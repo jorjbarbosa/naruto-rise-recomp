@@ -34,6 +34,8 @@
 
 #include "crash_report.h"
 #include "sentry_reporting.h"
+#include "diagnostics/incident.h"
+#include "menu/folders.h"
 #include "data_migration.h"
 #include "game_image.h"
 #include "graphics_device.h"
@@ -82,6 +84,8 @@ REXCVAR_DEFINE_BOOL(show_startup_menu, true, "narutorise/UI",
 REXCVAR_DEFINE_BOOL(check_for_updates, true, "narutorise/UI", "Notify when a new release is available");
 REXCVAR_DEFINE_BOOL(crash_reporting, false, "narutorise/Reporting", "Allow crash reports and startup timing to be sent to Sentry");
 REXCVAR_DEFINE_STRING(sentry_test, "", "narutorise/Internal", "Developer verification: error or crash; requires crash_reporting=true")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_STRING(incident_test, "", "narutorise/Internal", "Disposable-process local capture verification; no game data required")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_UINT32(restart_wait_pid, 0, "narutorise/Internal", "Wait for the previous process during a settings restart");
 
@@ -159,6 +163,7 @@ class NarutoriseApp : public rex::ReXApp {
   }
 
   bool SetupEnvironment() override {
+    narutorise::incident::Event("data-and-configuration", "begin");
 #ifdef _WIN32
     // A settings restart must release the previous writer's lease first.
     if (const auto parent = REXCVAR_GET(restart_wait_pid); parent && parent != GetCurrentProcessId()) {
@@ -197,9 +202,15 @@ class NarutoriseApp : public rex::ReXApp {
         return false;
       }
       const auto sentry_test = REXCVAR_GET(sentry_test);
+      if (const auto test = REXCVAR_GET(incident_test); !test.empty()) {
+        narutorise::incident::VerifyIncident(test);
+        narutorise::reporting::Close();
+        std::_Exit(2);
+      }
       if (!sentry_test.empty()) {
         const bool verified = narutorise::reporting::Verify(sentry_test);
         narutorise::reporting::Close();
+        if (verified) narutorise::incident::ExpectedExit("sentry-verification");
         rex::FlushLogging();
         std::_Exit(verified ? 0 : 2);
       }
@@ -258,8 +269,15 @@ class NarutoriseApp : public rex::ReXApp {
   // only runs with the default.xex it was generated from (game_image.h).
   void OnPostInitLogging() override {
     const auto& active = prepared_data_->paths;
+    narutorise::incident::Event("data-and-configuration", "end");
+    narutorise::incident::SetMetadata("renderer_requested", rex::cvar::GetFlagByName("renderer"));
+    narutorise::incident::SetMetadata("native_backend_requested", rex::cvar::GetFlagByName("native_backend"));
     narutorise::reporting::Initialize(rex::filesystem::GetExecutableFolder(), active.cache_root,
                                     narutorise::Version(), REXCVAR_GET(crash_reporting));
+    narutorise::incident::Event("runtime-and-xex", "begin");
+    for (const auto* key : {"renderer", "native_backend", "graphics_device", "resolution_scale", "msaa_samples",
+                            "frame_rate", "translation_mod", "skip_intro_videos", "log_level"})
+      narutorise::incident::SetMetadata(key, rex::cvar::GetFlagByName(key));
     REXLOG_INFO("[narutorise] Data root: {}", rex::path_to_utf8(active.data_root));
     REXLOG_INFO("[narutorise] Active config: {}", rex::path_to_utf8(active.config_path));
     for (const auto& message : prepared_data_->diagnostics)
@@ -389,6 +407,7 @@ class NarutoriseApp : public rex::ReXApp {
   }
 
   void OnPostSetup() override {
+    narutorise::incident::Event("runtime-and-xex", "end");
     narutorise::reporting::FinishStartup();
     narutorise::translation::Initialize(prepared_data_->paths.mods_dir);
     narutorise::crash_report::Install();  // After the SDK's exception handler.
@@ -499,6 +518,7 @@ class NarutoriseApp : public rex::ReXApp {
   void OnClosing(rex::ui::UIEvent& event) override {
     // The SDK uses _Exit here, so destructors and OnShutdown cannot flush it.
     narutorise::reporting::Close();
+    narutorise::incident::ExpectedExit("window-close");
     rex::ReXApp::OnClosing(event);
   }
 
@@ -968,6 +988,11 @@ class NarutoriseApp : public rex::ReXApp {
     // Below the window shortcuts (fullscreen), above the SDK's overlays.
     if (window()) window()->AddInputListener(&ui_, std::numeric_limits<size_t>::max() - 1);
     ui_.SetInputActive([this] { return window() && window()->HasFocus(); });
+    if (const auto previous = narutorise::incident::Latest(true); !previous.empty()) {
+      ui_.Notify(narutorise::menu::Text("diagnostics-recovered"), narutorise::menu::Text("diagnostics-open"),
+                 [previous] { launcher_ui::OpenFolder(previous); });
+      narutorise::incident::Acknowledge(previous);
+    }
     if (NativeRenderer()) {
       ui_.SetTick([this] { ServiceMenu(); });
       menu_settings_.SetUtilities([this] { CreateDesktopShortcut(); }, [this] { CheckUpdates(); });
@@ -1370,7 +1395,9 @@ class NarutoriseApp : public rex::ReXApp {
   }
   void ArmFirstPresentation() {
 #ifdef NARUTORISE_NATIVE_RENDERER_BOOTSTRAP
-    gpu::ui::UiLayer().SetFirstPresentCallback([this] { // Engine owner, after a successful game Present.
+    const auto incident_operation = narutorise::incident::BeginOperation("first-game-present");
+    gpu::ui::UiLayer().SetFirstPresentCallback([this, incident_operation] { // Engine owner, after a successful game Present.
+      narutorise::incident::Event("first-game-present", "end", {}, incident_operation);
       if (closing_.load()) return;
       app_context().CallInUIThread([this] {
         if (closing_.load()) return;

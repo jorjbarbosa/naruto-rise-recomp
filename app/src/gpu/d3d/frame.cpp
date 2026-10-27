@@ -27,6 +27,7 @@
 //     each frame fence when its lot completed on the own queue.
 
 #include "gpu/d3d/frame.h"
+#include "diagnostics/incident.h"
 #include "gpu/diagnostics/diagnostics.h"
 #include "gpu/d3d/hooks.h"
 #include "gpu/d3d/device.h"
@@ -395,6 +396,7 @@ REX_HOOK_RAW(sub_826ACFC0) {
   __imp__sub_826ACFC0(ctx, base);
 }
 REX_HOOK_RAW(sub_82138A20) {
+  narutorise::incident::Activity activity(narutorise::incident::Role::kGuest);
   if (!gpu::Active()) {
     PacingAtSwap(ctx, base, ctx.r3.u32, false);  // Pacing samples of the Xenos mode.
     // Frame state; a front buffer to capture is read after the original.
@@ -453,6 +455,7 @@ REX_HOOK_RAW(sub_82138A20) {
   const uint32_t front_base = f1 & 0xFFFFF000u;
   CallGuest(ctx, base, __imp__sub_82146AE0, frame, dev, front);
   const uint64_t n = swaps.fetch_add(1) + 1;
+  narutorise::incident::Progress(narutorise::incident::Role::kGuest);
   if (n == 1) AttachPresentation(ctx);  // Own swapchain on the SDK window.
   MaybePostClose(n);  // REX_NATIVE_CLOSE_AFTER_SWAPS, the window close without a person.
   // START evidence: after the first own draw of the START lot, three more

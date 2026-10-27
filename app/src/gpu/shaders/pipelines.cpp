@@ -13,6 +13,7 @@
 // which compile them at the highest priority while the loading screen is up
 // (PrefetchWorldPipelines). REX_NATIVE_PSO_WORLD=0 turns that off.
 #include "gpu/shaders/pipelines.h"
+#include "diagnostics/incident.h"
 #include "gpu/common/shader_activity.h"
 #include "gpu/common/title_loading.h"
 #include "gpu/diagnostics/shader_keys.h"
@@ -178,6 +179,14 @@ bool DescribeEntry(size_t i, PipelineDesc& desc, uint32_t& linked, bool& variant
 // One entry of the list on a pool thread: its description, then the engine's
 // PrecompilePipeline.
 void PrecompileEntry(size_t i, Engine& engine) {
+  narutorise::incident::Activity activity(narutorise::incident::Role::kCompiler);
+  narutorise::incident::Progress(narutorise::incident::Role::kCompiler);
+  thread_local auto last_incident_progress = std::chrono::steady_clock::time_point{};
+  const auto now = std::chrono::steady_clock::now();
+  if (now - last_incident_progress > std::chrono::seconds(1)) {
+    last_incident_progress = now;
+    narutorise::incident::Event("pipeline-job", "progress", std::to_string(i));
+  }
   ShaderBatchEntry counted;
   PipelineDesc desc;
   uint32_t linked = 0;
@@ -202,6 +211,7 @@ bool worldPrefetchOption() {
 }
 
 void StartPipelinePrecompile() {
+  const auto incident_operation = narutorise::incident::BeginOperation("pipeline-precompile");
   auto& p = pipeline_precompile;
   const char* off = std::getenv("REX_NATIVE_PSO_PRECOMPILE");
   const char* skip = off && std::string_view(off) == "0" ? "disabled" : kPipelineCache.empty() ? "list-absent"
@@ -212,6 +222,7 @@ void StartPipelinePrecompile() {
         return engine.PreparePipelines(out);
       }, prepared))) skip = "prepare-failed";
   if (skip) {
+    narutorise::incident::Event("pipeline-precompile", "end", skip, incident_operation);
     host::Record("native-d3d-pipeline-precompile-start", fmt::format(
         "\"started\":false,\"reason\":\"{}\",\"list\":{},\"identity\":\"{}\",\"prepare\":{}", skip,
         kPipelineCache.size(), kPipelineCacheIdentity, prepared.empty() ? "null" : prepared));
@@ -236,7 +247,7 @@ void StartPipelinePrecompile() {
   p.started = std::chrono::steady_clock::now();
   p.pool_started.store(true, std::memory_order_release);
   BeginShaderBatch(uint32_t(kPipelineCache.size()));
-  const bool started = dispatcher->StartPool(kPipelineCache.size(), p.threads, PrecompileEntry, [](bool stopped) {
+  const bool started = dispatcher->StartPool(kPipelineCache.size(), p.threads, PrecompileEntry, [incident_operation](bool stopped) {
     EndShaderBatch();
     auto& p = pipeline_precompile;
     std::string failure;
@@ -254,10 +265,13 @@ void StartPipelinePrecompile() {
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - p.started).count(),
         swaps.load(), failure);
     host::Record("native-d3d-pipeline-precompile", summary);
+    narutorise::incident::Event("pipeline-precompile", "end", summary, incident_operation);
     // The product has no journal: how long the list took goes to the SDK log.
     if (!host::Journaled()) REXLOG_INFO("[narutorise] Pipeline precompile: {{{}}}", summary);
   });
-  if (!started) EndShaderBatch();
+  if (!started) {
+    EndShaderBatch(); narutorise::incident::Event("pipeline-precompile", "end", "pool-not-started", incident_operation);
+  }
   host::Record("native-d3d-pipeline-precompile-start", fmt::format(
       "\"started\":{},\"list\":{},\"layouts\":{},\"worlds\":{},\"threads\":{},\"identity\":\"{}\",\"swap\":{}",
       started, kPipelineCache.size(), shared.size(), kPipelineWorlds.empty() ? 0 : kPipelineWorlds.size() - 1,

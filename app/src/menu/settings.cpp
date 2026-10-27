@@ -2,6 +2,7 @@
 #include "menu/settings.h"
 #include "menu/ui.h"
 #include "menu/text.h"
+#include "diagnostics/incident.h"
 #include "controls/runtime.h"
 #include "wine.h"
 #include "../menu/game_languages.h"
@@ -300,6 +301,24 @@ std::vector<PanelRow> Settings::Rows(int group) {
     rows.push_back({"crash_reporting", Text("crash-reporting"), Bool(config_.crash_reporting), Text("crash-reporting-help"),
         config_.crash_reporting != initial_.crash_reporting, true, {Text("off"), Text("on")}, config_.crash_reporting ? 1 : 0,
         [this](int value) { Change("crash_reporting", [value](GameConfig& config) { config.crash_reporting = value != 0; }); }, {}});
+    if (!incident::Directory().empty()) {
+      rows.push_back({"diagnostics-open", Text("diagnostics-open"), "", Text("diagnostics-help"), false, false, {}, 0, {},
+          [] { launcher_ui::OpenFolder(incident::ReportsDirectory()); }});
+      rows.push_back({"diagnostics-snapshot", Text("diagnostics-snapshot"), "", Text("diagnostics-help"), false, false, {}, 0, {},
+          [this] { incident::RequestSnapshot(); ui_->Notify(Text("diagnostics-requested")); }});
+      rows.push_back({"diagnostics-export", Text("diagnostics-export"), "", Text("diagnostics-help"), false, false, {}, 0, {},
+          [this] {
+            const auto previous = incident::Latest();
+            if (previous.empty()) { ui_->Notify(Text("diagnostics-none")); return; }
+            const auto destination = incident::ReportsDirectory().parent_path() / "incident-exports" /
+                (previous.filename().string() + ".zip");
+            std::string error;
+            if (!std::filesystem::exists(destination) && !incident::Export(previous, destination, error)) {
+              ui_->Notify(Text("diagnostics-export-failed") + std::string(" ") + error); return;
+            }
+            launcher_ui::OpenFolder(destination.parent_path());
+          }});
+    }
     rows.push_back({"show_shader_indicator", Text("shader-option"), Bool(menu_options_.shaders), Text("shader-option"),
         menu_options_.shaders != initial_menu_options_.shaders, false, {Text("off"), Text("on")}, menu_options_.shaders ? 1 : 0,
         [this](int value) { auto next = menu_options_; next.shaders = value != 0; SaveMenuOptions("show_shader_indicator", next); }, {}});

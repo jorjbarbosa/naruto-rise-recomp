@@ -15,18 +15,15 @@ The DSN identifies the destination for events. It is not an administration or sy
 
 Reporting is off by default, including for existing configurations without the new key.
 Players can enable **Settings > Advanced > Send crash reports** and restart. The choice is
-stored as `crash_reporting` in the active `narutorise.toml`, outside the cache. With reporting
-off at startup the SDK and the Crashpad background process are not started.
+stored as `crash_reporting` in the active `narutorise.toml`, outside the cache. Local capture starts independently of uploads.
 
 When enabled, the SDK sends native crash dumps and technical context, and samples 10% of
 startup timing transactions. Crash dumps can contain personal information from process memory.
-Saves, game files and session log files are not attached by this integration. Do not describe
+Session logs and the bounded diagnostics channel are attached only with consent. Saves and game files are not attached. Do not describe
 dumps as guaranteed free of personal data. Disabling the setting revokes consent for new
-uploads immediately; a request already in flight may have been received. The SDK's local
-database is under the selected `cache_root/sentry`; it may contain pending reports.
+uploads immediately; a request already in flight may have been received. Each session has its own database under `<data_root>/incidents/<session>/capture`. Off sessions use an empty DSN. Re-enabling requires a new session and never reopens older databases.
 
-This is the initial Sentry integration. The wider local incident packages, PowerPC enrichment,
-GPU failure events, retention policy and hang collection remain separate work.
+Local incident packages, fixed PowerPC context, explicit renderer failure events, retention, supervision and hang snapshots are described in [Local diagnostics](crash-reports.md).
 
 ## Build and package
 
@@ -73,11 +70,14 @@ Install `sentry-cli` using [Sentry's instructions](https://docs.sentry.io/cli/in
 Set an organization auth token in `SENTRY_AUTH_TOKEN` in the local build environment or CI
 secret store. Keep the token out of source files, command arguments and chat.
 
-Preview selection, then upload before verification or distribution:
+The Windows package script first archives matching application, SDK and guest symbols outside the public ZIP, under `out/release-symbols/`. It validates PE/PDB GUID and age and fails on missing symbols. For SDK source builds, retain Release line information (`-gline-tables-only`) and link shared libraries with `/DEBUG`; select another SDK symbol directory with `-SymbolRoot`.
+
+Archive independently, then upload the exact archive before distribution:
 
 ```powershell
-python scripts/upload-sentry-symbols.py app/out/build/win-amd64-release --dry-run
-python scripts/upload-sentry-symbols.py app/out/build/win-amd64-release
+python scripts/archive-native-symbols.py app/out/build/win-amd64-release out/release-symbols/my-build --symbol-root sdk/out/win-amd64/Release
+python scripts/upload-sentry-symbols.py out/release-symbols/my-build --dry-run
+python scripts/upload-sentry-symbols.py out/release-symbols/my-build
 ```
 
 The helper uses `sentry-cli debug-files upload --no-sources --wait` and fails if authentication, upload,

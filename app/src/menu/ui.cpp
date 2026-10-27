@@ -1,5 +1,6 @@
 // The RmlUi of the game (ui.h).
 #include "menu/ui.h"
+#include "diagnostics/incident.h"
 #include "menu/assets.h"
 #include "menu/render_interface.h"
 #include <algorithm>
@@ -303,6 +304,8 @@ void Ui::UpdateStatus() {
   else if (!status_shown_.load() && status_->IsVisible()) status_->Hide();
 }
 void Ui::PollInput() {
+  incident::Activity activity(incident::Role::kUi);
+  incident::Progress(incident::Role::kUi);
   if (!initialized_) return;
   if (tick_) tick_();
   const bool focused = !input_active_ || input_active_();

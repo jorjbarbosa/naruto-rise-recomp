@@ -50,12 +50,12 @@ def main():
         event = re.search(r'Verification event ([0-9a-f-]{36}): Naruto Rise Sentry verification error', text)
         if name == 'disabled':
             assert process.returncode == 2, (name, process.returncode)
-            assert '[sentry] Reporting disabled' in text, text
-            assert not (cache / 'sentry').exists(), 'Opt-out created a reporting database'
+            assert '[sentry] Local capture ready; uploads disabled' in text, text
+            assert list((data / 'incidents').glob('session-*/capture')), 'Opt-out lost local capture'
         elif name == 'error':
             assert process.returncode == 0, (name, process.returncode, text)
             assert event, text
-            assert (cache / 'sentry').is_dir(), 'Missing isolated reporting database'
+            assert list((data / 'incidents').glob('session-*/capture')), 'Missing isolated reporting database'
         else:
             assert process.returncode != 0, 'Verification abort did not terminate the process'
             assert 'Triggering requested verification crash' in text, text

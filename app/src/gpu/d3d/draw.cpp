@@ -22,6 +22,7 @@
 // draw. After the call +48, +56 and +13428 hold the guard cursor again, so the
 // inline EndVertices keeps every other inline writer on the guarded F608.
 #include "gpu/d3d/draw.h"
+#include "diagnostics/incident.h"
 #include "gpu/d3d/draw_capture.h"
 #include "gpu/d3d/d3d.h"
 #include "gpu/diagnostics/diagnostics.h"
@@ -825,8 +826,10 @@ void CaptureDraw(PPCContext& ctx, uint8_t* base, bool indexed, InlineBuild* quad
   if (candidate) ReadStartAfter(base, *c.live);  // START entry after the original commit.
   profile::Timer shaders_time(profile::kDrawShaders);
   std::call_once(shader_cache.once, [] {  // The package of the session's API.
+    narutorise::incident::Event("shader-package", "begin");
     const auto* dispatcher = host::ActiveDispatcher();
     LoadShaderCache(ShaderFormatOf(dispatcher ? dispatcher->Api() : RenderMode{}.api));
+    narutorise::incident::Event("shader-package", "end", shader_cache.loaded ? "loaded" : shader_cache.error);
   });
   StartPipelinePrecompileOnce();
   InlineGuardSink sink(saved);

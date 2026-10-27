@@ -18,6 +18,11 @@ configuration is initialized from it only when no active/eligible legacy TOML ex
 Rebuilds and ZIP/AppImage replacement preserve active preferences.
 
 All active mods, including translations, are loaded from `<active data folder>/mods`.
+Local diagnostic sessions live in `<active data folder>/incidents` and manually
+exported ZIPs in `incident-exports`; neither follows a cache override. See
+[crash reports and export](crash-reports.md) for retention and collection limits.
+When changing the data location, previous incident folders remain at the original
+root; export them there. New sessions use the newly selected root.
 The menu and game use the same resolved path. Mods follow a folder change only
 after restart and verified copying; an explicit guest/save root does not move mods.
 

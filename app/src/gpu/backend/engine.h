@@ -181,5 +181,6 @@ class Engine final {
   const std::shared_ptr<FailureChannel> failures_;
   std::unique_ptr<Backend> backend_;
   GraphicsApi api_ = GraphicsApi::kD3D12;
+  bool incident_first_submit_ = true, incident_first_present_ = true;
 };
 }  // namespace gpu

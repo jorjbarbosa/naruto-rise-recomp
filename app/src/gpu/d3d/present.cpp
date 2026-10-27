@@ -6,6 +6,7 @@
 // (ui/layer.h); the gamma ramp of the title (+14988) is applied in the final
 // pass, under the UI.
 #include "gpu/d3d/present.h"
+#include "diagnostics/incident.h"
 #include "gpu/diagnostics/diagnostics.h"
 #include "gpu/d3d/hooks.h"
 #include "gpu/backend/dispatcher.h"
@@ -106,6 +107,7 @@ void MaybePostClose(uint64_t swap) {
 std::atomic<bool> window_attached{false};
 // First own Swap: the swapchain on the SDK window, before the first frame end.
 void AttachPresentation(PPCContext& ctx) {
+  narutorise::incident::Event("swapchain-attach", "begin");
   const platform::NativeWindow window = DisplayNativeWindow();
   if (window.kind == platform::NativeWindow::Kind::kNone) StopInOrder(ctx, "present-window-missing", 88);
   std::string evidence;
@@ -125,7 +127,11 @@ void AttachPresentation(PPCContext& ctx) {
     return engine.AttachWindow(window, out, mode); }, evidence);
   host::Record("native-present-attach", fmt::format("\"attached\":{},\"engine\":{},{}", attached,
                            evidence.empty() ? "null" : evidence, platform::WindowFacts(window)));
-  if (!attached) StopInOrder(ctx, "present-attach-failed", 88);
+  narutorise::incident::Event("swapchain-attach", attached ? "end" : "failed", evidence);
+  if (!attached) {
+    narutorise::incident::FirstFailure("present-attach-failed", evidence);
+    StopInOrder(ctx, "present-attach-failed", 88);
+  }
   window_attached.store(true);
 }
 // The ramp of the title when SetGammaRamp marked it pending (bit 1 of +16692).

@@ -6,6 +6,7 @@
 #include "gpu/backend/engine.h"
 #include "gpu/backend/backend.h"
 #include "gpu/backend/failure_channel.h"
+#include "diagnostics/incident.h"
 
 #include <cmath>
 
@@ -39,6 +40,8 @@ bool Engine::Refused(std::string& evidence) const {
 }
 
 bool Engine::Initialize(std::string& evidence, const RenderMode& mode) {
+  narutorise::incident::Event("device-create", "begin", ApiName(mode.api));
+  narutorise::incident::SetMetadata("backend_active", ApiName(mode.api));
   if (!backend_) {
     api_ = mode.api;
 #if !defined(NARUTORISE_NATIVE_D3D12_DISABLED)
@@ -50,10 +53,14 @@ bool Engine::Initialize(std::string& evidence, const RenderMode& mode) {
     if (!backend_) {
       evidence = fmt::format("{{\"operation\":\"native-backend-unavailable\",\"api\":\"{}\","
                              "\"readiness_criteria_met\":false}}", ApiName(mode.api));
+      narutorise::incident::FirstFailure("device-create", evidence);
       return false;
     }
   }
-  return backend_->Initialize(evidence, mode);
+  const bool ok = backend_->Initialize(evidence, mode);
+  narutorise::incident::Event("device-create", ok ? "end" : "failed", evidence);
+  if (!ok) narutorise::incident::FirstFailure("device-create", evidence);
+  return ok;
 }
 std::string Engine::DeviceName() const { return backend_ ? backend_->DeviceName() : std::string(); }
 bool Engine::Shutdown(std::string& evidence) {
@@ -101,7 +108,13 @@ bool Engine::WaitIdle(std::string& evidence) {
 }
 bool Engine::CloseFrame(FrameEvent event, uint64_t& target, std::string& evidence) {
   if (Refused(evidence)) return false;
-  return backend_ ? backend_->CloseFrame(std::move(event), target, evidence) : NoBackend(evidence);
+  const bool first = incident_first_submit_;
+  if (first) narutorise::incident::Event("first-frame-submit", "begin");
+  const bool ok = backend_ ? backend_->CloseFrame(std::move(event), target, evidence) : NoBackend(evidence);
+  if (first) narutorise::incident::Event("first-frame-submit", ok ? "end" : "failed", evidence);
+  incident_first_submit_ = false;
+  if (!ok) narutorise::incident::FirstFailure("frame-submit", evidence);
+  return ok;
 }
 bool Engine::AttachWindow(const platform::NativeWindow& window, std::string& evidence, const PresentMode& mode) {
   if (Refused(evidence)) return false;
@@ -130,7 +143,14 @@ bool Engine::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, ui
   if (presented) *presented = false;
   if (Refused(evidence)) return false;
   bool shown = false;
+  if (incident_first_present_) narutorise::incident::Event("first-native-present", "begin");
   const bool ok = backend_ ? backend_->Present(slot, capture, bgra, width, height, evidence, shown) : NoBackend(evidence);
+  narutorise::incident::Progress(narutorise::incident::Role::kGpu);
+  if (incident_first_present_ && (!ok || shown)) {
+    narutorise::incident::Event("first-native-present", ok ? "end" : "failed", evidence);
+    incident_first_present_ = false;
+  }
+  if (!ok) narutorise::incident::FirstFailure("native-present", evidence);
   if (presented) *presented = ok && shown;
   return ok;
 }

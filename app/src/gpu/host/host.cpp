@@ -3,6 +3,7 @@
 // close and the guest memory reads of the services. The other responsibilities
 // of the host live in host/*.cpp (internal.h).
 #include "gpu/host/app.h"
+#include "diagnostics/incident.h"
 #include "gpu/host/internal.h"
 #include "gpu/d3d/d3d.h"
 #include "gpu/common/guest_memory.h"
@@ -56,9 +57,9 @@ void Configure(rex::RuntimeConfig& config) {
   const auto path = REXCVAR_GET(native_renderer_bootstrap_path);
   if (bootstrap && (!REXCVAR_GET(native_renderer_bootstrap_initialize_engines) ||
                     !REXCVAR_GET(native_renderer_bootstrap_register_interrupt_callback) || path.empty()))
-    std::_Exit(88);
-  if (config.graphics) std::_Exit(88);
-  if (!path.empty() && !OpenJournal(path)) std::_Exit(88);
+    { narutorise::incident::FirstFailure("native-bootstrap-configuration"); std::_Exit(88); }
+  if (config.graphics) { narutorise::incident::FirstFailure("native-graphics-already-configured"); std::_Exit(88); }
+  if (!path.empty() && !OpenJournal(path)) { narutorise::incident::FirstFailure("native-journal-open", path); std::_Exit(88); }
   enabled = true;
   // The graphics options, read once before the graphics system exists.
   gpu::RegisterPluginOptions();
@@ -73,6 +74,7 @@ void Configure(rex::RuntimeConfig& config) {
 #endif
   if (!available) {
     REXLOG_ERROR("[narutorise] Requested native_backend '{}' is unavailable in this build. No backend fallback.", backend);
+    narutorise::incident::FirstFailure("native-backend-unavailable", backend);
     std::_Exit(88);
   }
 #if defined(NARUTORISE_NATIVE_VULKAN)

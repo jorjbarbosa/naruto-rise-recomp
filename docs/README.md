@@ -9,6 +9,7 @@
 - [Renderers and frame rate](renderers.md)
 - [Troubleshooting](troubleshooting.md)
 - [Sentry setup, consent and native symbols](sentry.md)
+- [Local crash reports, hangs and export](crash-reports.md)
 - [ZIP packaging and compatibility bridge](../packaging/README.md)
 
 [Back to the project](../README.md)

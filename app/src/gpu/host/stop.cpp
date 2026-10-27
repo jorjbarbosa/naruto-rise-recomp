@@ -1,9 +1,12 @@
 // The ordered stop of the native mode: one owner per process, the engine
 // released on its owner thread, the final records and the exit code.
 #include "gpu/host/internal.h"
+#include "diagnostics/incident.h"
+#include "sentry_reporting.h"
 #include "gpu/backend/dispatcher.h"
 #include "gpu/common/platform.h"
 #include <cstdlib>
+#include <optional>
 #include <fmt/format.h>
 #include <rex/logging.h>
 #include <rex/string.h>
@@ -111,17 +114,17 @@ std::string_view EvidenceField(std::string_view json, std::string_view key) {
 void ReportProductStop(std::string_view name, int code, bool released, std::string_view posted,
                        std::string_view shutdown) {
   constexpr size_t kEvidenceChars = 1500;
-  uint32_t removed = 0;
+  std::optional<uint32_t> removed;
   if (const auto field = EvidenceField(shutdown, "device_removed_reason"); !field.empty())
     removed = uint32_t(std::strtoul(std::string(field).c_str(), nullptr, 10));
   REXLOG_ERROR("[narutorise] Native renderer stopped: {} (exit {}, engine released {}, device removed reason "
-               "0x{:08X})", name, code, released, removed);
+               "{})", name, code, released, removed ? fmt::format("0x{:08X}", *removed) : "not-queried");
   if (!posted.empty())
     REXLOG_ERROR("[narutorise] Native renderer failed operation: {}", posted.substr(0, kEvidenceChars));
   rex::FlushLogging();
   std::string message = fmt::format("The native renderer stopped and the game will close.\n\nReason: {}", name);
-  if (int32_t(removed) < 0)  // A failed HRESULT.
-    message += fmt::format("\nThe graphics card stopped responding (0x{:08X}).", removed);
+  if (removed && int32_t(*removed) < 0)  // A failed HRESULT.
+    message += fmt::format("\nThe graphics card stopped responding (0x{:08X}).", *removed);
 #ifdef _WIN32
   message += "\n\nThe details are in the log, in the logs folder next to narutorise.exe. "
              "If this happens again, the Xenos renderer can be chosen in the launcher.";
@@ -134,13 +137,21 @@ void ReportProductStop(std::string_view name, int code, bool released, std::stri
 
 [[noreturn]] void Stop(std::string_view name, PPCContext* ctx,
                        uint32_t address, uint32_t value, int code) {
+  // Independent of the journal/logger and before ownership waits or teardown.
+  narutorise::incident::FirstFailure(name);
+  narutorise::incident::Event("renderer-stop", "begin", name);
   ClaimStop(name, ctx);
+  narutorise::incident::Event("renderer-quiesce", "begin");
   frame_completion::Quiesce();
+  narutorise::incident::Event("renderer-quiesce", "end");
   // The posted operation that latched the engine, read before the release.
   std::string posted, shutdown;
   if (!Journaled())
     if (auto* dispatcher = ActiveDispatcher()) dispatcher->PostedFailure(posted);
+  narutorise::incident::Event("renderer-release", "begin");
   const bool released = ReleaseEngineAndRecord(name, ctx, address, value, true, &shutdown);
+  narutorise::incident::Event("renderer-release", released ? "end" : "failed", shutdown);
+  narutorise::reporting::CaptureFailure(std::string(name), posted);
   if (!Journaled()) ReportProductStop(name, released ? code : 88, released, posted, shutdown);
   // Diagnostic termination. No guest return, fence, read pointer or callback.
   // The record writer stays locked, so the exit cuts no line of another thread.

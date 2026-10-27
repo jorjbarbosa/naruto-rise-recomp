@@ -1,4 +1,5 @@
 #include "gpu/backend/dispatcher.h"
+#include "diagnostics/incident.h"
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
@@ -74,7 +75,9 @@ struct Dispatcher::State {
           task = std::move(work.front());
           work.pop_front();
         }
+        narutorise::incident::Activity activity(narutorise::incident::Role::kGpu);
         task();
+        narutorise::incident::Progress(narutorise::incident::Role::kGpu);
       }
     });
   }
@@ -124,7 +127,9 @@ struct Dispatcher::State {
           }
           stage_run.fetch_add(1);
           try {
+            narutorise::incident::Activity activity(narutorise::incident::Role::kTranslator);
             task->Run();
+            narutorise::incident::Progress(narutorise::incident::Role::kTranslator);
           } catch (const TranslationStopped&) {
             discarding.store(true, std::memory_order_release);
             stage_stops.fetch_add(1);
@@ -269,7 +274,9 @@ Dispatcher::Dispatcher(bool dedicatedOwner, bool deferredTranslation)
 }
 Dispatcher::~Dispatcher() {
   std::string evidence;
-  if (!Shutdown(evidence)) std::_Exit(88);
+  if (!Shutdown(evidence)) {
+    narutorise::incident::FirstFailure("dispatcher-destructor", evidence); std::_Exit(88);
+  }
 }
 
 bool Dispatcher::Initialize(std::string& evidence, const RenderMode& mode) {
@@ -555,6 +562,7 @@ bool Dispatcher::WithEngine(const std::function<void(Engine&)>& operation) {
 }
 
 bool Dispatcher::Shutdown(std::string& evidence) {
+  narutorise::incident::Event("dispatcher-shutdown", "begin");
   std::lock_guard lifecycle(state_->lifecycle);
   // The stage stops first: its pending tasks are dropped (a pending Run
   // fails), the task in flight finishes, the translator is joined.
@@ -581,7 +589,9 @@ bool Dispatcher::Shutdown(std::string& evidence) {
   };
   {
     std::unique_lock lock(state_->mutex);
-    if (!state_->initialized || state_->stopped) { evidence.clear(); return true; }
+    if (!state_->initialized || state_->stopped) {
+      evidence.clear(); narutorise::incident::Event("dispatcher-shutdown", "end", "already-stopped"); return true;
+    }
     state_->FlushDrawsLocked(lock, State::Flush::Close);  // Before the engine goes.
     state_->closing = true;
     if (state_->dedicated) state_->Queue(shutdown);
@@ -596,6 +606,7 @@ bool Dispatcher::Shutdown(std::string& evidence) {
     state_->stopped = true;
   }
   // Failed draining leaves the engine and owner alive for retry or fatal stop.
+  narutorise::incident::Event("dispatcher-shutdown", ok ? "end" : "failed", evidence);
   return ok;
 }
 }  // namespace gpu

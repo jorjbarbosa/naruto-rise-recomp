@@ -1,7 +1,8 @@
 param (
     [switch]$Build,
     [string]$OutputRootDir = "",
-    [string]$Version = ""
+    [string]$Version = "",
+    [string]$SymbolRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -47,6 +48,16 @@ foreach ($revision in 1..3) {
 }
 cmake --build $AppBuildDir --target $targets
 if ($LASTEXITCODE -ne 0) { throw "Build failed ($LASTEXITCODE). Existing releases were not changed." }
+
+# Keep exact symbols outside the public ZIP. Missing or mismatched SDK/guest
+# debug information fails before replacing any existing player package.
+$SymbolArchive = Join-Path $RootDir ('out\release-symbols\' + $Version + '-' + [guid]::NewGuid().ToString('N'))
+$symbolArguments = @((Join-Path $RootDir 'scripts\archive-native-symbols.py'), $AppBuildDir, $SymbolArchive)
+if (-not $SymbolRoot) { $SymbolRoot = Join-Path $RootDir 'sdk\out\win-amd64\Release' }
+if (Test-Path -LiteralPath $SymbolRoot -PathType Container) { $symbolArguments += @('--symbol-root', $SymbolRoot) }
+python @symbolArguments
+if ($LASTEXITCODE -ne 0) { throw 'Matching native symbols are required. Generate SDK/guest PDBs or select -SymbolRoot. Existing releases were not changed.' }
+Write-Host "Native symbols archived in $SymbolArchive"
 
 $binaries = @('narutorise.exe', 'narutorise_ai2c.dll',
     'rexgpu-xenos.dll', 'rexruntime.dll', 'defaults\narutorise.toml')
