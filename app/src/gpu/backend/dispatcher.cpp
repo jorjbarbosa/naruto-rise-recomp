@@ -1,4 +1,6 @@
 #include "gpu/backend/dispatcher.h"
+#include "gpu/backend/lifecycle.h"
+#include "gpu/backend/pipeline_set.h"
 #include "diagnostics/incident.h"
 #include <chrono>
 #include <condition_variable>
@@ -43,7 +45,7 @@ struct Dispatcher::State {
   std::thread owner;
   std::unique_ptr<Engine> engine;
   // The precompile pool (StartPool), joined by Shutdown first.
-  std::vector<std::thread> pool;
+  std::vector<std::unique_ptr<rex::thread::Thread>> pool;
   std::atomic<size_t> pool_next{0};
   std::atomic<unsigned> pool_active{0};
   std::atomic<bool> pool_stop{false};
@@ -65,6 +67,7 @@ struct Dispatcher::State {
 
   void Start() {
     owner = std::thread([this] {
+      rex::thread::set_current_thread_name("Native Engine Owner");
       sampler::RegisterThread("engine");  // REX_NATIVE_SAMPLE_PERIOD_US.
       for (;;) {
         std::function<void()> task;
@@ -274,9 +277,7 @@ Dispatcher::Dispatcher(bool dedicatedOwner, bool deferredTranslation)
 }
 Dispatcher::~Dispatcher() {
   std::string evidence;
-  if (!Shutdown(evidence)) {
-    narutorise::incident::FirstFailure("dispatcher-destructor", evidence); std::_Exit(88);
-  }
+  if (!Shutdown(evidence)) ExitUnreleased("dispatcher-destructor", evidence);
 }
 
 bool Dispatcher::Initialize(std::string& evidence, const RenderMode& mode) {
@@ -516,11 +517,11 @@ bool Dispatcher::StartPool(size_t count, unsigned threads,
   auto shared_work = std::make_shared<std::function<void(size_t, Engine&)>>(std::move(work));
   auto shared_done = std::make_shared<std::function<void(bool)>>(std::move(done));
   state_->pool_active = threads;
-  for (unsigned t = 0; t < threads; ++t)
-    state_->pool.emplace_back([this, engine, count, t, shared_work, shared_done] {
+  for (unsigned t = 0; t < threads; ++t) {
+    auto thread = StartPipelineThread([this, engine, count, t, shared_work, shared_done] {
       rex::thread::set_current_thread_name("Native Pipeline Compiler");
       // The pool yields to the game: while the title shows its loading screen
-      // every thread compiles at the highest priority (the player waits anyway);
+      // every thread compiles above normal priority (the player waits anyway);
       // with the game running, only the first kPoolThreadsInGame threads go on,
       // at the lowest priority, and the others wait for the next loading screen
       // (a cold driver cache takes some twenty seconds for the list on ten
@@ -537,12 +538,19 @@ bool Dispatcher::StartPool(size_t count, unsigned threads,
         if (state_->pool_stop.load()) break;
         const size_t i = state_->pool_next.fetch_add(1);
         if (i >= count) break;
-        const auto wanted = TitleLoading() ? platform::ThreadPriority::kHighest : platform::ThreadPriority::kLowest;
+        const auto wanted = TitleLoading() ? platform::ThreadPriority::kAboveNormal : platform::ThreadPriority::kLowest;
         if (wanted != priority) platform::SetThreadPriority(priority = wanted);
         (*shared_work)(i, *engine);
       }
       if (state_->pool_active.fetch_sub(1) == 1 && *shared_done) (*shared_done)(state_->pool_stop.load());
     });
+    if (thread) {
+      state_->pool.push_back(std::move(thread));
+      continue;
+    }
+    // A refused thread counts as finished; the others take its indexes.
+    if (state_->pool_active.fetch_sub(1) == 1 && *shared_done) (*shared_done)(state_->pool_stop.load());
+  }
   return true;
 }
 
@@ -569,8 +577,7 @@ bool Dispatcher::Shutdown(std::string& evidence) {
   if (state_->deferred) state_->StopStage();
   // The pool takes no new index and is joined before the engine goes.
   state_->pool_stop = true;
-  for (auto& thread : state_->pool)
-    if (thread.joinable()) thread.join();
+  for (auto& thread : state_->pool) JoinPipelineThread(*thread);
   auto result = std::make_shared<std::promise<std::pair<bool, std::string>>>();
   auto future = result->get_future();
   auto shutdown = [this, result] {

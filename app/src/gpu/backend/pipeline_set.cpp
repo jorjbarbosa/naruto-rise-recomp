@@ -90,11 +90,23 @@ bool PipelineSet::Post(uint64_t key, PipelineDesc desc, bool only_if_absent, boo
   return true;
 }
 
-// Two thirds of the hardware threads, at least two, as the recomps.
+std::unique_ptr<rex::thread::Thread> StartPipelineThread(std::function<void()> work) {
+  rex::thread::Thread::CreationParameters params;
+  params.stack_size = 4 * 1024 * 1024;
+  return rex::thread::Thread::Create(params, std::move(work));
+}
+void JoinPipelineThread(rex::thread::Thread& thread) { rex::thread::Wait(&thread, false); }
+unsigned PipelineThreadsPerPool() {
+  const unsigned hardware = std::max(1u, std::thread::hardware_concurrency());
+  return std::max(1u, (hardware > 2 ? hardware - 2 : 1) / 2);
+}
+
 void PipelineSet::StartThreads(bool lowest) {
-  const unsigned threads = std::max(2u, std::thread::hardware_concurrency() * 2 / 3);
+  const unsigned threads = PipelineThreadsPerPool();
   const auto base = lowest ? platform::ThreadPriority::kLowest : platform::ThreadPriority::kNormal;
-  for (unsigned i = 0; i < threads; ++i) threads_.emplace_back([this, base] { Work(base); });
+  // A refused thread is left out: a queued key no thread took is created by its take.
+  for (unsigned i = 0; i < threads; ++i)
+    if (auto thread = StartPipelineThread([this, base] { Work(base); })) threads_.push_back(std::move(thread));
 }
 
 void PipelineSet::Work(platform::ThreadPriority base_priority) {
@@ -111,9 +123,9 @@ void PipelineSet::Work(platform::ThreadPriority base_priority) {
       queue_.pop_front();
       entries_[job.first].queued = false;
     }
-    // The title's loading screen waits for what compiles: the highest
-    // priority then, the base otherwise (as the UnleashedRecomp's threads).
-    const auto wanted = TitleLoading() ? platform::ThreadPriority::kHighest : base_priority;
+    // The title's loading screen waits for what compiles: above normal then,
+    // the base otherwise. Never above the threads that publish the frames.
+    const auto wanted = TitleLoading() ? platform::ThreadPriority::kAboveNormal : base_priority;
     if (wanted != priority) {
       priority = wanted;
       platform::SetThreadPriority(priority);
@@ -246,7 +258,7 @@ void PipelineSet::Stop() {
   }
   wake_.notify_all();
   done_.notify_all();
-  for (auto& thread : threads_) thread.join();
+  for (auto& thread : threads_) JoinPipelineThread(*thread);
   threads_.clear();
 }
 

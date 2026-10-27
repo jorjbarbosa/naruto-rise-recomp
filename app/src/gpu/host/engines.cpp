@@ -6,7 +6,9 @@
 #include "gpu/d3d/draw.h"
 #include "gpu/common/guest_memory.h"
 #include "gpu/settings.h"
+#include "wine.h"
 #include <array>
+#include <optional>
 #include <fmt/format.h>
 #include <rex/logging.h>
 #include <rex/system/thread_state.h>
@@ -14,6 +16,20 @@
 #include <rex/system/xmemory.h>
 
 namespace gpu::host {
+namespace {
+const char* ApiName(GraphicsApi api) {
+  return api == GraphicsApi::kVulkan ? "vulkan" : api == GraphicsApi::kD3D12 ? "d3d12" : "unknown";
+}
+// The other native API of this build, if any; Direct3D 12 is never one under Wine.
+std::optional<GraphicsApi> OtherApi(GraphicsApi api) {
+#if !defined(NARUTORISE_NATIVE_D3D12_DISABLED) && defined(NARUTORISE_NATIVE_VULKAN)
+  if (api == GraphicsApi::kD3D12) return GraphicsApi::kVulkan;
+  if (api == GraphicsApi::kVulkan && !narutorise::WineVersion()) return GraphicsApi::kD3D12;
+#endif
+  (void)api;
+  return std::nullopt;
+}
+}  // namespace
 std::mutex engine_mutex;
 std::unique_ptr<Dispatcher> native_engine;
 std::unique_ptr<Dispatcher> failed_native_engine;
@@ -53,9 +69,23 @@ bool InitializeEngines(PPCContext& ctx) {
           // Main and render threads both reach the D3D boundary.
           true, gpu::DeferredTranslation());  // The translation stage, by the session.
       const auto& settings = gpu::CurrentSettings();
-      ready = candidate->Initialize(evidence, gpu::RenderMode{settings.resolution_scale, settings.msaa_samples,
-          settings.graphics_device, settings.native_backend == "vulkan" ? GraphicsApi::kVulkan :
-          settings.native_backend == "d3d12" ? GraphicsApi::kD3D12 : GraphicsApi(0xFF)});
+      const GraphicsApi requested = settings.native_backend == "vulkan" ? GraphicsApi::kVulkan :
+          settings.native_backend == "d3d12" ? GraphicsApi::kD3D12 : GraphicsApi(0xFF);
+      auto mode = [&](GraphicsApi api) {
+        return gpu::RenderMode{settings.resolution_scale, settings.msaa_samples, settings.graphics_device, api};
+      };
+      ready = candidate->Initialize(evidence, mode(requested));
+      // The other API of the build when the requested one cannot start on this
+      // card or driver: the game opens, and the log keeps the refusal.
+      if (const auto other = OtherApi(requested); !ready && other) {
+        REXLOG_ERROR("[narutorise] Native renderer initialization failed on {}: {}; trying {}",
+                     settings.native_backend, evidence, ApiName(*other));
+        failed_release_ok = candidate->Shutdown(failed_release);
+        if (failed_release_ok) {
+          candidate = std::make_unique<gpu::Dispatcher>(true, gpu::DeferredTranslation());
+          ready = candidate->Initialize(evidence, mode(*other));
+        }
+      }
       if (ready) {
         // The adapter in use, as the SDK logs it for the Xenos renderer.
         const std::string device = candidate->DeviceName();
@@ -63,13 +93,13 @@ bool InitializeEngines(PPCContext& ctx) {
           REXLOG_WARN("[narutorise] graphics_device \"{}\" not found; the automatic choice is used",
                       settings.graphics_device);
         REXLOG_INFO("[narutorise] Native renderer backend: {}; adapter: {}; initialization: {}",
-                    settings.native_backend, device, evidence);
+                    ApiName(candidate->Api()), device, evidence);
         engine_registration = {ctx.r4.u32, ctx.r5.u32, ts->thread_id(), int(thread->active_cpu()), ctx.r31.u32};
         native_engine = std::move(candidate);
       } else {
         // The journal of the product is absent: the reason goes to the SDK log.
         REXLOG_ERROR("[narutorise] Native renderer initialization failed: {}", evidence);
-        failed_release_ok = candidate->Shutdown(failed_release);
+        if (failed_release_ok) failed_release_ok = candidate->Shutdown(failed_release);
         if (!failed_release_ok) failed_native_engine = std::move(candidate);
       }
     }

@@ -7,11 +7,13 @@
 #include "gpu/host/internal.h"
 #include "gpu/d3d/d3d.h"
 #include "gpu/common/guest_memory.h"
+#include "gpu/common/platform.h"
 #include "gpu/settings.h"
 #include "gpu/diagnostics/crash_dump.h"
 #include "gpu/diagnostics/heap_watch.h"
 #include "wine.h"
 #include <cstdlib>
+#include <fmt/format.h>
 #include <rex/logging.h>
 #include <rex/system/interfaces/graphics.h>
 #include <rex/system/xmemory.h>
@@ -75,6 +77,9 @@ void Configure(rex::RuntimeConfig& config) {
   if (!available) {
     REXLOG_ERROR("[narutorise] Requested native_backend '{}' is unavailable in this build. No backend fallback.", backend);
     narutorise::incident::FirstFailure("native-backend-unavailable", backend);
+    rex::FlushLogging();
+    platform::ShowError("narutorise", fmt::format("The graphics API '{}' is not available in this build.\n\n"
+        "Choose another one in Settings > Display and start the game again.", backend));
     std::_Exit(88);
   }
 #if defined(NARUTORISE_NATIVE_VULKAN)

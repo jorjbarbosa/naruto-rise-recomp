@@ -127,7 +127,7 @@ void ReportProductStop(std::string_view name, int code, bool released, std::stri
     message += fmt::format("\nThe graphics card stopped responding (0x{:08X}).", *removed);
 #ifdef _WIN32
   message += "\n\nThe details are in the log, in the logs folder next to narutorise.exe. "
-             "If this happens again, the Xenos renderer can be chosen in the launcher.";
+             "If this happens again, choose the other graphics API in Settings > Display.";
 #else
   message += "\n\nThe details are in the log, in the logs folder next to the narutorise executable.";
 #endif

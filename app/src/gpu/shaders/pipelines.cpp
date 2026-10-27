@@ -10,7 +10,7 @@
 // The list also knows the world each pipeline was first created in
 // (common/title_loading.h): when the title starts loading a world, its entries
 // not compiled yet are posted to the asynchronous threads ahead of the pool,
-// which compile them at the highest priority while the loading screen is up
+// which compile them above normal priority while the loading screen is up
 // (PrefetchWorldPipelines). REX_NATIVE_PSO_WORLD=0 turns that off.
 #include "gpu/shaders/pipelines.h"
 #include "diagnostics/incident.h"
@@ -23,6 +23,7 @@
 #include "gpu/d3d/d3d.h"
 #include "gpu/backend/dispatcher.h"
 #include "gpu/backend/pipeline_keys.h"
+#include "gpu/backend/pipeline_set.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -242,8 +243,7 @@ void StartPipelinePrecompile() {
     }
     p.layouts.push_back(layout);
   }
-  // Two thirds of the hardware threads, at least two.
-  p.threads = std::max(2u, std::thread::hardware_concurrency() * 2 / 3);
+  p.threads = PipelineThreadsPerPool();
   p.started = std::chrono::steady_clock::now();
   p.pool_started.store(true, std::memory_order_release);
   BeginShaderBatch(uint32_t(kPipelineCache.size()));

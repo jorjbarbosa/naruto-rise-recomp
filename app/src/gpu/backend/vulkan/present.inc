@@ -1,5 +1,6 @@
 // Own WSI adapter. Render completion and presentation retirement are distinct:
-// submission fences protect batches, maintenance1 present fences protect WSI.
+// submission fences protect batches; maintenance1 present fences, or the
+// queue's idle on a device without them, protect WSI.
 bool Backend::State::WaitPresent(VkFence fence, std::string& evidence) {
   const auto deadline = std::chrono::steady_clock::now() + kWaitBudget;
   VkResult result;
@@ -23,6 +24,21 @@ bool Backend::State::RetireSwapchain(std::string& evidence) {
   for (auto& back : back_images) if (back.pending) {
     if (!WaitPresent(back.presented, evidence)) return false;
     back.pending = false;
+  }
+  if (!present_fences) {
+    // Nothing signals the end of a presentation: the queue's idle is the proof
+    // left, as engines without the extension take it (each present waited on
+    // its image's semaphore in queue order).
+    auto* wsi = static_cast<plume::VulkanCommandQueue*>(queue.get())->queue;
+    VkResult result;
+    {
+      std::lock_guard lock(*wsi->mutex);
+      result = vkQueueWaitIdle(wsi->vk);
+    }
+    if (result != VK_SUCCESS) {
+      Observe(result);
+      return GraphicsError(evidence, "native-vulkan-present-retirement-unproved", result);
+    }
   }
   Reclaim(completion->Completed()); // Framebuffers and image views first.
   for (auto& back : back_images) {
@@ -62,9 +78,15 @@ bool Backend::State::CreateSwapchain(uint32_t width, uint32_t height, std::strin
   swap_extent = caps.currentExtent.width != UINT32_MAX ? caps.currentExtent :
       VkExtent2D{std::clamp(width, caps.minImageExtent.width, caps.maxImageExtent.width),
                   std::clamp(height, caps.minImageExtent.height, caps.maxImageExtent.height)};
+  if (!swap_extent.width || !swap_extent.height) {
+    recreate_swapchain = true;
+    return true;
+  }
   VkSwapchainCreateInfoKHR info{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
   info.surface = window_surface;
-  info.minImageCount = std::max(present_mode.buffers, caps.minImageCount);
+  // Mailbox replaces the queued image: one shown, one queued, one drawn.
+  info.minImageCount = std::max({present_mode.buffers, caps.minImageCount,
+                                 swap_mode == VK_PRESENT_MODE_MAILBOX_KHR ? 3u : 0u});
   if (caps.maxImageCount) info.minImageCount = std::min(info.minImageCount, caps.maxImageCount);
   info.imageFormat = VK_FORMAT_B8G8R8A8_UNORM; info.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
   info.imageExtent = swap_extent; info.imageArrayLayers = 1;
@@ -72,7 +94,14 @@ bool Backend::State::CreateSwapchain(uint32_t width, uint32_t height, std::strin
   if ((caps.supportedUsageFlags & info.imageUsage) != info.imageUsage)
     return GraphicsError(evidence, "native-vulkan-swapchain-image-usage", VK_ERROR_FORMAT_NOT_SUPPORTED);
   info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE; info.preTransform = caps.currentTransform;
-  info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR; info.presentMode = swap_mode; info.clipped = VK_TRUE;
+  // Opaque where the surface offers it; otherwise the first mode it does (the
+  // image's alpha is written opaque anyway).
+  info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+  if (!(caps.supportedCompositeAlpha & info.compositeAlpha))
+    for (auto alpha : {VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR, VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+                       VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR})
+      if (caps.supportedCompositeAlpha & alpha) { info.compositeAlpha = alpha; break; }
+  info.presentMode = swap_mode; info.clipped = VK_TRUE;
   if ((result = vkCreateSwapchainKHR(vulkan->vk, &info, nullptr, &swapchain)) != VK_SUCCESS)
     return GraphicsError(evidence, "native-vulkan-create-swapchain", result);
   if ((result = vkGetSwapchainImagesKHR(vulkan->vk, swapchain, &count, nullptr)) != VK_SUCCESS)
@@ -103,7 +132,7 @@ void Backend::State::ReleaseOutput() {
   for (auto set : output_sets) if (set) vkDestroyDescriptorSetLayout(vulkan->vk, set, nullptr);
   output_layouts = {}; output_sets = {};
   if (window_surface) vkDestroySurfaceKHR(static_cast<plume::VulkanInterface*>(render.get())->instance, window_surface, nullptr);
-  window_surface = VK_NULL_HANDLE; window = {};
+  window_surface = VK_NULL_HANDLE; window = {}; surface_lost = false;
 }
 // The surface of a native window, by the WSI of its kind. Wayland's types are
 // not in Plume's headers (it builds for Xlib on Linux); the instance enables
@@ -141,6 +170,22 @@ VkResult CreateWindowSurface(VkInstance instance, const platform::NativeWindow& 
       return VK_ERROR_EXTENSION_NOT_PRESENT;
   }
 }
+// A lost surface (the window system dropped it) gets a new one on the same
+// window, then a swapchain; the old swapchain is retired first.
+bool Backend::State::RecreateSurface(uint32_t width, uint32_t height, std::string& evidence) {
+  if (!RetireSwapchain(evidence)) return false;
+  const VkInstance instance = static_cast<plume::VulkanInterface*>(render.get())->instance;
+  if (window_surface) vkDestroySurfaceKHR(instance, window_surface, nullptr);
+  window_surface = VK_NULL_HANDLE;
+  VkResult result = CreateWindowSurface(instance, window, window_surface);
+  if (result != VK_SUCCESS) return GraphicsError(evidence, "native-vulkan-window-surface", result);
+  VkBool32 supported = VK_FALSE;
+  result = vkGetPhysicalDeviceSurfaceSupportKHR(vulkan->physicalDevice, vulkan->queueFamilyIndices[0], window_surface,
+                                                &supported);
+  if (result != VK_SUCCESS || !supported) return GraphicsError(evidence, "native-vulkan-window-present-support", result);
+  surface_lost = false;
+  return CreateSwapchain(width, height, evidence);
+}
 bool Backend::AttachWindow(const platform::NativeWindow& window, std::string& evidence, const PresentMode& mode) {
   auto& s = *state_;
   uint32_t width = 0, height = 0;
@@ -148,12 +193,15 @@ bool Backend::AttachWindow(const platform::NativeWindow& window, std::string& ev
   if (!s.ready || s.owner_thread != rex::thread::current_thread_system_id() || s.Attached() ||
       window.kind == platform::NativeWindow::Kind::kNone)
     return GraphicsError(evidence, "native-attach-owner-or-window");
+  // The device enables swapchain_maintenance1 wherever it reports it (KHR or
+  // EXT); without it the presents carry no fence. REX_NATIVE_VULKAN_PRESENT_FENCES=0
+  // takes that path on any device.
   VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT maintenance{
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT};
   VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &maintenance};
   vkGetPhysicalDeviceFeatures2(s.vulkan->physicalDevice, &features);
-  if (!maintenance.swapchainMaintenance1)
-    return GraphicsError(evidence, "native-vulkan-swapchain-maintenance1-required", VK_ERROR_FEATURE_NOT_PRESENT);
+  const char* fences_option = std::getenv("REX_NATIVE_VULKAN_PRESENT_FENCES");
+  s.present_fences = maintenance.swapchainMaintenance1 && !(fences_option && std::string_view(fences_option) == "0");
   VkResult result = CreateWindowSurface(static_cast<plume::VulkanInterface*>(s.render.get())->instance, window,
                                         s.window_surface);
   if (result != VK_SUCCESS) return GraphicsError(evidence, "native-vulkan-window-surface", result);
@@ -163,8 +211,9 @@ bool Backend::AttachWindow(const platform::NativeWindow& window, std::string& ev
   s.window = window; s.present_mode = mode;
   if (sized && !s.CreateSwapchain(width, height, evidence)) return false;
   if (!s.EnsureOutput(evidence)) return false;
-  evidence = fmt::format("{{\"attached\":true,\"backend\":\"vulkan\",\"retirement\":\"swapchain_maintenance1 (KHR/EXT)\","
+  evidence = fmt::format("{{\"attached\":true,\"backend\":\"vulkan\",\"retirement\":\"{}\","
       "\"present_mode\":{},\"buffers\":{},\"effective_frame_latency\":1,\"generation\":{}}}",
+      s.present_fences ? "swapchain_maintenance1 (KHR/EXT)" : "queue-idle",
       int(s.swap_mode), s.back_images.size(), s.swap_generation);
   return true;
 }

@@ -420,8 +420,7 @@ class DeviceOwner final {
   // failure, stop); a wait without publication for kGateTimeout fails too.
   enum class FenceResult { Done, Skipped, Waited, Failed };
   template <typename Drain, typename Failed>
-  FenceResult BlockOnFence(uint32_t fence, Drain&& drain, Failed&& failed, std::string& fields,
-                           std::chrono::milliseconds preparation_budget = kGateTimeout) {
+  FenceResult BlockOnFence(uint32_t fence, Drain&& drain, Failed&& failed, std::string& fields) {
     std::unique_lock lock(fence_mutex_);
     uint32_t counter = 0, completed = 0, suspended = 0;
     if (!live_.load(std::memory_order_acquire) || !writeback_ || !Word(10908, counter) ||
@@ -455,7 +454,7 @@ class DeviceOwner final {
     }
     // This includes FIFO translation and CPU pipeline compilation before
     // submission. The backend separately bounds actual GPU completion.
-    auto deadline = std::chrono::steady_clock::now() + preparation_budget;
+    auto deadline = std::chrono::steady_clock::now() + kGateTimeout;
     for (;;) {
       if (!Word(10908, counter) || !GuestWord(writeback_, completed)) return FenceResult::Failed;
       if (drained) {
@@ -471,7 +470,7 @@ class DeviceOwner final {
       if (released_ || failed()) return FenceResult::Failed;
       const uint64_t published = frame_publications_;
       fence_cv_.wait_for(lock, std::chrono::milliseconds(5));
-      if (frame_publications_ != published) deadline = std::chrono::steady_clock::now() + preparation_budget;
+      if (frame_publications_ != published) deadline = std::chrono::steady_clock::now() + kGateTimeout;
       else if (std::chrono::steady_clock::now() > deadline) return FenceResult::Failed;
     }
     record("waited");
@@ -573,7 +572,10 @@ class DeviceOwner final {
   static constexpr uint32_t kWritebackBytes = 96;
   static constexpr uint32_t kScratchBytes = 32;
   static constexpr size_t kGatesMax = 8;  // Pending frame ends (the Swap keeps at most two).
-  static constexpr auto kGateTimeout = std::chrono::seconds(2);
+  // One budget for both APIs: a cold driver cache can spend tens of seconds
+  // compiling the first frames' pipelines, slower on older compilers. A lost
+  // device fails its own wait in the backend, not this one.
+  static constexpr auto kGateTimeout = std::chrono::seconds(60);
   static uint32_t Swap(uint32_t v) { return std::byteswap(v); }
   // Fence order relative to the counter 10908, as the console compares them.
   static bool NotAfter(uint32_t counter, uint32_t a, uint32_t b) { return counter - a >= counter - b; }

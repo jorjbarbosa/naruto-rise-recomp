@@ -75,7 +75,7 @@ class Dispatcher final {
   // Runs work(i, engine) for every i below count on `threads` pool threads,
   // concurrently with the owner; work may call only the engine's free-threaded
   // operations (PrecompilePipeline). The threads follow the title's loading
-  // screen (common/title_loading.h): all of them at the highest priority while
+  // screen (common/title_loading.h): all of them above normal priority while
   // it is up, kPoolThreadsInGame at the lowest otherwise. done(stopped) runs
   // once, on the last thread to finish. Shutdown stops the pool (no new index)
   // and joins it before the engine goes. One pool per dispatcher; false when

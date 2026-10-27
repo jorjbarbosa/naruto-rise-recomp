@@ -70,14 +70,20 @@ bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, u
     return GraphicsError(evidence, "native-present-owner-or-slot");
   auto& stage = s.stages[slot];
   if (!stage.staged || stage.presented) return GraphicsError(evidence, "native-present-slot-not-staged");
+  // A frame with nowhere to go is skipped, never the session.
+  auto skipped = [&](const char* why) {
+    stage.presented = true;
+    evidence = fmt::format("{{\"presented\":false,\"skipped\":\"{}\"}}", why);
+    return true;
+  };
   uint32_t width_now = 0, height_now = 0;
-  if (!platform::ClientSize(s.window, width_now, height_now)) {
-    stage.presented = true; evidence = "{\"presented\":false,\"skipped\":\"window-empty\"}"; return true;
-  }
+  if (!platform::ClientSize(s.window, width_now, height_now)) return skipped("window-empty");
   const char* reason = nullptr; VkResult result = VK_SUCCESS;
   if (!s.CloseBatch(reason, result)) return GraphicsError(evidence, reason, result);
+  if (s.surface_lost && !s.RecreateSurface(width_now, height_now, evidence)) return false;
   if (!s.swapchain || s.recreate_swapchain || width_now != s.swap_extent.width || height_now != s.swap_extent.height)
     if (!s.CreateSwapchain(width_now, height_now, evidence)) return false;
+  if (!s.swapchain) return skipped("window-empty");
   // Bound the presentation queue to one pending frame independently of render completion.
   for (auto& back : s.back_images) if (back.pending) {
     if (!s.WaitPresent(back.presented, evidence)) return false;
@@ -91,21 +97,35 @@ bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, u
   if ((result = vkResetFences(s.vulkan->vk, 1, &s.acquire_fence)) != VK_SUCCESS)
     return GraphicsError(evidence, "native-vulkan-acquire-reset", result);
   uint32_t index = 0;
-  const auto deadline = std::chrono::steady_clock::now() + kWaitBudget;
+  // An image normally comes within a refresh or two (one present pending).
+  constexpr auto kAcquireBudget = std::chrono::seconds(1);
+  auto deadline = std::chrono::steady_clock::now() + kAcquireBudget;
   std::vector<int32_t> acquire_results;
-  do {
-    if (!platform::ClientSize(s.window, width_now, height_now)) {
-      stage.presented = true; evidence = "{\"presented\":false,\"skipped\":\"window-closed-or-minimized\"}"; return true;
-    }
+  bool renewed = false, surface_renewed = false;
+  for (;;) {
+    if (!platform::ClientSize(s.window, width_now, height_now)) return skipped("window-closed-or-minimized");
     result = vkAcquireNextImageKHR(s.vulkan->vk, s.swapchain, 20'000'000, VK_NULL_HANDLE, s.acquire_fence, &index);
     acquire_results.push_back(int32_t(result));
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
-      if (!platform::ClientSize(s.window, width_now, height_now)) {
-        stage.presented = true; evidence = "{\"presented\":false,\"skipped\":\"window-empty\"}"; return true;
-      }
+      if (!platform::ClientSize(s.window, width_now, height_now)) return skipped("window-empty");
       if (!s.CreateSwapchain(width_now, height_now, evidence)) return false;
+    } else if (result == VK_ERROR_SURFACE_LOST_KHR && !surface_renewed) {
+      surface_renewed = true;
+      if (!s.RecreateSurface(width_now, height_now, evidence)) return false;
     } else if (result != VK_TIMEOUT && result != VK_NOT_READY) break;
-  } while (std::chrono::steady_clock::now() < deadline && !s.failures->Failed());
+    if (!s.swapchain) return skipped("window-empty");
+    if (s.failures->Failed()) break;
+    if (std::chrono::steady_clock::now() < deadline) continue;
+    if (result != VK_TIMEOUT && result != VK_NOT_READY) break;  // Out of date up to the deadline.
+    // No image within the budget: a compositor that stopped releasing them (a
+    // hidden window, a monitor turned off). One new swapchain, as for an out of
+    // date one; still none and this frame is skipped.
+    if (renewed) return skipped("acquire-timeout");
+    renewed = true;
+    if (!s.CreateSwapchain(width_now, height_now, evidence)) return false;
+    if (!s.swapchain) return skipped("window-empty");
+    deadline = std::chrono::steady_clock::now() + kAcquireBudget;
+  }
   if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
     s.Observe(result); return GraphicsError(evidence, "native-vulkan-acquire", result);
   }
@@ -161,23 +181,28 @@ bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, u
   stage.last_use = s.batch.sequence; const uint64_t sequence = s.batch.sequence;
   s.submit_signal = back.rendered;
   if (!s.CloseBatch(reason, result)) return GraphicsError(evidence, reason, result);
-  if ((result = vkResetFences(s.vulkan->vk, 1, &back.presented)) != VK_SUCCESS)
+  if (s.present_fences && (result = vkResetFences(s.vulkan->vk, 1, &back.presented)) != VK_SUCCESS)
     return GraphicsError(evidence, "native-present-fence-reset", result);
   VkSwapchainPresentFenceInfoEXT completion{VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_EXT};
   completion.swapchainCount = 1; completion.pFences = &back.presented;
-  VkPresentInfoKHR info{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, &completion};
+  VkPresentInfoKHR info{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, s.present_fences ? &completion : nullptr};
   info.waitSemaphoreCount = 1; info.pWaitSemaphores = &back.rendered;
   info.swapchainCount = 1; info.pSwapchains = &s.swapchain; info.pImageIndices = &index;
   auto* queue = static_cast<plume::VulkanCommandQueue*>(s.queue.get())->queue;
-  const bool authorized = s.failures->Authorize([&] {
+  // The batch this present waits on passed the failure channel at its
+  // submission. The present shows no guest state, so the channel is checked
+  // but not held: a FIFO present that blocks would hold every frame
+  // publication waiting for the channel (the D3D12 present does the same).
+  if (s.failures->Failed()) return GraphicsError(evidence, "native-present-refused-after-failure");
+  {
     std::lock_guard lock(*queue->mutex);
     result = vkQueuePresentKHR(queue->vk, &info);
-  });
-  if (!authorized) return GraphicsError(evidence, "native-present-refused-after-failure");
-  back.pending = true;
+  }
+  back.pending = s.present_fences;
   stage.presented = true; ++s.presents;
   const VkResult present_result = result;
   if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) s.recreate_swapchain = true;
+  else if (result == VK_ERROR_SURFACE_LOST_KHR) s.surface_lost = true;  // A new surface at the next frame.
   else if (result != VK_SUCCESS) {
     s.Observe(result); return GraphicsError(evidence, "native-vulkan-present", result);
   }

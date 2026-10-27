@@ -3,6 +3,7 @@
 #include "gpu/backend/failure_channel.h"
 
 #include <fmt/format.h>
+#include <rex/thread.h>
 
 namespace gpu::vulkan {
 namespace {
@@ -22,7 +23,10 @@ Completion::~Completion() {
 }
 
 void Completion::Start() {
-  thread_ = std::thread([this] { Run(); });
+  thread_ = std::thread([this] {
+    rex::thread::set_current_thread_name("Native Vulkan Completion");
+    Run();
+  });
 }
 
 bool Completion::Acquire(VkFence& fence, VkResult& result) {

@@ -320,6 +320,8 @@ struct Backend::State {
   PipelineSet pipeline_set;
   // Draw root signature (XenosRecomp layout) and shader-visible heaps, once.
   bool EnsureDrawLayer(const char*& reason, HRESULT& hr);
+  // A free SRV slot of the draw heap; false when all are taken.
+  bool AllocateDrawView(uint32_t& slot);
   // The constant blocks of the draw layer, on the owner thread: the requests
   // bring the whole block or the registers written since the previous request.
   std::array<uint8_t, 4096> vs_block{}, ps_block{};
@@ -450,11 +452,20 @@ struct Backend::State {
     ++buffer_heaps_created;
     return true;
   }
+  // The state of a resource the draws' shaders read. NVIDIA's also names
+  // COPY_SOURCE: the shader resource states alone were seen to miss cache
+  // flushes and layout transitions there (Dawn's
+  // d3d12_expand_shader_resource_state_transitions_to_copy_source).
+  D3D12_RESOURCE_STATES shader_read =
+      D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
   // Fixed descriptor slots: a slot is rewritten only when no submitted work
   // can still read it. Slot 0 holds the null view and the point sampler.
   uint32_t next_view = 1;
   std::vector<uint32_t> free_views;
+  // A sampler's slot by its description; with the heap full, a new one takes
+  // the slot of a sampler whose last use completed (sampler_slot_use).
   std::unordered_map<uint64_t, uint32_t> sampler_slots;
+  std::vector<uint64_t> sampler_slot_keys, sampler_slot_use;  // By slot.
   uint64_t operations = 0;
   std::unordered_map<uint32_t, Surface> surfaces;
   std::vector<Surface> retired_surfaces;  // Released, waiting for their fence.
@@ -503,15 +514,12 @@ struct Backend::State {
   }
   // Depth resolve pass (single-sample and MSAA source), and the color resolve
   // of one sample (sample_resolve) with the same root signature and slots.
-  // Its SRVs live in a ring of shader-visible slots, each reused once the
-  // fence of its last pass completed; the destination RTV is read when the
-  // pass is recorded.
-  static constexpr uint32_t kDepthResolveSlots = 64;
+  // Its SRV takes a slot of the draw heap, back at the batch's fence as a
+  // draw's are (the batch keeps one shader-visible heap); the destination RTV
+  // is read when the pass is recorded.
   Microsoft::WRL::ComPtr<ID3D12RootSignature> depth_resolve_root;
   Microsoft::WRL::ComPtr<ID3D12PipelineState> depth_resolve_single, depth_resolve_ms, sample_resolve;
-  Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> depth_resolve_views, depth_resolve_rtv;
-  std::array<uint64_t, kDepthResolveSlots> depth_resolve_slot_fence{};
-  uint32_t depth_resolve_next = 0;
+  Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> depth_resolve_rtv;
   uint64_t depth_resolves = 0, sample_resolves = 0;
   struct Stage {
     Microsoft::WRL::ComPtr<ID3D12Resource> resource;
@@ -726,10 +734,10 @@ Backend::Backend(std::shared_ptr<FailureChannel> failures) : state_(std::make_un
   state_->failures = std::move(failures);
 }
 Backend::~Backend() {
-  std::string ignored;
+  std::string evidence;
   // A caller must abort if draining failed. Never implicitly destroy resources
   // referenced by work whose completion has not been proved.
-  if (!Shutdown(ignored)) std::_Exit(88);
+  if (!Shutdown(evidence)) ExitUnreleased("native-d3d12-backend-destructor", evidence);
 }
 
 bool Backend::Initialize(std::string& evidence, const RenderMode& mode) {
@@ -828,6 +836,7 @@ bool Backend::Initialize(std::string& evidence, const RenderMode& mode) {
   state_->pending_signal = 0;
   DXGI_ADAPTER_DESC1 adapter{};
   result = device->adapter->GetDesc1(&adapter);
+  if (SUCCEEDED(result) && adapter.VendorId == 0x10DE) state_->shader_read |= D3D12_RESOURCE_STATE_COPY_SOURCE;
   if (FAILED(result)) return fail("native-adapter-description", result);
   if (state_->info && state_->info->GetNumStoredMessagesAllowedByRetrievalFilter() != 0)
     return fail("native-debug-messages");
@@ -949,6 +958,8 @@ bool Backend::Shutdown(std::string& evidence) {
   state_->buffers.clear();
   state_->buffer_heaps.clear();
   state_->sampler_slots.clear();
+  state_->sampler_slot_keys.clear();
+  state_->sampler_slot_use.clear();
   state_->free_views.clear();
   state_->next_view = 1;
   state_->draw_samplers.Reset();
@@ -976,7 +987,6 @@ bool Backend::Shutdown(std::string& evidence) {
   state_->ui_views.Reset();
   state_->ui_pipeline.Reset();
   state_->ui_root.Reset();
-  state_->depth_resolve_views.Reset();  // Their last use completed above.
   state_->depth_resolve_rtv.Reset();
   state_->sample_resolve.Reset();
   state_->depth_resolve_ms.Reset();
@@ -2650,18 +2660,31 @@ bool Backend::ResolveSurface(const ResolveRequest& request, uint64_t& fenceValue
   auto* device = static_cast<plume::D3D12Device*>(state_->device.get());
   if (!dest.texture || dest.width != dest_width || dest.height != dest_height || dest.depth != depth ||
       (sampled && !dest.render_target)) {
-    // Recreated once no submitted or recorded work can still use it;
-    // the open batch has not been submitted, so its fence is above every completed value.
+    // Submitted or recorded work may still use the old texture (the open batch
+    // has not been submitted, so its fence is above every completed value):
+    // it waits for that fence with its view (ReleaseRetiredTextures), and the
+    // draw gives the new one a view of its own. Otherwise the draw rewrites
+    // the SRV of the slot for the new resource.
     const uint64_t completed = static_cast<plume::D3D12CommandFence*>(state_->fence.get())->d3d->GetCompletedValue();
-    if (dest.texture && dest.last_use_fence && (completed == UINT64_MAX || completed < dest.last_use_fence))
-      return fail("native-resolve-destination-in-flight");
-    const uint32_t view = dest.view;  // The draw rewrites the SRV for the new resource.
-    dest = {};
-    dest.view = view;
+    if (dest.texture && dest.last_use_fence && (completed == UINT64_MAX || completed < dest.last_use_fence)) {
+      state_->retired_textures.push_back(std::move(dest));
+      ++state_->textures_retired;
+      dest = {};
+    } else {
+      const uint32_t view = dest.view;
+      dest = {};
+      dest.view = view;
+    }
     // A depth destination, or the one of a color sample, is the render target of its pass.
-    dest.texture = state_->device->createTexture(plume::RenderTextureDesc::Texture2D(
+    auto texture_desc = plume::RenderTextureDesc::Texture2D(
         dest_width, dest_height, 1, depth ? plume::RenderFormat::R32_FLOAT : plume::RenderFormat::R8G8B8A8_UNORM,
-        depth || sampled ? plume::RenderTextureFlag::RENDER_TARGET : plume::RenderTextureFlag::NONE));
+        depth || sampled ? plume::RenderTextureFlag::RENDER_TARGET : plume::RenderTextureFlag::NONE);
+    // Committed, as Plume makes its targets: sub-allocated copy destinations
+    // and render targets were seen corrupted on some drivers (AMD before
+    // 32.0.13031.8021, Intel Gen9.5 and Gen11; Dawn's
+    // disable_sub_allocation_for_2d_texture_with_copy_dst_or_render_attachment).
+    texture_desc.committed = true;
+    dest.texture = state_->device->createTexture(texture_desc);
     if (!dest.texture) return fail("native-resolve-destination-create");
     dest.width = dest_width; dest.height = dest_height; dest.depth = depth; dest.render_target = depth || sampled;
     dest.state = static_cast<plume::D3D12Texture*>(dest.texture.get())->resourceStates;
@@ -2735,19 +2758,15 @@ bool Backend::ResolveSurface(const ResolveRequest& request, uint64_t& fenceValue
       pipeline.PS = {kSampleResolvePs, sizeof(kSampleResolvePs)};
       if (FAILED(hr = device->d3d->CreateGraphicsPipelineState(&pipeline, IID_PPV_ARGS(&state_->sample_resolve))))
         return fail("native-sample-resolve-pipeline", hr);
-      D3D12_DESCRIPTOR_HEAP_DESC views{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, State::kDepthResolveSlots,
-                                       D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
       D3D12_DESCRIPTOR_HEAP_DESC rtv{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 1, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
-      if (FAILED(hr = device->d3d->CreateDescriptorHeap(&views, IID_PPV_ARGS(&state_->depth_resolve_views))) ||
-          FAILED(hr = device->d3d->CreateDescriptorHeap(&rtv, IID_PPV_ARGS(&state_->depth_resolve_rtv))))
+      if (FAILED(hr = device->d3d->CreateDescriptorHeap(&rtv, IID_PPV_ARGS(&state_->depth_resolve_rtv))))
         return fail("native-depth-resolve-heaps", hr);
     }
-    const uint32_t slot = state_->depth_resolve_next % State::kDepthResolveSlots;
-    const uint64_t completed = static_cast<plume::D3D12CommandFence*>(state_->fence.get())->d3d->GetCompletedValue();
-    const uint64_t slot_fence = state_->depth_resolve_slot_fence[slot];
-    if (slot_fence && (completed == UINT64_MAX || completed < slot_fence))
-      return fail("native-depth-resolve-views-in-flight");
-    ++state_->depth_resolve_next;
+    const char* layer_reason = nullptr;
+    if (!state_->EnsureDrawLayer(layer_reason, hr)) return fail(layer_reason, hr);
+    uint32_t slot = 0;
+    if (!state_->AllocateDrawView(slot)) return fail("native-draw-views-exhausted");
+    state_->batch.views.push_back(slot);  // Free again once this batch completed.
     D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
     // The depth plane of D32_FLOAT_S8X24, or the color surface.
     srv.Format = depth ? DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS : DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -2759,7 +2778,7 @@ bool Backend::ResolveSurface(const ResolveRequest& request, uint64_t& fenceValue
       srv.Texture2D.MipLevels = 1;
     }
     const UINT view_step = device->d3d->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-    auto view_cpu = state_->depth_resolve_views->GetCPUDescriptorHandleForHeapStart();
+    auto view_cpu = state_->draw_views->GetCPUDescriptorHandleForHeapStart();
     view_cpu.ptr += SIZE_T(view_step) * slot;
     device->d3d->CreateShaderResourceView(src, &srv, view_cpu);
     const auto rtv = state_->depth_resolve_rtv->GetCPUDescriptorHandleForHeapStart();
@@ -2776,13 +2795,13 @@ bool Backend::ResolveSurface(const ResolveRequest& request, uint64_t& fenceValue
     const D3D12_RECT scissor{0, 0, LONG(dest.width), LONG(dest.height)};
     commands->RSSetViewports(1, &viewport);
     commands->RSSetScissorRects(1, &scissor);
-    ID3D12DescriptorHeap* heaps[] = {state_->depth_resolve_views.Get()};
-    commands->SetDescriptorHeaps(1, heaps);
+    ID3D12DescriptorHeap* heaps[] = {state_->draw_views.Get(), state_->draw_samplers.Get()};
+    commands->SetDescriptorHeaps(2, heaps);
     commands->SetGraphicsRootSignature(state_->depth_resolve_root.Get());
     commands->SetPipelineState(sampled ? state_->sample_resolve.Get() :
                                source.desc.samples > 1 ? state_->depth_resolve_ms.Get() :
                                state_->depth_resolve_single.Get());
-    auto view_gpu = state_->depth_resolve_views->GetGPUDescriptorHandleForHeapStart();
+    auto view_gpu = state_->draw_views->GetGPUDescriptorHandleForHeapStart();
     view_gpu.ptr += UINT64(view_step) * slot;
     commands->SetGraphicsRootDescriptorTable(0, view_gpu);
     // A guest sample the host count lacks (msaa_samples 2 on a 4X target)
@@ -2792,7 +2811,6 @@ bool Backend::ResolveSurface(const ResolveRequest& request, uint64_t& fenceValue
     commands->SetGraphicsRoot32BitConstants(1, 2, pass, 0);
     commands->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     commands->DrawInstanced(3, 1, 0, 0);
-    state_->depth_resolve_slot_fence[slot] = state_->batch.fence;
     if (sampled) ++state_->sample_resolves;
     else ++state_->depth_resolves;
     method = sampled ? "sample-pass" : source.desc.samples > 1 ?
@@ -2866,8 +2884,6 @@ D3D12_BLEND_OP xenosBlendOp(uint32_t f, bool& ok) {
   }
 }
 constexpr UINT kDrawViews = 4096, kDrawSamplers = 2048;
-constexpr D3D12_RESOURCE_STATES kShaderResource =
-    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 // A request's constants onto the engine's block: the whole block
 // (4096 bytes) replaces it; otherwise the delta records (uint16 first
 // register, uint16 count, count x 16 bytes) are applied in order. False: a
@@ -2994,6 +3010,13 @@ bool DxilShaders(const ShaderRef& vs, const ShaderRef& ps, bool depth_only) {
 
 // The draw root signature and heaps, created by the first draw or by
 // PreparePipelines before the pool threads use the root signature.
+bool Backend::State::AllocateDrawView(uint32_t& slot) {
+  if (!free_views.empty()) { slot = free_views.back(); free_views.pop_back(); return true; }
+  if (next_view >= kDrawViews) return false;
+  slot = next_view++;
+  return true;
+}
+
 bool Backend::State::EnsureDrawLayer(const char*& reason, HRESULT& hr) {
   if (draw_root) return true;
   auto* device = static_cast<plume::D3D12Device*>(this->device.get());
@@ -3173,13 +3196,7 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
   // version is copied into the same resource after a transition barrier.
   const UINT view_step = device->d3d->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
   const UINT sampler_step = device->d3d->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
-  auto allocate_view = [&](uint32_t& slot) {
-    if (slot) return true;
-    if (!state_->free_views.empty()) { slot = state_->free_views.back(); state_->free_views.pop_back(); return true; }
-    if (state_->next_view >= kDrawViews) return false;
-    slot = state_->next_view++;
-    return true;
-  };
+  auto allocate_view = [&](uint32_t& slot) { return slot || state_->AllocateDrawView(slot); };
   // The draw records into the open batch. A copy or a view slot that
   // recorded or submitted work can still read is never rewritten: the open
   // batch retains it until its fence and the new copy takes a new slot.
@@ -3323,14 +3340,30 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
     sampler.MaxLOD = t.max_lod;
     for (unsigned i = 0; i < 4; ++i) sampler.BorderColor[i] = t.border_color[i];
     const uint64_t sampler_key = Fnv64(reinterpret_cast<const uint8_t*>(&sampler), sizeof(sampler), 0xCBF29CE484222325ull);
-    auto [slot_it, inserted] = state_->sampler_slots.try_emplace(sampler_key, uint32_t(state_->sampler_slots.size() + 1));
+    auto slot_it = state_->sampler_slots.find(sampler_key);
+    const bool inserted = slot_it == state_->sampler_slots.end();
     if (inserted) {
-      if (slot_it->second >= kDrawSamplers) { state_->sampler_slots.erase(slot_it); return fail("native-draw-samplers-exhausted"); }
+      if (state_->sampler_slot_use.empty()) {
+        state_->sampler_slot_keys.assign(kDrawSamplers, 0);
+        state_->sampler_slot_use.assign(kDrawSamplers, 0);
+      }
+      uint32_t slot = uint32_t(state_->sampler_slots.size() + 1);
+      if (slot >= kDrawSamplers) {
+        // Full: the slot of a sampler no recorded or submitted work can read.
+        slot = 0;
+        for (uint32_t i = 1; i < kDrawSamplers && !slot; ++i)
+          if (!in_use(state_->sampler_slot_use[i])) slot = i;
+        if (!slot) return fail("native-draw-samplers-exhausted");
+        state_->sampler_slots.erase(state_->sampler_slot_keys[slot]);
+      }
+      slot_it = state_->sampler_slots.emplace(sampler_key, slot).first;
+      state_->sampler_slot_keys[slot] = sampler_key;
       auto handle = state_->draw_samplers->GetCPUDescriptorHandleForHeapStart();
-      handle.ptr += SIZE_T(slot_it->second) * sampler_step;
+      handle.ptr += SIZE_T(slot) * sampler_step;
       device->d3d->CreateSampler(&sampler, handle);
     }
     const uint32_t sampler_slot = slot_it->second;
+    state_->sampler_slot_use[sampler_slot] = state_->batch.fence;
     // Registers 0 to 15 at c0..c3 (view) and c12..c15 (sampler); the
     // vertex texture registers 16 to 19 at c18 and c19 (bytes 288 and 304),
     // as build-sdb-shader-cache.py declares them.
@@ -3456,7 +3489,7 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
         list->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
       }
     }
-    barrier(use.resource, *use.state, kShaderResource);
+    barrier(use.resource, *use.state, state_->shader_read);
   }
   if (color) transition(*color, D3D12_RESOURCE_STATE_RENDER_TARGET);
   if (depth) transition(*depth, D3D12_RESOURCE_STATE_DEPTH_WRITE);
@@ -3797,7 +3830,7 @@ bool Backend::UploadSampled(const DrawTexture& t, std::string& evidence) {
     from.PlacedFootprint.Offset += page_offset;
     list->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
   }
-  barrier(kShaderResource);
+  barrier(state_->shader_read);
   s.version = t.version;
   s.last_use_fence = state_->batch.fence;
   const uint64_t batch_operations = ++state_->batch.operations;

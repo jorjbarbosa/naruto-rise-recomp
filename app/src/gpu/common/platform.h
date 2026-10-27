@@ -24,10 +24,11 @@ bool Sleep(int64_t ticks);
 // One step of a spin wait.
 void Pause();
 
-// The scheduling of the calling thread, for the worker pools. Outside Windows
-// an unprivileged thread cannot rise above normal: kLowest is the batch policy,
-// kNormal and kHighest the normal one.
-enum class ThreadPriority { kLowest, kNormal, kHighest };
+// The scheduling of the calling thread, for the worker pools. A pool never goes
+// above the threads that publish the frames (the owner and the translator run
+// at normal). Outside Windows an unprivileged thread cannot rise above normal:
+// kLowest is the batch policy, kNormal and kAboveNormal the normal one.
+enum class ThreadPriority { kLowest, kNormal, kAboveNormal };
 void SetThreadPriority(ThreadPriority priority);
 // The CPU times of a host thread by its native handle (rex::thread::Thread),
 // in 100 ns units, by the native_handle() of a running rex::thread::Thread

@@ -534,16 +534,20 @@ struct Backend::State {
   VkExtent2D swap_extent{};
   VkPresentModeKHR swap_mode = VK_PRESENT_MODE_FIFO_KHR;
   bool recreate_swapchain = false;
+  bool surface_lost = false;  // A present found the surface lost: recreated at the next frame.
   uint64_t swap_generation = 0, staged_frames = 0, presents = 0;
   PresentMode present_mode;
   VkSemaphore submit_signal{};
   VkFence acquire_fence{};
   bool acquire_pending = false;
+  // Each present signals the image's fence (swapchain_maintenance1). Without
+  // it the retirement waits for the queue instead (RetireSwapchain).
+  bool present_fences = false;
   struct BackImage {
     VkImage image{};
     SyncState state;
     VkSemaphore rendered{};
-    VkFence presented{};
+    VkFence presented{};  // Signaled by the image's present; with present_fences only.
     bool pending = false;
   };
   std::vector<BackImage> back_images;
@@ -564,7 +568,10 @@ struct Backend::State {
   std::map<std::string, VkPipeline> compute_pipelines;
   bool WaitPresent(VkFence fence, std::string& evidence);
   bool RetireSwapchain(std::string& evidence);
+  // No swapchain (and success) while the surface reports no extent: a window
+  // minimized meanwhile. Present skips such frames.
   bool CreateSwapchain(uint32_t width, uint32_t height, std::string& evidence);
+  bool RecreateSurface(uint32_t width, uint32_t height, std::string& evidence);
   bool EnsureOutput(std::string& evidence);
   bool OutputTarget(OutputImage& target, uint32_t width, uint32_t height, VkFormat format, bool storage, std::string& evidence);
   bool OutputPass(OutputImage& input, VkImage output, SyncState& output_state, VkFormat format,
@@ -966,10 +973,10 @@ Backend::Backend(std::shared_ptr<FailureChannel> failures) : state_(std::make_un
   state_->failures = std::move(failures);
 }
 Backend::~Backend() {
-  std::string ignored;
+  std::string evidence;
   // A caller must abort if draining failed. Never implicitly destroy resources
   // referenced by work whose completion has not been proved.
-  if (!Shutdown(ignored)) std::_Exit(88);
+  if (!Shutdown(evidence)) ExitUnreleased("native-vulkan-backend-destructor", evidence);
 }
 
 bool Backend::Initialize(std::string& evidence, const RenderMode& mode) {
@@ -982,13 +989,15 @@ bool Backend::Initialize(std::string& evidence, const RenderMode& mode) {
   if (const char* reason = RenderModeError(mode)) return fail(reason);
   state_->render = plume::CreateVulkanInterface();
   if (!state_->render) return fail("native-vulkan-loader-or-instance-unavailable");
-  if (!mode.device.empty()) {
+  // A saved card that is gone (swapped, renamed by a driver) falls back to the
+  // automatic choice, as in D3D12: the evidence and the host's log tell the
+  // requested name from the one in use. Two cards of one name take the first.
+  std::string device = mode.device;
+  if (!device.empty()) {
     const auto& names = state_->render->getDeviceNames();
-    const auto matches = std::count(names.begin(), names.end(), mode.device);
-    if (matches != 1) return fail(matches ? "native-vulkan-device-name-ambiguous" : "native-vulkan-device-not-found",
-                                 VK_ERROR_INITIALIZATION_FAILED, fmt::format(",\"requested\":\"{}\"", JsonText(mode.device)));
+    if (std::find(names.begin(), names.end(), device) == names.end()) device.clear();
   }
-  state_->device = state_->render->createDevice(mode.device);
+  state_->device = state_->render->createDevice(device);
   if (!state_->device) return fail("Plume-device");
   auto* vulkan = state_->vulkan = static_cast<plume::VulkanDevice*>(state_->device.get());
   const VkPhysicalDevice physical = vulkan->physicalDevice;
@@ -1623,11 +1632,18 @@ bool Backend::ResolveSurface(const ResolveRequest& request, uint64_t& fence, std
   auto& dest = state_->textures[request.dest_key];
   if (!dest.texture || dest.width != host.dest_width || dest.height != host.dest_height || dest.depth != depth ||
       (sampled && !dest.render_target)) {
-    // Recreated once no submitted or recorded work can still use it.
-    if (dest.texture && state_->InFlight(dest.last_use)) return fail("native-resolve-destination-in-flight");
-    const uint32_t view = dest.view;  // The draw rewrites the descriptor for the new image.
-    dest = {};
-    dest.view = view;
+    // Submitted or recorded work may still use the old image: it waits for
+    // that sequence (Reclaim, after the batch's views), and the draw takes
+    // views of the new one. Otherwise the draw rewrites the descriptor.
+    if (dest.texture && state_->InFlight(dest.last_use)) {
+      state_->retired_textures.push_back(std::move(dest));
+      ++state_->textures_retired;
+      dest = {};
+    } else {
+      const uint32_t view = dest.view;
+      dest = {};
+      dest.view = view;
+    }
     // A depth destination, or the one of a color sample, is the render target of its pass.
     dest.texture = state_->device->createTexture(plume::RenderTextureDesc::Texture2D(
         host.dest_width, host.dest_height, 1,

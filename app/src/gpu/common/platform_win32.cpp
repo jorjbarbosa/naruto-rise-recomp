@@ -48,9 +48,9 @@ bool Sleep(int64_t ticks) {
 void Pause() { YieldProcessor(); }
 
 void SetThreadPriority(ThreadPriority priority) {
-  const int value = priority == ThreadPriority::kLowest    ? THREAD_PRIORITY_LOWEST
-                    : priority == ThreadPriority::kHighest ? THREAD_PRIORITY_HIGHEST
-                                                           : THREAD_PRIORITY_NORMAL;
+  const int value = priority == ThreadPriority::kLowest        ? THREAD_PRIORITY_LOWEST
+                    : priority == ThreadPriority::kAboveNormal ? THREAD_PRIORITY_ABOVE_NORMAL
+                                                               : THREAD_PRIORITY_NORMAL;
   ::SetThreadPriority(GetCurrentThread(), value);
 }
 bool ThreadTimes(void* native_thread, uint64_t& kernel_100ns, uint64_t& user_100ns) {
