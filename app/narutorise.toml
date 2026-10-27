@@ -36,9 +36,6 @@ input_backend = "sdl"
 mnk_mode = false
 mnk_mouse = true
 mnk_sensitivity = 1.0
-# Button icons in the game's hints and tutorials become the first key bound to
-# each input ("Press [Space] to jump"). English game text only.
-mnk_key_prompts = true
 # Keys of each controller input: alternatives separated by commas, with the
 # SDK's key names (LMB, RMB and MMB for the mouse buttons). Shift, Control and
 # Alt can be keys of their own. The launcher maps them under Controls.

@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <filesystem>
-#include <functional>
 #include <map>
 #include <span>
 #include <string>
@@ -37,15 +36,9 @@ struct PatchResult {
   std::string error;  // Fatal table error; rejected entries keep their original bytes.
 };
 
-// Rewrites a text after its translation (or the original, when there is none or
-// it was rejected). Unlike a translation it may change engine tags, so it must
-// only produce text the game accepts: the key prompts replace button tags.
-using TextTransform = std::function<std::string(std::string_view)>;
-
 bool ParseDictionary(std::string_view json, Dictionary& out, std::string& error);
 bool ReadTable(std::span<const uint8_t> input, std::vector<TextRow>& out, std::string& error);
-PatchResult PatchTable(std::span<const uint8_t> input, const Dictionary& translations,
-                       const TextTransform& transform = {});
+PatchResult PatchTable(std::span<const uint8_t> input, const Dictionary& translations);
 bool LoadPackage(const std::filesystem::path& directory, Package& out, std::string& error);
 bool ValidModId(std::string_view id);
 }  // namespace narutorise::translation
