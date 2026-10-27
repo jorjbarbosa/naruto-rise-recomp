@@ -522,10 +522,12 @@ bool Dispatcher::StartPool(size_t count, unsigned threads,
       rex::thread::set_current_thread_name("Native Pipeline Compiler");
       // The pool yields to the game: while the title shows its loading screen
       // every thread compiles above normal priority (the player waits anyway);
-      // with the game running, only the first kPoolThreadsInGame threads go on,
+      // in the title's menus every thread goes on at the lowest priority (no
+      // world of the game runs there, and the menus keep their frames); with
+      // the game running, only the first kPoolThreadsInGame threads go on,
       // at the lowest priority, and the others wait for the next loading screen
-      // (a cold driver cache takes some twenty seconds for the list on ten
-      // threads, and the frames of the first seconds of a world paid for it).
+      // or menu (a cold driver cache takes some twenty seconds for the list on
+      // ten threads, and the frames of the first seconds of a world paid for it).
       auto priority = platform::ThreadPriority::kNormal;
       const bool in_game_thread = t < kPoolThreadsInGame;
       for (;;) {
@@ -533,7 +535,7 @@ bool Dispatcher::StartPool(size_t count, unsigned threads,
         // thread would be nobody's (a draw would create it, the pool's done
         // callback would wait for the next loading screen) and the stop
         // would compile it before the join.
-        while (!TitleLoading() && !in_game_thread && !state_->pool_stop.load())
+        while (!TitleLoading() && !TitleMenu() && !in_game_thread && !state_->pool_stop.load())
           std::this_thread::sleep_for(std::chrono::milliseconds(50));
         if (state_->pool_stop.load()) break;
         const size_t i = state_->pool_next.fetch_add(1);
