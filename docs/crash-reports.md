@@ -20,9 +20,13 @@ Normal sessions are identified separately from explicit subsystem failures and
 interruptions of undetermined cause. A last log line does not identify the cause.
 
 In **Settings > Advanced**, open the diagnostics folder, request a live thread
-snapshot, or export a completed previous session to ZIP. A notification on the
-next opening links to diagnostics from an interrupted session. Acknowledgment
-does not delete the evidence. Manual snapshots also work when the UI is frozen:
+snapshot, or export completed sessions to ZIP: the newest one and, when it is
+older, the newest that did not end normally, since a player often reopens the
+game before exporting. A notification on the next opening links to diagnostics
+from an interrupted session, and that opening's log names the session with its
+classification and exit status. Acknowledgment does not delete the evidence.
+Time on the startup menu is not read as a stall: the runtime waits for the player
+there. Manual snapshots also work when the UI is frozen:
 
 ```text
 narutorise.exe --incident-request-snapshot "<session directory>"

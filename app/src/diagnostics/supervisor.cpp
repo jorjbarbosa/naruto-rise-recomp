@@ -353,6 +353,10 @@ int Observe(Mapping& mapping, const fs::path& directory, const fs::path& executa
   uint64_t incomplete_cursor = uint64_t(-1), incomplete_since = 0;
   uint32_t snapshot_request = 0, snapshot_sequence = 0;
   bool stall_captured = false, exited = false;
+  // The startup menu holds the runtime's start for the player: no stall while
+  // it shows, and the operations it held count from its close.
+  bool setup_open = false;
+  uint64_t setup_closed_at = 0;
   std::array<uint64_t, 5> counts{};
   int exit_status = 0;
   auto append = [&](Json event) { events << event.dump(-1, ' ', false, Json::error_handler_t::replace) << '\n'; events.flush(); };
@@ -397,6 +401,10 @@ int Observe(Mapping& mapping, const fs::path& directory, const fs::path& executa
         else if (state == "end" || state == "failed") manifest["operations_in_progress"].erase(key);
         else if (state == "metadata") manifest["metadata"][value["operation"].get<std::string>()] = value["detail"];
         if (value["operation"] == "transport") manifest["transport"] = value;
+        if (value["operation"] == "setup-screen") {
+          setup_open = state == "begin";
+          if (!setup_open) setup_closed_at = time;
+        }
       }
       last_progress = Now();
     }
@@ -451,12 +459,12 @@ int Observe(Mapping& mapping, const fs::path& directory, const fs::path& executa
         stale_operation = true;
     }
     for (const auto& operation : manifest["operations_in_progress"]) {
-      auto time = operation.value("time_ms", Now());
+      auto time = std::max(operation.value("time_ms", Now()), setup_closed_at);
       if (operation.value("operation", "") == "pipeline-precompile")
         time = std::max(time, channel.progress[3].load(std::memory_order_relaxed));
       stale_operation |= Now() - time > kStallMs;
     }
-    const bool stalled = !stall_captured && (stale_operation || Now() - last_progress > kStallMs);
+    const bool stalled = !stall_captured && !setup_open && (stale_operation || Now() - last_progress > kStallMs);
     if (manual || stalled) {
       snapshot_request = request; if (stalled) stall_captured = true;
       fs::remove(directory / "snapshot.request", file_error);

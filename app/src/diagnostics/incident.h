@@ -35,7 +35,12 @@ void RequestSnapshot() noexcept;
 std::filesystem::path Directory();
 std::filesystem::path ReportsDirectory();
 std::string SessionId();
-std::filesystem::path Latest(bool failures_only = false);
+// The newest completed session other than this one; failures_only skips the
+// normal exits, unseen_only also a failure Acknowledge already recorded.
+std::filesystem::path Latest(bool failures_only = false, bool unseen_only = false);
+// One line about a completed session: classification, exit status and whether
+// an exception dump was captured.
+std::string Summary(const std::filesystem::path& session);
 void Acknowledge(const std::filesystem::path& session) noexcept;
 bool VerifyIncident(const std::string& mode);
 // A fixed snapshot of the published guest state, not a reconstruction of

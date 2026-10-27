@@ -183,7 +183,7 @@ void RequestSnapshot() noexcept { if (client.channel) client.channel->snapshot.f
 fs::path Directory() { return directory; }
 fs::path ReportsDirectory() { return directory.parent_path(); }
 std::string SessionId() { return Utf8(directory.filename()); }
-fs::path Latest(bool failures_only) {
+fs::path Latest(bool failures_only, bool unseen_only) {
   try {
     fs::path latest;
     const auto root = ReportsDirectory();
@@ -195,12 +195,21 @@ fs::path Latest(bool failures_only) {
       if (failures_only && manifest.value("classification", "") == "normal-exit") continue;
       if (latest.empty() || entry.path().filename() > latest.filename()) latest = entry.path();
     }
-    if (failures_only && !latest.empty()) {
+    if (unseen_only && !latest.empty()) {
       const auto seen = ReadText(root / "acknowledged.txt", 256);
       if (!seen.empty() && Utf8(latest.filename()) <= seen) return {};
     }
     return latest;
   } catch (...) { return {}; }
+}
+std::string Summary(const fs::path& session) {
+  try {
+    const auto manifest = Json::parse(ReadText(session / "manifest.json", 1024 * 1024));
+    return Utf8(session.filename()) + ": " + manifest.value("classification", std::string("unclassified")) +
+        ", exit " + manifest.value("raw_exit_hex", std::string("unknown")) +
+        (manifest.value("exception_dump_present", false) ? ", exception dump captured" : ", no exception dump") +
+        (manifest.contains("first_failure") ? ", first failure " + manifest["first_failure"].dump() : std::string());
+  } catch (...) { return Utf8(session.filename()) + ": manifest unreadable"; }
 }
 void Acknowledge(const fs::path& session) noexcept {
   try { AtomicText(ReportsDirectory() / "acknowledged.txt", Utf8(session.filename())); } catch (...) {}

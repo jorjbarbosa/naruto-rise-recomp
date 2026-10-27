@@ -278,6 +278,9 @@ class NarutoriseApp : public rex::ReXApp {
     for (const auto* key : {"renderer", "native_backend", "graphics_device", "resolution_scale", "msaa_samples",
                             "frame_rate", "translation_mod", "skip_intro_videos", "log_level"})
       narutorise::incident::SetMetadata(key, rex::cvar::GetFlagByName(key));
+    // A failed previous session in this log too: the log is what players attach.
+    if (const auto previous = narutorise::incident::Latest(true, true); !previous.empty())
+      REXLOG_WARN("[narutorise] Previous session did not end normally: {}", narutorise::incident::Summary(previous));
     REXLOG_INFO("[narutorise] Data root: {}", rex::path_to_utf8(active.data_root));
     REXLOG_INFO("[narutorise] Active config: {}", rex::path_to_utf8(active.config_path));
     for (const auto& message : prepared_data_->diagnostics)
@@ -988,7 +991,7 @@ class NarutoriseApp : public rex::ReXApp {
     // Below the window shortcuts (fullscreen), above the SDK's overlays.
     if (window()) window()->AddInputListener(&ui_, std::numeric_limits<size_t>::max() - 1);
     ui_.SetInputActive([this] { return window() && window()->HasFocus(); });
-    if (const auto previous = narutorise::incident::Latest(true); !previous.empty()) {
+    if (const auto previous = narutorise::incident::Latest(true, true); !previous.empty()) {
       ui_.Notify(narutorise::menu::Text("diagnostics-recovered"), narutorise::menu::Text("diagnostics-open"),
                  [previous] { launcher_ui::OpenFolder(previous); });
       narutorise::incident::Acknowledge(previous);
@@ -1039,6 +1042,7 @@ class NarutoriseApp : public rex::ReXApp {
     setup_paths_ = paths;
     setup_reason_ = reason;
     setup_resume_ = std::move(resume);
+    setup_operation_ = narutorise::incident::BeginOperation("setup-screen", narutorise::menu::SetupReasonName(reason));
     REXLOG_INFO("[narutorise] Setup presentation ready");
     return true;
   }
@@ -1066,6 +1070,8 @@ class NarutoriseApp : public rex::ReXApp {
   // The screen's engine goes before the game's (native mode); the UI layer
   // keeps the frame of what still shows (the frame rate) for it.
   void CloseSetupScreen() {
+    if (setup_operation_)
+      narutorise::incident::Event("setup-screen", "end", {}, std::exchange(setup_operation_, uint64_t{0}));
     ui_.HideSetup();
 #ifdef NARUTORISE_NATIVE_RENDERER_BOOTSTRAP
     if (!setup_screen_.IsOpen()) return;
@@ -1456,6 +1462,9 @@ class NarutoriseApp : public rex::ReXApp {
   uint64_t game_choice_view_ = 0;
   bool checking_game_ = false;
   std::function<void(rex::PathConfig)> setup_resume_;  // While the setup screen shows.
+  // The setup screen as an incident operation: the supervisor reads no stall
+  // in the time the runtime waits for the player there.
+  uint64_t setup_operation_ = 0;
 #ifdef NARUTORISE_NATIVE_RENDERER_BOOTSTRAP
   gpu::ui::Screen setup_screen_{gpu::ui::UiLayer()};
 #endif

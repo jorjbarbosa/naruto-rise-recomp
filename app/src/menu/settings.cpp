@@ -308,15 +308,21 @@ std::vector<PanelRow> Settings::Rows(int group) {
           [this] { incident::RequestSnapshot(); ui_->Notify(Text("diagnostics-requested")); }});
       rows.push_back({"diagnostics-export", Text("diagnostics-export"), "", Text("diagnostics-help"), false, false, {}, 0, {},
           [this] {
-            const auto previous = incident::Latest();
-            if (previous.empty()) { ui_->Notify(Text("diagnostics-none")); return; }
-            const auto destination = incident::ReportsDirectory().parent_path() / "incident-exports" /
-                (previous.filename().string() + ".zip");
-            std::string error;
-            if (!std::filesystem::exists(destination) && !incident::Export(previous, destination, error)) {
-              ui_->Notify(Text("diagnostics-export-failed") + std::string(" ") + error); return;
+            // The newest session, and the newest failed one when that is older:
+            // a player often reopens the game a few times before exporting.
+            const auto latest = incident::Latest();
+            if (latest.empty()) { ui_->Notify(Text("diagnostics-none")); return; }
+            std::vector<std::filesystem::path> sessions{latest};
+            if (const auto failed = incident::Latest(true); !failed.empty() && failed != latest) sessions.push_back(failed);
+            const auto exports = incident::ReportsDirectory().parent_path() / "incident-exports";
+            for (const auto& session : sessions) {
+              const auto destination = exports / (session.filename().string() + ".zip");
+              std::string error;
+              if (!std::filesystem::exists(destination) && !incident::Export(session, destination, error)) {
+                ui_->Notify(Text("diagnostics-export-failed") + std::string(" ") + error); return;
+              }
             }
-            launcher_ui::OpenFolder(destination.parent_path());
+            launcher_ui::OpenFolder(exports);
           }});
     }
     rows.push_back({"show_shader_indicator", Text("shader-option"), Bool(menu_options_.shaders), Text("shader-option"),
