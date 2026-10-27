@@ -72,6 +72,10 @@ bool Initialize(const std::filesystem::path& executable_dir,
     sentry_options_set_cache_keep(options, SENTRY_CACHE_KEEP_ALWAYS);
     sentry_options_set_cache_max_size(options, 32 * 1024 * 1024);
     sentry_options_set_cache_max_age(options, 14 * 24 * 60 * 60);
+    // The guest threads commit their whole stacks (16 MiB): captured from the
+    // TEB limits, a crash dump is ~250 MB, over the upload limit (rejected as
+    // invalid multipart) and the local incident quota.
+    sentry_options_set_crashpad_limit_stack_capture_to_sp(options, 1);
     if (consent && !local.empty()) {
 #ifdef _WIN32
       sentry_options_add_attachmentw(options, (local / "channel.bin").c_str());
