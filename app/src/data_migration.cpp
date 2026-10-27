@@ -49,22 +49,6 @@ fs::file_status Status(const fs::path& path) {
 bool Exists(const fs::path& path) {
   return Status(path).type() != fs::file_type::not_found;
 }
-// Reject reparse points as well as C++ symlinks (Windows junctions may be
-// reported as directories). Check ancestors before any read/create operation.
-void SafePath(const fs::path& path) {
-  Require(path.is_absolute(), "Migration path must be absolute: " + Utf8(path));
-  fs::path current;
-  for (const auto& part : path.lexically_normal()) {
-    current /= part;
-    const auto status = Status(current);
-    Require(!fs::is_symlink(status), "Migration refuses link: " + Utf8(current));
-#ifdef _WIN32
-    auto attributes = GetFileAttributesW(current.c_str());
-    Require(attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_REPARSE_POINT),
-            "Migration refuses reparse point: " + Utf8(current));
-#endif
-  }
-}
 bool Within(const fs::path& child, const fs::path& parent) {
   auto c = child.begin();
   for (auto p = parent.begin(); p != parent.end(); ++p, ++c) {
@@ -76,6 +60,50 @@ bool Within(const fs::path& child, const fs::path& parent) {
 #endif
   }
   return true;
+}
+// The storage locations of a preparation (home, known folders, installation,
+// and the folders holding the data roots) and their ancestors may be links the
+// system or the user made: Wine maps Z:\ to / through one, Fedora Atomic links
+// /home to /var/home. Below them, inside the trees read and written, links stay
+// refused. Set for the duration of PrepareData/RequestLocation.
+thread_local const std::vector<fs::path>* storage_locations = nullptr;
+class StorageLocations {
+ public:
+  StorageLocations() : previous_(storage_locations) { storage_locations = &paths_; }
+  ~StorageLocations() { storage_locations = previous_; }
+  StorageLocations(const StorageLocations&) = delete;
+  StorageLocations& operator=(const StorageLocations&) = delete;
+  void Add(const fs::path& path) {
+    if (!path.is_absolute()) return;
+    paths_.push_back(path.lexically_normal());
+    // Paths derived from canonical roots are matched by their canonical form.
+    try { paths_.push_back(CanonicalPath(path)); } catch (const std::exception&) {}
+  }
+
+ private:
+  std::vector<fs::path> paths_;
+  const std::vector<fs::path>* previous_;
+};
+bool StorageLocationOrAncestor(const fs::path& path) {
+  return storage_locations && std::any_of(storage_locations->begin(), storage_locations->end(),
+      [&](const fs::path& location) { return Within(location, path); });
+}
+// Reject reparse points as well as C++ symlinks (Windows junctions may be
+// reported as directories). Check ancestors before any read/create operation.
+void SafePath(const fs::path& path) {
+  Require(path.is_absolute(), "Migration path must be absolute: " + Utf8(path));
+  fs::path current;
+  for (const auto& part : path.lexically_normal()) {
+    current /= part;
+    if (StorageLocationOrAncestor(current)) continue;
+    const auto status = Status(current);
+    Require(!fs::is_symlink(status), "Migration refuses link: " + Utf8(current));
+#ifdef _WIN32
+    auto attributes = GetFileAttributesW(current.c_str());
+    Require(attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_REPARSE_POINT),
+            "Migration refuses reparse point: " + Utf8(current));
+#endif
+  }
 }
 fs::path Canonical(const fs::path& path) {
   SafePath(path);
@@ -281,6 +309,18 @@ fs::path Xdg(const std::string& value, const Environment& env, const fs::path& f
   if (!value.empty() && Path(value).is_absolute()) return Path(value).lexically_normal();
   Require(env.home_dir.is_absolute(), "Cannot discover legacy XDG directory");
   return env.home_dir / fallback;
+}
+void AddStorageLocations(StorageLocations& locations, const DataPaths& paths, const Environment& env) {
+  for (const auto& location : {paths.install_dir, paths.distribution_dir, env.home_dir,
+                               env.local_app_data, paths.data_root.parent_path()})
+    locations.Add(location);
+  if (paths.pending_source) locations.Add(paths.pending_source->parent_path());
+  if (env.platform == Platform::kLinux && env.home_dir.is_absolute())
+    for (const auto& [value, fallback] : {std::pair{&env.xdg_data_home, ".local/share"},
+                                          std::pair{&env.xdg_config_home, ".config"},
+                                          std::pair{&env.xdg_cache_home, ".cache"},
+                                          std::pair{&env.xdg_state_home, ".local/state"}})
+      locations.Add(Xdg(*value, env, fallback));
 }
 bool HexName(const fs::path& path, size_t size) {
   auto name = Utf8(path.filename());
@@ -560,6 +600,9 @@ DataLock::~DataLock() {
 Result<PreparedData> PrepareData(const DataPaths& paths, const Environment& env,
                                  const Overrides& cli, const MigrationOptions& options) {
   try {
+    StorageLocations locations;
+    AddStorageLocations(locations, paths, env);
+    if (!options.legacy_install_dir.empty()) locations.Add(options.legacy_install_dir);
     PreparedData prepared;
     const auto root = Canonical(paths.data_root);
     prepared.lease = Lock(root);
@@ -652,6 +695,7 @@ Result<PreparedData> PrepareData(const DataPaths& paths, const Environment& env,
         if (paths.pending_source) guest = *paths.pending_source;
         else if (env.platform == Platform::kWindows) {
           auto documents = options.documents ? options.documents() : DiscoverDocuments();
+          locations.Add(documents);
           SafePath(documents);
           Require(fs::is_directory(Status(documents)),
                   "Windows Documents is unavailable: " + Utf8(documents) +
@@ -760,6 +804,9 @@ Result<DataPaths> RequestLocation(const PreparedData& active, const Environment&
     auto effective = ApplyStorageOverrides(*planned.value, env, cli, active.config_roots);
     Require(static_cast<bool>(effective), effective.error);
     auto result = std::move(*effective.value);
+    StorageLocations locations;
+    AddStorageLocations(locations, active.paths, env);
+    AddStorageLocations(locations, result, env);
     const auto previous = Canonical(active.paths.data_root), next = Canonical(result.data_root);
     const bool same = Within(previous, next) && Within(next, previous);
     Require(same || (!Within(previous, next) && !Within(next, previous)),

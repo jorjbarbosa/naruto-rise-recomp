@@ -643,6 +643,24 @@ void LinksAndInvalidState(const fs::path& directory) {
   fs::create_symlink(directory / "missing", link);
   Check(!f.Prepare(), "broken symlink rejected");
   fs::remove(link);
+  // Storage reached through a link above it (Wine's Z:\ drive, /home linked to
+  // /var/home) is accepted; links inside the copied tree stay refused.
+  fs::create_directories(directory / "volume");
+  fs::create_directory_symlink(directory / "volume", directory / "volume link");
+  for (const auto platform : {Platform::kWindows, Platform::kLinux}) {
+    const auto name = platform == Platform::kWindows ? "windows" : "linux";
+    Fixture through(directory / "volume link" / name, platform);
+    GuestTree(through.Guest());
+    // Legacy mods are copied on both platforms; the Linux guest root is the data root.
+    Write(through.env.install_dir / "mods/community/data", "mod");
+    const auto escape = through.env.install_dir / "mods/community/escape";
+    fs::create_symlink(outside, escape);
+    Check(!through.Prepare(), "nested symlink below a linked ancestor rejected");
+    fs::remove(escape);
+    const auto linked = Value(through.Prepare());
+    Check(Read(linked.paths.data_root / "E000000000000001/555307E5/00000001/PlayerSave1.ninjasave/SaveData") ==
+              std::string("save\0bytes", 10), "storage below a linked ancestor prepared");
+  }
   auto ok = Value(f.Prepare());
   auto state = ok.paths.data_root / ".narutorise-migration/state.json";
   ok.lease.reset();
