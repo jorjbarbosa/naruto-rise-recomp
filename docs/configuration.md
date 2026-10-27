@@ -152,10 +152,9 @@ The executable also exports `NvOptimusEnablement` and `AmdPowerXpressRequestHigh
 
 ## Keyboard and mouse
 
-Turn on **Settings → Controls → Use keyboard and mouse**. The keyboard and mouse act as an Xbox controller and work alongside a connected controller.
+Turn on **Settings → Controls → Use keyboard and mouse**. The keyboard and mouse act as an Xbox controller and work alongside a connected controller. The game still shows the controller's buttons.
 
 - **Mouse moves the camera.** While exploring, the mouse turns the camera itself, at a fixed angle per pixel: at 100% **Sensitivity** (from 10% to 300%), one full turn takes about 2,100 pixels. The camera turns at most about 340 degrees per second, the speed the game's camera keeps up with; faster motion finishes over the next frames. Elsewhere, such as in fights, the mouse stands in for the right stick. While the game window has focus, the cursor stays inside it; Alt+Tab releases it.
-- **Show keys in game texts** (on by default) replaces the controller buttons in the game's hints and tutorials with the first key bound to each input, in brackets: "Press <a> to jump" reads "Press [Space] to jump". Stick directions in a jutsu motion show the right stick's keys; in combat combos, the left stick's ("[A+Left Click]" for a combo starting with left and X). It changes text only: menu legends, the HUD and the combo and jutsu lists are images and keep the controller's buttons. It needs English game text (a translation mod, which uses English as its base, works too). Changes apply on the next start.
 - **Map keys…** gives each controller input two keys. Click a field and press the new key within 5 seconds; right-click a field to clear it. A key already in use leaves its previous input. F1, F3, F4, F7, F11 and Backtick are reserved for system shortcuts and cannot be mapped. **Restore default keys** brings back the layout below.
 
 Keys are recorded by their position on the keyboard, as the game reads them, and shown with your layout's labels: on an ABNT2 keyboard, the key to the right of L shows as Ç.
@@ -174,7 +173,7 @@ Keys are recorded by their position on the keyboard, as the game reads them, and
 | Start / Back | Enter, Esc / Tab |
 | D-pad | 1, 2, 3, 4 (up, down, left, right); numpad 8, 2, 4, 6 |
 
-In `narutorise.toml`, the options are `mnk_mode`, `mnk_mouse`, `mnk_sensitivity` (`1.0` = 100%), `mnk_key_prompts` (`true` shows the keys in game texts) and one `keybind_*` per input, such as `keybind_a = "Space"`. A value lists alternatives separated by commas, with the SDK's key names (`LMB`, `RMB` and `MMB` for the mouse buttons). Shift, Control and Alt work as keys of their own. A combination such as `Shift+Up` works only while that modifier is not bound on its own. `mouse_camera_direct = false` makes the mouse stand in for the right stick everywhere, and `mouse_camera_trace = true` writes each mouse turn of the camera to the log.
+In `narutorise.toml`, the options are `mnk_mode`, `mnk_mouse`, `mnk_sensitivity` (`1.0` = 100%) and one `keybind_*` per input, such as `keybind_a = "Space"`. A value lists alternatives separated by commas, with the SDK's key names (`LMB`, `RMB` and `MMB` for the mouse buttons). Shift, Control and Alt work as keys of their own. A combination such as `Shift+Up` works only while that modifier is not bound on its own. `mouse_camera_direct = false` makes the mouse stand in for the right stick everywhere, and `mouse_camera_trace = true` writes each mouse turn of the camera to the log.
 
 With keyboard and mouse on, closing the game takes about 3 seconds, as with a controller connected.
 

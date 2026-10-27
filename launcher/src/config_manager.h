@@ -52,8 +52,6 @@ struct GameConfig {
   bool mnk_mode = false;
   bool mnk_mouse = true;
   double mnk_sensitivity = 1.0;
-  // Button icons in the game's texts become the bound keys ("[Space]").
-  bool mnk_key_prompts = true;
   KeyBinds key_binds = DefaultKeyBinds();
 
   bool fullscreen = true;

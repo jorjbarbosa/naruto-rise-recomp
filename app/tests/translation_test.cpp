@@ -243,35 +243,6 @@ void RealTables(const std::filesystem::path& directory, const std::filesystem::p
   }
   Check(files == 14, "expected all fourteen localized fixture tables");
 }
-// The key prompts' transform runs after the translations and may drop tags.
-void TransformTests() {
-  const auto original = NarrowTable("Press <a> to jump");
-  const TextTransform prompts = [](std::string_view text) {
-    std::string out(text);
-    if (const auto at = out.find("<a>"); at != std::string::npos)
-      out.replace(at, 3, "[Space]");
-    return out;
-  };
-  auto result = PatchTable(original, {}, prompts);
-  Check(result.status == PatchStatus::kRebuilt && result.replacements == 1,
-        "transform alone must rebuild the table");
-  Check(Read(result.bytes)[0].text == "Press [Space] to jump", "transform not applied");
-
-  result = PatchTable(original, {{1, "Pressione <a> para pular"}}, prompts);
-  Check(Read(result.bytes)[0].text == "Pressione [Space] para pular",
-        "transform must apply to the translation");
-
-  result = PatchTable(original, {{1, "Pressione para pular"}}, prompts);
-  Check(result.rejected.size() == 1 && Read(result.bytes)[0].text == "Press [Space] to jump",
-        "rejected translation must fall back to the transformed original");
-
-  result = PatchTable(original, {}, [](std::string_view text) { return std::string(text); });
-  Check(result.status == PatchStatus::kUnchanged && result.bytes.empty(),
-        "identity transform must leave the table untouched");
-
-  result = PatchTable(Fixture(), {}, prompts);
-  Check(result.status == PatchStatus::kUnchanged, "texts without tags stay byte-identical");
-}
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -283,7 +254,6 @@ int main(int argc, char** argv) {
     SubstitutionTests();
     EntryFallbackTests();
     TypographyTests();
-    TransformTests();
     PackageTests(argv[1]);
     if (argc >= 3)
       RealTables(argv[2], argv[1]);

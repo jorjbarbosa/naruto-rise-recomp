@@ -180,8 +180,6 @@ inline constexpr const char* kEs[] = {
     "Mueve la cámara (el stick derecho) con el ratón. Desactivado, la cámara solo se mueve con las teclas del stick derecho.",  // MouseCameraDescription
     "Sensibilidad",  // MouseSensitivityLabel
     "La rapidez con que la cámara sigue al ratón. 100 % es el valor predeterminado.",  // MouseSensitivityDescription
-    "Mostrar teclas en los textos",  // KeyPromptsLabel
-    "Muestra las teclas asignadas en lugar de los botones del mando en las pistas y tutoriales del juego, por ejemplo [Space] para A. Funciona con el texto del juego en inglés y con mods de traducción.",  // KeyPromptsDescription
     "Teclas",  // KeysLabel
     "Las teclas y los botones del ratón de cada entrada del mando, dos por entrada.",  // KeysDescription
     "Asignar teclas…",  // MapKeysButton

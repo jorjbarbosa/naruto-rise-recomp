@@ -187,8 +187,6 @@ enum class TextId {
   MouseCameraDescription,
   MouseSensitivityLabel,
   MouseSensitivityDescription,
-  KeyPromptsLabel,
-  KeyPromptsDescription,
   KeysLabel,
   KeysDescription,
   MapKeysButton,
