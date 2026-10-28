@@ -32,7 +32,8 @@ extern bool stop_request_close;
 extern std::chrono::steady_clock::time_point stop_request_at;
 extern std::atomic<bool> stop_requested;
 void TakeStopRequest(PPCContext& ctx);
-// Every own hook entry, counted per guest thread by the concurrency monitor.
+// Every own hook entry, counted per guest thread by the concurrency monitor
+// (with the diagnostics only; off, the scope does nothing).
 class HookScope {
  public:
   explicit HookScope(const char* name);
@@ -40,7 +41,7 @@ class HookScope {
   HookScope(const HookScope&) = delete;
   HookScope& operator=(const HookScope&) = delete;
  private:
-  uint32_t thread_;
+  uint32_t thread_ = 0;
 };
 std::string ConcurrencySummary();
 }  // namespace gpu
