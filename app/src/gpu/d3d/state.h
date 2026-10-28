@@ -30,10 +30,12 @@ namespace gpu {
 struct ConstantShadow {
   std::array<uint8_t, 4096> bytes{};
   bool valid = false;
-  uint64_t version = 0;  // Carried by the request: the engine reuses the CBV of the batch when unchanged.
-  // The groups (64 bytes, bit 63 - group as the title's mask) refreshed
-  // since the last request that carried them; all ones until the engine has
-  // seen the whole block.
+  // Carried by the request: the engine reuses the CBV of the batch when
+  // unchanged. Raised only when a refresh changed a byte (or was full).
+  uint64_t version = 0;
+  // The groups (64 bytes, bit 63 - group as the title's mask) whose bytes a
+  // refresh changed since the last request that carried them; all ones until
+  // the engine has seen the whole block.
   uint64_t pending = ~0ull;
 };
 extern ConstantShadow vs_shadow, ps_shadow;  // Render thread only.

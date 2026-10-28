@@ -272,9 +272,11 @@ struct Backend::State {
   bool batch_open = false;
   Batch batch;
   // The constant CBVs of the previous draw of the open batch, reused
-  // while the request's version holds (its upload page lives until the fence).
+  // while the request's version holds (its upload page lives until the fence),
+  // and the shared block's, reused while its bytes are the same.
   uint64_t cbv_batch_fence = 0, last_vs_version = 0, last_ps_version = 0;
-  D3D12_GPU_VIRTUAL_ADDRESS last_vs_cbv = 0, last_ps_cbv = 0;
+  D3D12_GPU_VIRTUAL_ADDRESS last_vs_cbv = 0, last_ps_cbv = 0, last_shared_cbv = 0;
+  std::array<uint8_t, 512> last_shared{};
   // The previous draw of the open batch, for the fusion counters of the
   // profile (diagnostics only): its batch and operation number (fence 0 when
   // it recorded no draw), its bindings, shared block and base vertex.
@@ -962,7 +964,7 @@ bool Backend::Shutdown(std::string& evidence) {
   state_->vs_block.fill(0);
   state_->ps_block.fill(0);
   state_->cbv_batch_fence = state_->last_vs_version = state_->last_ps_version = 0;
-  state_->last_vs_cbv = state_->last_ps_cbv = 0;
+  state_->last_vs_cbv = state_->last_ps_cbv = state_->last_shared_cbv = 0;
   state_->sampled.clear();
   state_->buffers.clear();
   state_->buffer_heaps.clear();
@@ -3403,7 +3405,8 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
   if (!index_buffer) total = align(total + index_bytes);
   // The request's constants onto the blocks kept here (whole block or
   // the registers written since the previous request), then the usual reuse
-  // of the CBV while the version holds within the batch.
+  // of the CBV while the version holds within the batch, and of the shared
+  // block's while its bytes do.
   if (!ApplyConstants(r.vs_constants, r.vs_constants_delta, state_->vs_block) ||
       !ApplyConstants(r.ps_constants, r.ps_constants_delta, state_->ps_block))
     return fail("native-draw-constants");
@@ -3413,9 +3416,11 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
                         state_->last_vs_version == r.vs_constants_version && state_->last_vs_cbv;
   const bool ps_reuse = r.ps_constants_version && state_->cbv_batch_fence == state_->batch.fence &&
                         state_->last_ps_version == r.ps_constants_version && state_->last_ps_cbv;
+  const bool shared_reuse = state_->cbv_batch_fence == state_->batch.fence && state_->last_shared_cbv &&
+                            state_->last_shared == shared;
   const size_t vs_offset = total; if (!vs_reuse) total += 4096;
   const size_t ps_offset = total; if (!ps_reuse) total += 4096;
-  const size_t shared_offset = total; total += 512;
+  const size_t shared_offset = total; if (!shared_reuse) total += 512;
   for (auto& use : texture_uses) {
     if (!use.upload) continue;
     total = (total + D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1) & ~size_t(D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1);
@@ -3434,7 +3439,7 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
   if (!index_buffer) std::memcpy(mapped + index_offset, r.indices.data(), index_bytes);
   if (!vs_reuse) std::memcpy(mapped + vs_offset, state_->vs_block.data(), 4096);
   if (!ps_reuse) std::memcpy(mapped + ps_offset, state_->ps_block.data(), 4096);
-  std::memcpy(mapped + shared_offset, shared.data(), 512);
+  if (!shared_reuse) std::memcpy(mapped + shared_offset, shared.data(), 512);
   for (const auto& use : texture_uses) {
     if (!use.upload) continue;
     for (size_t level = 0; level < use.footprints.size(); ++level) {
@@ -3540,7 +3545,8 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
   }
   const D3D12_GPU_VIRTUAL_ADDRESS vs_cbv = vs_reuse ? state_->last_vs_cbv : gpu + vs_offset;
   const D3D12_GPU_VIRTUAL_ADDRESS ps_cbv = ps_reuse ? state_->last_ps_cbv : gpu + ps_offset;
-  const std::array<D3D12_GPU_VIRTUAL_ADDRESS, 3> constants{vs_cbv, ps_cbv, gpu + shared_offset};
+  const D3D12_GPU_VIRTUAL_ADDRESS shared_cbv = shared_reuse ? state_->last_shared_cbv : gpu + shared_offset;
+  const std::array<D3D12_GPU_VIRTUAL_ADDRESS, 3> constants{vs_cbv, ps_cbv, shared_cbv};
   for (UINT i = 0; i < constants.size(); ++i) {
     if (!bindings_valid || bound.constants[i] != constants[i]) {
       list->SetGraphicsRootConstantBufferView(4 + i, constants[i]);
@@ -3550,6 +3556,10 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
   state_->cbv_batch_fence = state_->batch.fence;
   state_->last_vs_cbv = vs_cbv;
   state_->last_ps_cbv = ps_cbv;
+  if (!shared_reuse) {
+    state_->last_shared_cbv = shared_cbv;
+    state_->last_shared = shared;
+  }
   state_->last_vs_version = r.vs_constants_version;
   state_->last_ps_version = r.ps_constants_version;
   std::array<D3D12_VERTEX_BUFFER_VIEW, kDrawStreamsMax> streams{};

@@ -41,24 +41,31 @@ void RefreshConstants(uint8_t* base, uint32_t at, uint32_t mask_hi, uint32_t mas
   if (!s.valid) full = true;
   if (!full && !mask_hi && !mask_lo) return;
   const uint64_t mask = uint64_t(mask_hi) << 32 | mask_lo;
+  uint64_t changed = 0;  // The groups whose bytes differ from the shadow.
   unsigned groups = 0, unchanged = 0;  // The profile's: the groups read and those equal to the shadow.
   for (unsigned group = 0; group < 64; ++group) {
     if (!full && !((mask >> (63 - group)) & 1)) continue;
-    bool same = s.valid;
-    for (unsigned i = 0; i < 16; ++i) {
-      const uint32_t v = Get32(base, at + 64 * group + 4 * i);
-      uint8_t* const to = &s.bytes[64 * group + 4 * i];
-      if (same && std::memcmp(to, &v, 4)) same = false;
-      std::memcpy(to, &v, 4);
-    }
+    // The group swapped as a whole, then one compare and one copy.
+    std::array<uint32_t, 16> words;
+    for (unsigned i = 0; i < 16; ++i) words[i] = Get32(base, at + 64 * group + 4 * i);
+    uint8_t* const to = &s.bytes[64 * group];
+    const bool same = s.valid && !std::memcmp(to, words.data(), 64);
+    if (!same) std::memcpy(to, words.data(), 64);
     ++groups;
     if (same) ++unchanged;
+    else changed |= 1ull << (63 - group);
   }
   profile::Count(profile::kConstantRefreshes, 1);
   profile::Count(profile::kConstantGroupsRead, groups);
   profile::Count(profile::kConstantGroupsUnchanged, unchanged);
   if (unchanged == groups) profile::Count(profile::kConstantRefreshesUnchanged, 1);
-  s.pending |= full ? ~0ull : mask;
+  // A group the title marked dirty with the same bytes changes nothing the
+  // engine holds: only the changed groups go pending, and without any the
+  // version holds, so the engine keeps the CBV of the batch (its block at a
+  // version is the shadow at that version). A full refresh (the quad, the
+  // START variation, the first one) still carries everything.
+  if (!full && !changed) return;
+  s.pending |= full ? ~0ull : changed;
   s.valid = true;
   ++s.version;
   ++constant_refreshes;
