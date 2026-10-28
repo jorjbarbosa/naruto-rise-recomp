@@ -60,6 +60,9 @@ struct Dispatcher::State {
   std::atomic<bool> discarding{false};
   uint64_t stage_enqueued = 0, stage_waits = 0, stage_max = 0;
   size_t stage_waiting = 0;
+  // The translator is waiting on stage_wake: only then an enqueue wakes it
+  // (the queue is also empty while it runs the batch it took).
+  bool translator_sleeping = false;
   uint64_t stage_notifications = 0, stage_space_notifications = 0;
   uint64_t stage_consume_batches = 0, stage_consume_batch_max = 0;
   std::atomic<uint64_t> stage_depth_frame{0};  // The deepest since the last take.
@@ -101,7 +104,11 @@ struct Dispatcher::State {
         bool notify_space = false;
         {
           std::unique_lock lock(stage_mutex);
-          stage_wake.wait(lock, [&] { return !stage.empty() || stage_stopped; });
+          while (stage.empty() && !stage_stopped) {
+            translator_sleeping = true;
+            stage_wake.wait(lock);
+            translator_sleeping = false;
+          }
           if (stage_stopped) {
             stage.clear();
             stage_space.notify_all();
@@ -372,7 +379,7 @@ bool Dispatcher::Enqueue(std::unique_ptr<StageTask> task) {
     --s.stage_waiting;
     if (s.stage_stopped) return false;
   }
-  const bool wake = s.stage.empty();
+  const bool wake = s.translator_sleeping;
   s.stage.push_back(std::move(task));
   ++s.stage_enqueued;
   s.stage_max = std::max<uint64_t>(s.stage_max, s.stage.size());

@@ -11,17 +11,17 @@ inline void PackConstantDelta(std::span<const uint8_t, 4096> source, uint64_t pe
   const uint64_t runs = pending & ~(pending >> 1);
   delta.resize(size_t(std::popcount(pending)) * 64 + size_t(std::popcount(runs)) * 4);
   size_t at = 0;
-  unsigned group = 0;
-  while (group < 64) {
-    if (!((pending >> (63 - group)) & 1)) { ++group; continue; }
-    unsigned end = group + 1;
-    while (end < 64 && ((pending >> (63 - end)) & 1)) ++end;
+  // Run by run: the first marked group, the length of its run of ones, and
+  // the bits of the run cleared (bit 63 is group 0).
+  for (uint64_t rest = pending; rest;) {
+    const unsigned group = unsigned(std::countl_zero(rest));
+    const unsigned end = group + unsigned(std::countl_one(rest << group));
     const uint16_t first = uint16_t(4 * group), count = uint16_t(4 * (end - group));
     std::memcpy(delta.data() + at, &first, 2);
     std::memcpy(delta.data() + at + 2, &count, 2);
     std::memcpy(delta.data() + at + 4, source.data() + 64 * group, size_t(count) * 16);
     at += 4 + size_t(count) * 16;
-    group = end;
+    rest &= end < 64 ? ~0ull >> end : 0;
   }
 }
 }  // namespace gpu

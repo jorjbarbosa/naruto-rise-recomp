@@ -90,7 +90,18 @@ enum Counter : unsigned {
   kPipelinesWarm, kPipelinesWarmSlow,
   // Pipelines the owner posted before drawing their batch, and the longest
   // wait of a draw for a pipeline being created in the frame (Max, microseconds).
-  kPipelinesPrefetched, kPipelineWaitUsMax, kCounterCount
+  kPipelinesPrefetched, kPipelineWaitUsMax,
+  // The constant refreshes of the capture (VS and PS) and the 64-byte groups
+  // they read, and those that found their bytes already in the shadow: a
+  // refresh with every group unchanged still raises the version, so the owner
+  // uploads and binds a new CBV.
+  kConstantRefreshes, kConstantRefreshesUnchanged, kConstantGroupsRead, kConstantGroupsUnchanged,
+  // Owner draws recorded right after a draw of the same batch with the same
+  // pipeline, constants, textures, targets and fixed state (concatenating the
+  // geometry would fuse them); of those, the ones with the same vertex
+  // streams, and those whose indices also continue the previous draw's in the
+  // same buffer (fusable as they are).
+  kDrawsSameState, kDrawsSameStreams, kDrawsFusable, kCounterCount
 };
 inline constexpr const char* kCounterNames[kCounterCount] = {
     "hashed_bytes", "upload_bytes", "texture_uploads", "pipelines_created", "shader_variants", "submissions",
@@ -99,7 +110,8 @@ inline constexpr const char* kCounterNames[kCounterCount] = {
     "headers_live", "buffers_hosted", "pipelines_adopted", "pipelines_waited", "pipelines_precompiled",
     "watch_notifications", "watch_pages", "clip_plane_draws", "pipelines_async", "pipeline_skipped_draws",
     "stage_waits", "stage_depth", "pipelines_warm", "pipelines_warm_slow", "pipelines_prefetched",
-    "pipeline_wait_us_max"};
+    "pipeline_wait_us_max", "constant_refreshes", "constant_refreshes_unchanged", "constant_groups_read",
+    "constant_groups_unchanged", "draws_same_state", "draws_same_streams", "draws_fusable"};
 
 struct Accumulator {
   std::atomic<uint64_t> ns{0}, calls{0};

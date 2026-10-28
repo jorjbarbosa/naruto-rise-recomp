@@ -2,11 +2,13 @@
 #include "gpu/d3d/state.h"
 #include "gpu/common/constant_delta.h"
 #include "gpu/common/guest_memory.h"
+#include "gpu/diagnostics/profile.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <atomic>
 #include <condition_variable>
@@ -40,14 +42,33 @@ void RefreshConstants(uint8_t* base, uint32_t at, uint32_t mask_hi, uint32_t mas
   if (!s.valid) full = true;
   if (!full && !mask_hi && !mask_lo) return;
   const uint64_t mask = uint64_t(mask_hi) << 32 | mask_lo;
-  for (unsigned group = 0; group < 64; ++group) {
-    if (!full && !((mask >> (63 - group)) & 1)) continue;
-    for (unsigned i = 0; i < 16; ++i) {
-      const uint32_t v = Get32(base, at + 64 * group + 4 * i);
-      std::memcpy(&s.bytes[64 * group + 4 * i], &v, 4);
-    }
+  uint64_t changed = 0;  // The groups whose bytes differ from the shadow.
+  unsigned groups = 0, unchanged = 0;  // The profile's: the groups read and those equal to the shadow.
+  // The marked groups only, in order (bit 63 is group 0).
+  for (uint64_t todo = full ? ~0ull : mask; todo;) {
+    const unsigned group = unsigned(std::countl_zero(todo));
+    todo &= ~(1ull << (63 - group));
+    // The group swapped as a whole, then one compare and one copy.
+    std::array<uint32_t, 16> words;
+    for (unsigned i = 0; i < 16; ++i) words[i] = Get32(base, at + 64 * group + 4 * i);
+    uint8_t* const to = &s.bytes[64 * group];
+    const bool same = s.valid && !std::memcmp(to, words.data(), 64);
+    if (!same) std::memcpy(to, words.data(), 64);
+    ++groups;
+    if (same) ++unchanged;
+    else changed |= 1ull << (63 - group);
   }
-  s.pending |= full ? ~0ull : mask;
+  profile::Count(profile::kConstantRefreshes, 1);
+  profile::Count(profile::kConstantGroupsRead, groups);
+  profile::Count(profile::kConstantGroupsUnchanged, unchanged);
+  if (unchanged == groups) profile::Count(profile::kConstantRefreshesUnchanged, 1);
+  // A group the title marked dirty with the same bytes changes nothing the
+  // engine holds: only the changed groups go pending, and without any the
+  // version holds, so the engine keeps the CBV of the batch (its block at a
+  // version is the shadow at that version). A full refresh (the quad, the
+  // START variation, the first one) still carries everything.
+  if (!full && !changed) return;
+  s.pending |= full ? ~0ull : changed;
   s.valid = true;
   ++s.version;
   ++constant_refreshes;

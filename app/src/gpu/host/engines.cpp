@@ -32,6 +32,7 @@ std::optional<GraphicsApi> OtherApi(GraphicsApi api) {
 }  // namespace
 std::mutex engine_mutex;
 std::unique_ptr<Dispatcher> native_engine;
+std::atomic<Dispatcher*> active_engine{nullptr};
 std::unique_ptr<Dispatcher> failed_native_engine;
 EngineRegistration engine_registration{};
 
@@ -96,6 +97,7 @@ bool InitializeEngines(PPCContext& ctx) {
                     ApiName(candidate->Api()), device, evidence);
         engine_registration = {ctx.r4.u32, ctx.r5.u32, ts->thread_id(), int(thread->active_cpu()), ctx.r31.u32};
         native_engine = std::move(candidate);
+        active_engine.store(native_engine.get(), std::memory_order_release);
       } else {
         // The journal of the product is absent: the reason goes to the SDK log.
         REXLOG_ERROR("[narutorise] Native renderer initialization failed: {}", evidence);
@@ -128,8 +130,5 @@ bool InitializeEngines(PPCContext& ctx) {
   if (gpu::Active() && gpu::PresentProofRequested()) gpu::PresentProof(ctx);
   return true;
 }
-Dispatcher* ActiveDispatcher() {
-  std::lock_guard lock(engine_mutex);
-  return native_engine.get();
-}
+Dispatcher* ActiveDispatcher() { return active_engine.load(std::memory_order_acquire); }
 }  // namespace gpu::host

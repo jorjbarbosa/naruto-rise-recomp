@@ -59,6 +59,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <thread>
@@ -93,14 +94,15 @@ std::atomic<uint64_t> scene_items{0}, scene_flushes{0};
 // Reads the vertices of the pending draw once the title has written them.
 // Not executed on the GPU yet: the record is the input of the draw layer.
 void TakePendingDraw(PPCContext* ctx, uint8_t* base, const char* by) {
+  if (!inline_draw.has_pending.load(std::memory_order_acquire)) return;
   PendingDraw d{};
   std::shared_ptr<InlineBuild> build;
   uint64_t taken = 0;
   {
     std::lock_guard lock(inline_draw.mutex);
-    if (!inline_draw.has_pending) return;
+    if (!inline_draw.has_pending.load(std::memory_order_relaxed)) return;
     d = inline_draw.pending;
-    inline_draw.has_pending = false;
+    inline_draw.has_pending.store(false, std::memory_order_relaxed);
     build = std::move(inline_draw.build);
     taken = ++inline_draw.taken;
   }
@@ -229,7 +231,7 @@ REX_HOOK_RAW(sub_821375A0) {
     call = ++inline_draw.calls;
     inline_draw.pending = {vertices, 5, 4, 20, Get32(base, dev + 12684), Get32(base, dev + 12688),
                            Get32(base, dev + 12432), Get32(base, dev + 12448), lr, thread, call};
-    inline_draw.has_pending = true;
+    inline_draw.has_pending.store(true, std::memory_order_release);
   }
   if (Diagnostics() && call <= 16)
     gpu::host::Record("native-d3d-begin-vertices", fmt::format(
@@ -591,7 +593,8 @@ ConstantCarry carry_vs, carry_ps;  // Translator only.
 // A capture on the stage, translated and posted by the translator.
 class CaptureTask final : public StageTask, public DrawStorageAllocated<CaptureTask> {
  public:
-  explicit CaptureTask(DrawCapture&& capture) : capture_(std::move(capture)) {}
+  CaptureTask() = default;  // Filled in place by the capture (OwnDrawBody).
+  DrawCapture& capture() { return capture_; }
   bool Discardable() const override { return true; }
   void Run() override {
     profile::Timer translate_time(profile::kTranslate);
@@ -613,8 +616,8 @@ class CaptureTask final : public StageTask, public DrawStorageAllocated<CaptureT
 // title wrote (read on the title at the take, as before), posts it.
 class QuadCaptureTask final : public StageTask, public DrawStorageAllocated<QuadCaptureTask> {
  public:
-  QuadCaptureTask(std::shared_ptr<InlineBuild> build, DrawCapture&& capture)
-      : build_(std::move(build)), capture_(std::move(capture)) {}
+  explicit QuadCaptureTask(std::shared_ptr<InlineBuild> build) : build_(std::move(build)) {}
+  DrawCapture& capture() { return capture_; }  // Filled in place by the capture (OwnDrawBody).
   bool Discardable() const override { return true; }
   void Run() override {
     profile::Timer translate_time(profile::kTranslate);
@@ -636,6 +639,8 @@ class QuadCaptureTask final : public StageTask, public DrawStorageAllocated<Quad
   std::shared_ptr<InlineBuild> build_;
   DrawCapture capture_;
 };
+// A larger capture would bypass the pool's size classes on every draw.
+static_assert(sizeof(CaptureTask) <= kDrawStorageLargestBlock && sizeof(QuadCaptureTask) <= kDrawStorageLargestBlock);
 class QuadTakeTask final : public StageTask {
  public:
   QuadTakeTask(std::shared_ptr<InlineBuild> build, std::vector<uint8_t>&& vertices)
@@ -668,12 +673,19 @@ void OwnDrawBody(PPCContext& ctx, uint8_t* base, bool indexed, std::shared_ptr<I
   sampler::RegisterThread("draw");  // REX_NATIVE_SAMPLE_PERIOD_US.
   profile::Timer draw_time(profile::kDraw);
   const uint32_t dev = ctx.r3.u32;
-  DrawCapture capture;
-  capture.name = name;
-  capture.base = base;
   PPCContext saved;
   auto* dispatcher = host::ActiveDispatcher();
   const bool deferred = dispatcher && dispatcher->Deferred();
+  // Deferred, the capture is filled inside the task the stage will run
+  // (no copy of it at the enqueue); inline, it lives here.
+  std::unique_ptr<CaptureTask> draw_task;
+  std::unique_ptr<QuadCaptureTask> quad_task;
+  std::optional<DrawCapture> local;
+  DrawCapture& capture = !deferred ? local.emplace()
+                         : quad    ? (quad_task = std::make_unique<QuadCaptureTask>(quad))->capture()
+                                   : (draw_task = std::make_unique<CaptureTask>())->capture();
+  capture.name = name;
+  capture.base = base;
   static std::once_flag mode_once;
   std::call_once(mode_once, [&] {
     host::Record("native-d3d-translation-mode", fmt::format("\"deferred\":{},\"asked\":{}", deferred,
@@ -697,8 +709,8 @@ void OwnDrawBody(PPCContext& ctx, uint8_t* base, bool indexed, std::shared_ptr<I
       CountStartDraw(capture.vs_cached->name, capture.ps_cached->name);
     }
     std::unique_ptr<StageTask> task;
-    if (quad) task = std::make_unique<QuadCaptureTask>(quad, std::move(capture));
-    else task = std::make_unique<CaptureTask>(std::move(capture));
+    if (quad_task) task = std::move(quad_task);
+    else task = std::move(draw_task);
     if (!dispatcher->Enqueue(std::move(task))) StopInOrder(saved, fmt::format("{}-translation-stage-closed", name), 88);
     return;
   }
@@ -819,6 +831,20 @@ void CaptureDraw(PPCContext& ctx, uint8_t* base, bool indexed, InlineBuild* quad
   if (candidate) ReadStartEntry(base, *c.before_metadata, *c.live);  // START entry: repeat, shaders, atlas.
   saved = ctx;
   profile::Timer original_time(profile::kDrawOriginal);
+  // The dirty masks whose groups the commit only serializes into the discard
+  // buffer are cleared here, as the commit would after writing them; it then
+  // skips that work. 82137E00 and 82137A18 load +0, +8, +16, +24 and +32 first
+  // and, for each nonzero one, call writers of the ring and the cursor at +48
+  // only and store 0: 821403E0 for the VS and PS constants (+0, +8, read by the
+  // shadows above), 82140280 for the fetch words (+28, read by CaptureFetch),
+  // 82140040 and 82140100 for register blocks (+24 high word, +32) the
+  // capture reads from the device after the commit. Nothing in the commit
+  // writes +0..+15 or +24..+39 otherwise. +16 stays: it feeds the shader
+  // commit 82141178, which has effects of its own.
+  if (!quad) {
+    for (uint32_t word = 0; word < 16; word += 4) Put32(base, dev + word, 0);
+    for (uint32_t word = 24; word < 40; word += 4) Put32(base, dev + word, 0);
+  }
   // The quad's commit already ran inside the original BeginVertices.
   c.discarded = quad ? 0 : RunOverDiscard(ctx, base, dev, indexed ? __imp__sub_82137E00 : __imp__sub_82137A18, name,
                                           true);

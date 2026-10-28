@@ -272,9 +272,20 @@ struct Backend::State {
   bool batch_open = false;
   Batch batch;
   // The constant CBVs of the previous draw of the open batch, reused
-  // while the request's version holds (its upload page lives until the fence).
+  // while the request's version holds (its upload page lives until the fence),
+  // and the shared block's, reused while its bytes are the same.
   uint64_t cbv_batch_fence = 0, last_vs_version = 0, last_ps_version = 0;
-  D3D12_GPU_VIRTUAL_ADDRESS last_vs_cbv = 0, last_ps_cbv = 0;
+  D3D12_GPU_VIRTUAL_ADDRESS last_vs_cbv = 0, last_ps_cbv = 0, last_shared_cbv = 0;
+  std::array<uint8_t, 512> last_shared{};
+  // The previous draw of the open batch, for the fusion counters of the
+  // profile (diagnostics only): its batch and operation number (fence 0 when
+  // it recorded no draw), its bindings, shared block and base vertex.
+  struct FusionProbe {
+    uint64_t fence = 0, operation = 0;
+    Batch::DrawBindings bound;
+    std::array<uint8_t, 512> shared{};
+    INT base_vertex = 0;
+  } fusion_probe;
   std::deque<Batch> batches_in_flight;
   std::vector<Microsoft::WRL::ComPtr<ID3D12CommandAllocator>> free_allocators;
   std::vector<UploadPage> free_pages;
@@ -953,7 +964,7 @@ bool Backend::Shutdown(std::string& evidence) {
   state_->vs_block.fill(0);
   state_->ps_block.fill(0);
   state_->cbv_batch_fence = state_->last_vs_version = state_->last_ps_version = 0;
-  state_->last_vs_cbv = state_->last_ps_cbv = 0;
+  state_->last_vs_cbv = state_->last_ps_cbv = state_->last_shared_cbv = 0;
   state_->sampled.clear();
   state_->buffers.clear();
   state_->buffer_heaps.clear();
@@ -3394,7 +3405,8 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
   if (!index_buffer) total = align(total + index_bytes);
   // The request's constants onto the blocks kept here (whole block or
   // the registers written since the previous request), then the usual reuse
-  // of the CBV while the version holds within the batch.
+  // of the CBV while the version holds within the batch, and of the shared
+  // block's while its bytes do.
   if (!ApplyConstants(r.vs_constants, r.vs_constants_delta, state_->vs_block) ||
       !ApplyConstants(r.ps_constants, r.ps_constants_delta, state_->ps_block))
     return fail("native-draw-constants");
@@ -3404,9 +3416,11 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
                         state_->last_vs_version == r.vs_constants_version && state_->last_vs_cbv;
   const bool ps_reuse = r.ps_constants_version && state_->cbv_batch_fence == state_->batch.fence &&
                         state_->last_ps_version == r.ps_constants_version && state_->last_ps_cbv;
+  const bool shared_reuse = state_->cbv_batch_fence == state_->batch.fence && state_->last_shared_cbv &&
+                            state_->last_shared == shared;
   const size_t vs_offset = total; if (!vs_reuse) total += 4096;
   const size_t ps_offset = total; if (!ps_reuse) total += 4096;
-  const size_t shared_offset = total; total += 512;
+  const size_t shared_offset = total; if (!shared_reuse) total += 512;
   for (auto& use : texture_uses) {
     if (!use.upload) continue;
     total = (total + D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1) & ~size_t(D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1);
@@ -3425,7 +3439,7 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
   if (!index_buffer) std::memcpy(mapped + index_offset, r.indices.data(), index_bytes);
   if (!vs_reuse) std::memcpy(mapped + vs_offset, state_->vs_block.data(), 4096);
   if (!ps_reuse) std::memcpy(mapped + ps_offset, state_->ps_block.data(), 4096);
-  std::memcpy(mapped + shared_offset, shared.data(), 512);
+  if (!shared_reuse) std::memcpy(mapped + shared_offset, shared.data(), 512);
   for (const auto& use : texture_uses) {
     if (!use.upload) continue;
     for (size_t level = 0; level < use.footprints.size(); ++level) {
@@ -3531,7 +3545,8 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
   }
   const D3D12_GPU_VIRTUAL_ADDRESS vs_cbv = vs_reuse ? state_->last_vs_cbv : gpu + vs_offset;
   const D3D12_GPU_VIRTUAL_ADDRESS ps_cbv = ps_reuse ? state_->last_ps_cbv : gpu + ps_offset;
-  const std::array<D3D12_GPU_VIRTUAL_ADDRESS, 3> constants{vs_cbv, ps_cbv, gpu + shared_offset};
+  const D3D12_GPU_VIRTUAL_ADDRESS shared_cbv = shared_reuse ? state_->last_shared_cbv : gpu + shared_offset;
+  const std::array<D3D12_GPU_VIRTUAL_ADDRESS, 3> constants{vs_cbv, ps_cbv, shared_cbv};
   for (UINT i = 0; i < constants.size(); ++i) {
     if (!bindings_valid || bound.constants[i] != constants[i]) {
       list->SetGraphicsRootConstantBufferView(4 + i, constants[i]);
@@ -3541,6 +3556,10 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
   state_->cbv_batch_fence = state_->batch.fence;
   state_->last_vs_cbv = vs_cbv;
   state_->last_ps_cbv = ps_cbv;
+  if (!shared_reuse) {
+    state_->last_shared_cbv = shared_cbv;
+    state_->last_shared = shared;
+  }
   state_->last_vs_version = r.vs_constants_version;
   state_->last_ps_version = r.ps_constants_version;
   std::array<D3D12_VERTEX_BUFFER_VIEW, kDrawStreamsMax> streams{};
@@ -3594,6 +3613,33 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
   const uint64_t batch_operations = ++state_->batch.operations;
   ++state_->operations;
   ++state_->draws;
+  // A triangle list right after a draw of the batch that bound the same
+  // state could have been part of it (profile::kDrawsSameState and below).
+  if (Diagnostics()) {
+    auto& p = state_->fusion_probe;
+    const bool uploads = std::any_of(texture_uses.begin(), texture_uses.end(), [](const auto& u) { return u.upload; });
+    const bool same_state = !skip_draw && !uploads && bindings_valid && p.fence == batch_fence &&
+        p.operation + 1 == batch_operations && topology == D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST &&
+        p.bound.topology == topology && p.bound.pipeline == bound.pipeline && p.bound.color == bound.color &&
+        p.bound.depth == bound.depth && p.bound.rtv.ptr == bound.rtv.ptr && p.bound.dsv.ptr == bound.dsv.ptr &&
+        !std::memcmp(&p.bound.viewport, &bound.viewport, sizeof(bound.viewport)) &&
+        !std::memcmp(&p.bound.scissor, &bound.scissor, sizeof(bound.scissor)) &&
+        p.bound.constants[0] == bound.constants[0] && p.bound.constants[1] == bound.constants[1] &&
+        p.shared == shared && p.bound.blend == bound.blend && p.bound.stencil_ref == bound.stencil_ref;
+    const bool same_streams = same_state && p.bound.stream_count == bound.stream_count &&
+        !std::memcmp(p.bound.streams.data(), bound.streams.data(), bound.stream_count * sizeof(bound.streams[0]));
+    const bool fusable = same_streams && p.base_vertex == r.base_vertex &&
+        p.bound.indices.Format == bound.indices.Format &&
+        p.bound.indices.BufferLocation + p.bound.indices.SizeInBytes == bound.indices.BufferLocation;
+    profile::Count(profile::kDrawsSameState, same_state);
+    profile::Count(profile::kDrawsSameStreams, same_streams);
+    profile::Count(profile::kDrawsFusable, fusable);
+    p.fence = skip_draw ? 0 : batch_fence;
+    p.operation = batch_operations;
+    p.bound = bound;
+    p.shared = shared;
+    p.base_vertex = r.base_vertex;
+  }
   if (batch_operations >= kBatchOperationsMax && !state_->CloseBatch(batch_reason, hr)) return fail(batch_reason, hr);
   if (!r.want_evidence) {  // A batched draw formats nothing.
     evidence.clear();
