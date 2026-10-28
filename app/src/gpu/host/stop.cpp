@@ -59,7 +59,10 @@ bool ReleaseEngineAndRecord(std::string_view name, PPCContext* ctx, uint32_t add
     std::lock_guard lock(engine_mutex);
     if (native_engine) {
       shutdown_ok = native_engine->Shutdown(shutdown);
-      if (shutdown_ok) native_engine.reset();
+      if (shutdown_ok) {
+        active_engine.store(nullptr, std::memory_order_release);
+        native_engine.reset();
+      }
     }
     if (shutdown_evidence) *shutdown_evidence = shutdown;
     if (failed_native_engine) {
