@@ -44,6 +44,10 @@ bool InitializeEngines(PPCContext& ctx) {
       ctx.lr != 0x8213ED3C || ctx.r3.u32 != 0x18820000 || ctx.r4.u32 != 0x8213ECA0 ||
       ctx.r5.u32 != 0 || ctx.r6.u32 != 0x8206DCE0 || ctx.r7.u32 != 0x8206E160)
     Stop("VdInitializeEngines-outside-reviewed-signature", &ctx);
+  // The device of the 8213ECE8 in progress (its r3 at the entry, kept by the
+  // device owner): the caller's r31 is a local there, not in the context.
+  const uint32_t guest_device = gpu::EnteredDevice();
+  if (!guest_device) Stop("VdInitializeEngines-outside-device-creation", &ctx);
   constexpr std::array<uint8_t, 32> callback{{
       0x3d,0x60,0x7f,0xc8,0x39,0x40,0x00,0x07,0x91,0x4b,0x32,0x14,0x7c,0x00,0x06,0xac,
       0x39,0x40,0x08,0x00,0x91,0x4b,0x34,0x08,0x7c,0x00,0x06,0xac,0x4e,0x80,0x00,0x20}};
@@ -56,7 +60,7 @@ bool InitializeEngines(PPCContext& ctx) {
   {
     std::lock_guard lock(event_mutex);
     Record("native-engine-init-before", "VdInitializeEngines-restricted-host-compatibility", &ctx,
-           ctx.r31.u32);
+           guest_device);
   }
   std::string evidence, failed_release;
   bool failed_release_ok = true;
@@ -95,7 +99,7 @@ bool InitializeEngines(PPCContext& ctx) {
                       settings.graphics_device);
         REXLOG_INFO("[narutorise] Native renderer backend: {}; adapter: {}; initialization: {}",
                     ApiName(candidate->Api()), device, evidence);
-        engine_registration = {ctx.r4.u32, ctx.r5.u32, ts->thread_id(), int(thread->active_cpu()), ctx.r31.u32};
+        engine_registration = {ctx.r4.u32, ctx.r5.u32, ts->thread_id(), int(thread->active_cpu()), guest_device};
         native_engine = std::move(candidate);
         active_engine.store(native_engine.get(), std::memory_order_release);
       } else {
