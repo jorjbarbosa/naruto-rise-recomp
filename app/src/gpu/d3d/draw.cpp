@@ -59,6 +59,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <thread>
@@ -592,7 +593,8 @@ ConstantCarry carry_vs, carry_ps;  // Translator only.
 // A capture on the stage, translated and posted by the translator.
 class CaptureTask final : public StageTask, public DrawStorageAllocated<CaptureTask> {
  public:
-  explicit CaptureTask(DrawCapture&& capture) : capture_(std::move(capture)) {}
+  CaptureTask() = default;  // Filled in place by the capture (OwnDrawBody).
+  DrawCapture& capture() { return capture_; }
   bool Discardable() const override { return true; }
   void Run() override {
     profile::Timer translate_time(profile::kTranslate);
@@ -614,8 +616,8 @@ class CaptureTask final : public StageTask, public DrawStorageAllocated<CaptureT
 // title wrote (read on the title at the take, as before), posts it.
 class QuadCaptureTask final : public StageTask, public DrawStorageAllocated<QuadCaptureTask> {
  public:
-  QuadCaptureTask(std::shared_ptr<InlineBuild> build, DrawCapture&& capture)
-      : build_(std::move(build)), capture_(std::move(capture)) {}
+  explicit QuadCaptureTask(std::shared_ptr<InlineBuild> build) : build_(std::move(build)) {}
+  DrawCapture& capture() { return capture_; }  // Filled in place by the capture (OwnDrawBody).
   bool Discardable() const override { return true; }
   void Run() override {
     profile::Timer translate_time(profile::kTranslate);
@@ -671,12 +673,19 @@ void OwnDrawBody(PPCContext& ctx, uint8_t* base, bool indexed, std::shared_ptr<I
   sampler::RegisterThread("draw");  // REX_NATIVE_SAMPLE_PERIOD_US.
   profile::Timer draw_time(profile::kDraw);
   const uint32_t dev = ctx.r3.u32;
-  DrawCapture capture;
-  capture.name = name;
-  capture.base = base;
   PPCContext saved;
   auto* dispatcher = host::ActiveDispatcher();
   const bool deferred = dispatcher && dispatcher->Deferred();
+  // Deferred, the capture is filled inside the task the stage will run
+  // (no copy of it at the enqueue); inline, it lives here.
+  std::unique_ptr<CaptureTask> draw_task;
+  std::unique_ptr<QuadCaptureTask> quad_task;
+  std::optional<DrawCapture> local;
+  DrawCapture& capture = !deferred ? local.emplace()
+                         : quad    ? (quad_task = std::make_unique<QuadCaptureTask>(quad))->capture()
+                                   : (draw_task = std::make_unique<CaptureTask>())->capture();
+  capture.name = name;
+  capture.base = base;
   static std::once_flag mode_once;
   std::call_once(mode_once, [&] {
     host::Record("native-d3d-translation-mode", fmt::format("\"deferred\":{},\"asked\":{}", deferred,
@@ -700,8 +709,8 @@ void OwnDrawBody(PPCContext& ctx, uint8_t* base, bool indexed, std::shared_ptr<I
       CountStartDraw(capture.vs_cached->name, capture.ps_cached->name);
     }
     std::unique_ptr<StageTask> task;
-    if (quad) task = std::make_unique<QuadCaptureTask>(quad, std::move(capture));
-    else task = std::make_unique<CaptureTask>(std::move(capture));
+    if (quad_task) task = std::move(quad_task);
+    else task = std::move(draw_task);
     if (!dispatcher->Enqueue(std::move(task))) StopInOrder(saved, fmt::format("{}-translation-stage-closed", name), 88);
     return;
   }
