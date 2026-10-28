@@ -93,14 +93,15 @@ std::atomic<uint64_t> scene_items{0}, scene_flushes{0};
 // Reads the vertices of the pending draw once the title has written them.
 // Not executed on the GPU yet: the record is the input of the draw layer.
 void TakePendingDraw(PPCContext* ctx, uint8_t* base, const char* by) {
+  if (!inline_draw.has_pending.load(std::memory_order_acquire)) return;
   PendingDraw d{};
   std::shared_ptr<InlineBuild> build;
   uint64_t taken = 0;
   {
     std::lock_guard lock(inline_draw.mutex);
-    if (!inline_draw.has_pending) return;
+    if (!inline_draw.has_pending.load(std::memory_order_relaxed)) return;
     d = inline_draw.pending;
-    inline_draw.has_pending = false;
+    inline_draw.has_pending.store(false, std::memory_order_relaxed);
     build = std::move(inline_draw.build);
     taken = ++inline_draw.taken;
   }
@@ -229,7 +230,7 @@ REX_HOOK_RAW(sub_821375A0) {
     call = ++inline_draw.calls;
     inline_draw.pending = {vertices, 5, 4, 20, Get32(base, dev + 12684), Get32(base, dev + 12688),
                            Get32(base, dev + 12432), Get32(base, dev + 12448), lr, thread, call};
-    inline_draw.has_pending = true;
+    inline_draw.has_pending.store(true, std::memory_order_release);
   }
   if (Diagnostics() && call <= 16)
     gpu::host::Record("native-d3d-begin-vertices", fmt::format(

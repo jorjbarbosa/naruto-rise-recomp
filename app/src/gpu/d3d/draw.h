@@ -28,7 +28,9 @@ struct InlineDraw {
   uint32_t patch = 0;  // Own copy of the VS microcode for the fetch patch.
   std::atomic<uint32_t> scope_thread{0};  // Guest thread inside the original commit.
   uint32_t scope_vertices = 0;
-  bool has_pending = false;
+  // Written under the mutex; read without it first, so a draw with no quad
+  // pending does not take the lock.
+  std::atomic<bool> has_pending{false};
   PendingDraw pending{};
   std::shared_ptr<InlineBuild> build;  // Null when the quad has no own draw.
   uint64_t calls = 0, taken = 0;
