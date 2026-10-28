@@ -8,33 +8,38 @@
 setjmp_address = 0x822CC540
 longjmp_address = 0x822CC220
 
+# share_registers: a seed may continue its parent's body and read the parent's
+# r14-r31, which non_volatile_as_local keeps in the parent's locals; marked
+# functions receive them through the context at every call and tail branch.
+# None of these touches r14-r31 in the current codegen, so the mark costs them
+# nothing and guards a wrong classification.
 [functions]
-"0x82156420" = {} # branch at 0x821592EC
-"0x8254EBA8" = {} # branch at 0x825CD508
+"0x82156420" = { share_registers = true } # branch at 0x821592EC
+"0x8254EBA8" = { share_registers = true } # branch at 0x825CD508
 # Conditional destinations omitted by initial analysis but reported by the emitter.
-"0x825AF644" = {} # conditional branch at 0x825AF654
-"0x826AF954" = {} # conditional branches at 0x826AF970 and 0x826AF97C
-"0x82185BB0" = {} # indirect call observed in first runtime smoke test
-"0x821A1700" = {} # indirect call observed in second runtime smoke test
-"0x8215BD88" = {} # indirect call observed in third runtime smoke test
-"0x82604C70" = {} # indirect call observed after loading AI2C
-"0x821D6358" = {} # indirect call observed in fifth runtime smoke test
-"0x82209E40" = {} # chamada observada no sexto teste
-"0x821D6428" = {} # 7
-"0x821D6410" = {}
-"0x825AC290" = {} # revisao manual: regiao de stubs de 8 bytes; chamada indireta em runtime 14:37
-"0x825BC230" = {} # revisao manual: slot de vtable; absorve entrada espuria 0x825BC24C
+"0x825AF644" = { share_registers = true } # conditional branch at 0x825AF654
+"0x826AF954" = { share_registers = true } # conditional branches at 0x826AF970 and 0x826AF97C
+"0x82185BB0" = { share_registers = true } # indirect call observed in first runtime smoke test
+"0x821A1700" = { share_registers = true } # indirect call observed in second runtime smoke test
+"0x8215BD88" = { share_registers = true } # indirect call observed in third runtime smoke test
+"0x82604C70" = { share_registers = true } # indirect call observed after loading AI2C
+"0x821D6358" = { share_registers = true } # indirect call observed in fifth runtime smoke test
+"0x82209E40" = { share_registers = true } # chamada observada no sexto teste
+"0x821D6428" = { share_registers = true } # 7
+"0x821D6410" = { share_registers = true }
+"0x825AC290" = { share_registers = true } # revisao manual: regiao de stubs de 8 bytes; chamada indireta em runtime 14:37
+"0x825BC230" = { share_registers = true } # revisao manual: slot de vtable; absorve entrada espuria 0x825BC24C
 
-"0x825E1918" = {} # runtime: 20261001-150215-974bacac/001-runtime.log
-"0x821B2128" = {} # revisao manual: slot vtable +88 no meio da lacuna 0x821B2118-0x821B2130
-"0x825A5678" = {} # revisao manual: crash ao iniciar gameplay; lacuna 0x825A55D8+, tabela de propriedades
-"0x821A5808" = {} # runtime: inicio de gameplay apos 0x825A5678 (naruto_rise_007.log)
-"0x82531378" = {} # revisao manual: pos-cutscene, transicao para gameplay (naruto_rise_008.log)
-"0x825AC440" = {} # revisao manual: ~60s de gameplay controlavel, regiao de stubs 0x825AB000+ (naruto_rise_009.log)
-"0x821FB788" = {} # runtime: ~17s de gameplay (naruto_rise_010.log)
-"0x826906A8" = {} # runtime: ~52s de gameplay (naruto_rise_011.log)
-"0x820FBED8" = {} # runtime: inicio de missao, ~2,5min de sessao (naruto_rise_012.log)
-"0x821E9A90" = {} # runtime: ~1,5min de gameplay em missao (naruto_rise_013.log)
-"0x826AF940" = {} # runtime: ~8min de gameplay (log 014); segunda entrada do gap de 0x826AF954
-"0x822B3718" = {} # revisao manual: ~4min de gameplay (log 015); mid-gap apos getter de 2 instrucoes
-"0x825AC450" = {} # runtime: ~3,5min de gameplay (log 016); proxima entrada da tabela de 0x825AC440
+"0x825E1918" = { share_registers = true } # runtime: 20261001-150215-974bacac/001-runtime.log
+"0x821B2128" = { share_registers = true } # revisao manual: slot vtable +88 no meio da lacuna 0x821B2118-0x821B2130
+"0x825A5678" = { share_registers = true } # revisao manual: crash ao iniciar gameplay; lacuna 0x825A55D8+, tabela de propriedades
+"0x821A5808" = { share_registers = true } # runtime: inicio de gameplay apos 0x825A5678 (naruto_rise_007.log)
+"0x82531378" = { share_registers = true } # revisao manual: pos-cutscene, transicao para gameplay (naruto_rise_008.log)
+"0x825AC440" = { share_registers = true } # revisao manual: ~60s de gameplay controlavel, regiao de stubs 0x825AB000+ (naruto_rise_009.log)
+"0x821FB788" = { share_registers = true } # runtime: ~17s de gameplay (naruto_rise_010.log)
+"0x826906A8" = { share_registers = true } # runtime: ~52s de gameplay (naruto_rise_011.log)
+"0x820FBED8" = { share_registers = true } # runtime: inicio de missao, ~2,5min de sessao (naruto_rise_012.log)
+"0x821E9A90" = { share_registers = true } # runtime: ~1,5min de gameplay em missao (naruto_rise_013.log)
+"0x826AF940" = { share_registers = true } # runtime: ~8min de gameplay (log 014); segunda entrada do gap de 0x826AF954
+"0x822B3718" = { share_registers = true } # revisao manual: ~4min de gameplay (log 015); mid-gap apos getter de 2 instrucoes
+"0x825AC450" = { share_registers = true } # runtime: ~3,5min de gameplay (log 016); proxima entrada da tabela de 0x825AC440
