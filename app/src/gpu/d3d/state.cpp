@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <atomic>
 #include <condition_variable>
@@ -43,8 +44,10 @@ void RefreshConstants(uint8_t* base, uint32_t at, uint32_t mask_hi, uint32_t mas
   const uint64_t mask = uint64_t(mask_hi) << 32 | mask_lo;
   uint64_t changed = 0;  // The groups whose bytes differ from the shadow.
   unsigned groups = 0, unchanged = 0;  // The profile's: the groups read and those equal to the shadow.
-  for (unsigned group = 0; group < 64; ++group) {
-    if (!full && !((mask >> (63 - group)) & 1)) continue;
+  // The marked groups only, in order (bit 63 is group 0).
+  for (uint64_t todo = full ? ~0ull : mask; todo;) {
+    const unsigned group = unsigned(std::countl_zero(todo));
+    todo &= ~(1ull << (63 - group));
     // The group swapped as a whole, then one compare and one copy.
     std::array<uint32_t, 16> words;
     for (unsigned i = 0; i < 16; ++i) words[i] = Get32(base, at + 64 * group + 4 * i);
