@@ -637,6 +637,8 @@ class QuadCaptureTask final : public StageTask, public DrawStorageAllocated<Quad
   std::shared_ptr<InlineBuild> build_;
   DrawCapture capture_;
 };
+// A larger capture would bypass the pool's size classes on every draw.
+static_assert(sizeof(CaptureTask) <= kDrawStorageLargestBlock && sizeof(QuadCaptureTask) <= kDrawStorageLargestBlock);
 class QuadTakeTask final : public StageTask {
  public:
   QuadTakeTask(std::shared_ptr<InlineBuild> build, std::vector<uint8_t>&& vertices)

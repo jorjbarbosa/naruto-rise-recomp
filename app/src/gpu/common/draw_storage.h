@@ -1,10 +1,13 @@
 #pragma once
 
+#include <array>
 #include <atomic>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <memory_resource>
+#include <mutex>
 #include <new>
 #include <type_traits>
 #include <vector>
@@ -13,6 +16,9 @@ namespace gpu {
 struct DrawStorageStats {
   uint64_t upstream_allocations = 0, retained_bytes = 0;
 };
+// The blocks of the pool: power-of-two size classes of 64 bytes to 16 KiB,
+// 64-byte aligned. Larger or more aligned requests go to the upstream.
+inline constexpr size_t kDrawStorageLargestBlock = 16384;
 namespace detail {
 // Count pool chunks, not individual draws. Large exceptional payloads bypass
 // the pool; ordinary constant blocks and capture objects use size classes.
@@ -32,11 +38,103 @@ class DrawStorageUpstream final : public std::pmr::memory_resource {
   }
   bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override { return this == &other; }
 };
+// Size-class pool with per-thread magazines: the capture allocates on the
+// title thread and the translator and the owner free, every draw. Each thread
+// takes and returns blocks on its own lists without a lock; whole magazines of
+// kMagazine blocks move through the shared depot under its mutex, once per
+// kMagazine blocks. Blocks are never given back to the upstream.
+class DrawPool {
+ public:
+  explicit DrawPool(std::pmr::memory_resource& upstream) : upstream_(upstream) {}
+  DrawPool(const DrawPool&) = delete;
+  DrawPool& operator=(const DrawPool&) = delete;
+  void* allocate(size_t bytes, size_t alignment) {
+    const int c = Class(bytes, alignment);
+    if (c < 0) return upstream_.allocate(bytes, alignment);
+    Cache& cache = Local();
+    Magazine& loaded = cache.loaded[c];
+    if (!loaded.head) {
+      Magazine& spare = cache.spare[c];
+      if (spare.head) std::swap(loaded, spare);
+      else loaded = Take(c);
+    }
+    Node* node = loaded.head;
+    loaded.head = node->next;
+    --loaded.count;
+    return node;
+  }
+  void deallocate(void* p, size_t bytes, size_t alignment) noexcept {
+    const int c = Class(bytes, alignment);
+    if (c < 0) { upstream_.deallocate(p, bytes, alignment); return; }
+    Cache& cache = Local();
+    Magazine& loaded = cache.loaded[c];
+    if (loaded.count == kMagazine) {
+      Magazine& spare = cache.spare[c];
+      if (spare.head) Give(c, spare);
+      spare = loaded;
+      loaded = {};
+    }
+    auto* node = static_cast<Node*>(p);
+    node->next = loaded.head;
+    loaded.head = node;
+    ++loaded.count;
+  }
+
+ private:
+  static constexpr unsigned kClasses = 9;  // 64 << 0 .. 64 << 8.
+  static constexpr uint32_t kMagazine = 64;
+  struct Node { Node* next; };
+  struct Magazine { Node* head = nullptr; uint32_t count = 0; };
+  // A thread's magazines; at its exit they go back to the depot.
+  struct Cache {
+    DrawPool* pool = nullptr;
+    std::array<Magazine, kClasses> loaded{}, spare{};
+    ~Cache() {
+      if (!pool) return;
+      for (unsigned c = 0; c < kClasses; ++c) {
+        if (loaded[c].head) pool->Give(c, loaded[c]);
+        if (spare[c].head) pool->Give(c, spare[c]);
+      }
+    }
+  };
+  static int Class(size_t bytes, size_t alignment) {
+    if (alignment > 64 || bytes > kDrawStorageLargestBlock) return -1;
+    return bytes <= 64 ? 0 : int(std::bit_width(bytes - 1)) - 6;
+  }
+  Cache& Local() {
+    thread_local Cache cache;
+    cache.pool = this;  // One pool per process (DrawStorage).
+    return cache;
+  }
+  // A magazine from the depot, or a new chunk of kMagazine blocks.
+  Magazine Take(unsigned c) {
+    {
+      std::lock_guard lock(mutex_);
+      if (!depot_[c].empty()) {
+        const Magazine m = depot_[c].back();
+        depot_[c].pop_back();
+        return m;
+      }
+    }
+    const size_t size = size_t(64) << c;
+    auto* chunk = static_cast<uint8_t*>(upstream_.allocate(size * kMagazine, 64));
+    for (uint32_t i = 0; i < kMagazine; ++i)
+      reinterpret_cast<Node*>(chunk + i * size)->next =
+          i + 1 < kMagazine ? reinterpret_cast<Node*>(chunk + (i + 1) * size) : nullptr;
+    return {reinterpret_cast<Node*>(chunk), kMagazine};
+  }
+  void Give(unsigned c, Magazine& m) noexcept {
+    std::lock_guard lock(mutex_);
+    depot_[c].push_back(m);
+    m = {};
+  }
+  std::pmr::memory_resource& upstream_;
+  std::mutex mutex_;
+  std::array<std::vector<Magazine>, kClasses> depot_;
+};
 struct DrawStorageState {
   DrawStorageUpstream upstream;
-  // A chunk must cover ordinary bursts; MSVC retains only one empty chunk
-  // per size class, so small chunks caused new upstream allocations per burst.
-  std::pmr::synchronized_pool_resource pool{std::pmr::pool_options{256, 8192}, &upstream};
+  DrawPool pool{upstream};
 };
 inline DrawStorageState& DrawStorage() {
   static DrawStorageState state;
