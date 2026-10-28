@@ -5,16 +5,28 @@ name = "narutorise"
 sdk_version = "0.10.0"
 game_root = "../game_root"
 
+# Every binary keeps CTR, XER, the reservation and the CR fields as locals of
+# each recompiled function instead of context fields: they live within a
+# function and no host hook reads them. LR (the hooks identify callers by it),
+# MSR and the GPRs/FPRs stay in the context.
 [entrypoint]
 file_path = "../game_root/default.xex"
 out_directory_path = "generated/default"
 includes = ["analysis-seeds.toml"]
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+cr_as_local = true
 
 [[modules]]
 guest_path = "ai2c.dll"
 file_path = "../game_root/ai2c.dll"
 out_directory_path = "generated/ai2c"
 includes = ["ai2c-seeds.toml"]
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+cr_as_local = true
 
 # Character DLCs supply alternative engine revisions. The game selects one
 # version per session; each needs its own recompiled module. Local input names
@@ -25,15 +37,27 @@ guest_path = "ai2c@1.dll"
 file_path = "../game_root/ai2c1.dll"
 out_directory_path = "generated/ai2c1"
 includes = ["ai2c1-seeds.toml"]
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+cr_as_local = true
 
 [[modules]]
 guest_path = "ai2c@2.dll"
 file_path = "../game_root/ai2c2.dll"
 out_directory_path = "generated/ai2c2"
 includes = ["ai2c2-seeds.toml"]
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+cr_as_local = true
 
 [[modules]]
 guest_path = "ai2c@3.dll"
 file_path = "../game_root/ai2c3.dll"
 out_directory_path = "generated/ai2c3"
 includes = ["ai2c3-seeds.toml"]
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+cr_as_local = true
