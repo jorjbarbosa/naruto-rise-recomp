@@ -40,6 +40,7 @@ using namespace gpu;
 
 namespace gpu {
 // --- Device creation: 8213ECE8 internals ---
+uint32_t EnteredDevice() { return device_owner ? device_owner->EnteredDevice() : 0; }
 void DeviceArena(PPCContext& ctx, uint8_t*) { Step(ctx, device_owner && device_owner->Arena(ctx)); }
 void DeviceWorkers(PPCContext& ctx, uint8_t*) { Step(ctx, device_owner && device_owner->Workers(ctx)); }
 void DeviceCache(PPCContext& ctx, uint8_t*) { Step(ctx, device_owner && device_owner->Cache(ctx)); }
