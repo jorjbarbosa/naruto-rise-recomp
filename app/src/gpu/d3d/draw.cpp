@@ -831,6 +831,20 @@ void CaptureDraw(PPCContext& ctx, uint8_t* base, bool indexed, InlineBuild* quad
   if (candidate) ReadStartEntry(base, *c.before_metadata, *c.live);  // START entry: repeat, shaders, atlas.
   saved = ctx;
   profile::Timer original_time(profile::kDrawOriginal);
+  // The dirty masks whose groups the commit only serializes into the discard
+  // buffer are cleared here, as the commit would after writing them; it then
+  // skips that work. 82137E00 and 82137A18 load +0, +8, +16, +24 and +32 first
+  // and, for each nonzero one, call writers of the ring and the cursor at +48
+  // only and store 0: 821403E0 for the VS and PS constants (+0, +8, read by the
+  // shadows above), 82140280 for the fetch words (+28, read by CaptureFetch),
+  // 82140040 and 82140100 for register blocks (+24 high word, +32) the
+  // capture reads from the device after the commit. Nothing in the commit
+  // writes +0..+15 or +24..+39 otherwise. +16 stays: it feeds the shader
+  // commit 82141178, which has effects of its own.
+  if (!quad) {
+    for (uint32_t word = 0; word < 16; word += 4) Put32(base, dev + word, 0);
+    for (uint32_t word = 24; word < 40; word += 4) Put32(base, dev + word, 0);
+  }
   // The quad's commit already ran inside the original BeginVertices.
   c.discarded = quad ? 0 : RunOverDiscard(ctx, base, dev, indexed ? __imp__sub_82137E00 : __imp__sub_82137A18, name,
                                           true);
