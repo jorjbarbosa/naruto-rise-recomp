@@ -2,6 +2,7 @@
 #include "gpu/d3d/state.h"
 #include "gpu/common/constant_delta.h"
 #include "gpu/common/guest_memory.h"
+#include "gpu/diagnostics/profile.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -40,13 +41,23 @@ void RefreshConstants(uint8_t* base, uint32_t at, uint32_t mask_hi, uint32_t mas
   if (!s.valid) full = true;
   if (!full && !mask_hi && !mask_lo) return;
   const uint64_t mask = uint64_t(mask_hi) << 32 | mask_lo;
+  unsigned groups = 0, unchanged = 0;  // The profile's: the groups read and those equal to the shadow.
   for (unsigned group = 0; group < 64; ++group) {
     if (!full && !((mask >> (63 - group)) & 1)) continue;
+    bool same = s.valid;
     for (unsigned i = 0; i < 16; ++i) {
       const uint32_t v = Get32(base, at + 64 * group + 4 * i);
-      std::memcpy(&s.bytes[64 * group + 4 * i], &v, 4);
+      uint8_t* const to = &s.bytes[64 * group + 4 * i];
+      if (same && std::memcmp(to, &v, 4)) same = false;
+      std::memcpy(to, &v, 4);
     }
+    ++groups;
+    if (same) ++unchanged;
   }
+  profile::Count(profile::kConstantRefreshes, 1);
+  profile::Count(profile::kConstantGroupsRead, groups);
+  profile::Count(profile::kConstantGroupsUnchanged, unchanged);
+  if (unchanged == groups) profile::Count(profile::kConstantRefreshesUnchanged, 1);
   s.pending |= full ? ~0ull : mask;
   s.valid = true;
   ++s.version;

@@ -275,6 +275,15 @@ struct Backend::State {
   // while the request's version holds (its upload page lives until the fence).
   uint64_t cbv_batch_fence = 0, last_vs_version = 0, last_ps_version = 0;
   D3D12_GPU_VIRTUAL_ADDRESS last_vs_cbv = 0, last_ps_cbv = 0;
+  // The previous draw of the open batch, for the fusion counters of the
+  // profile (diagnostics only): its batch and operation number (fence 0 when
+  // it recorded no draw), its bindings, shared block and base vertex.
+  struct FusionProbe {
+    uint64_t fence = 0, operation = 0;
+    Batch::DrawBindings bound;
+    std::array<uint8_t, 512> shared{};
+    INT base_vertex = 0;
+  } fusion_probe;
   std::deque<Batch> batches_in_flight;
   std::vector<Microsoft::WRL::ComPtr<ID3D12CommandAllocator>> free_allocators;
   std::vector<UploadPage> free_pages;
@@ -3594,6 +3603,33 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
   const uint64_t batch_operations = ++state_->batch.operations;
   ++state_->operations;
   ++state_->draws;
+  // A triangle list right after a draw of the batch that bound the same
+  // state could have been part of it (profile::kDrawsSameState and below).
+  if (Diagnostics()) {
+    auto& p = state_->fusion_probe;
+    const bool uploads = std::any_of(texture_uses.begin(), texture_uses.end(), [](const auto& u) { return u.upload; });
+    const bool same_state = !skip_draw && !uploads && bindings_valid && p.fence == batch_fence &&
+        p.operation + 1 == batch_operations && topology == D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST &&
+        p.bound.topology == topology && p.bound.pipeline == bound.pipeline && p.bound.color == bound.color &&
+        p.bound.depth == bound.depth && p.bound.rtv.ptr == bound.rtv.ptr && p.bound.dsv.ptr == bound.dsv.ptr &&
+        !std::memcmp(&p.bound.viewport, &bound.viewport, sizeof(bound.viewport)) &&
+        !std::memcmp(&p.bound.scissor, &bound.scissor, sizeof(bound.scissor)) &&
+        p.bound.constants[0] == bound.constants[0] && p.bound.constants[1] == bound.constants[1] &&
+        p.shared == shared && p.bound.blend == bound.blend && p.bound.stencil_ref == bound.stencil_ref;
+    const bool same_streams = same_state && p.bound.stream_count == bound.stream_count &&
+        !std::memcmp(p.bound.streams.data(), bound.streams.data(), bound.stream_count * sizeof(bound.streams[0]));
+    const bool fusable = same_streams && p.base_vertex == r.base_vertex &&
+        p.bound.indices.Format == bound.indices.Format &&
+        p.bound.indices.BufferLocation + p.bound.indices.SizeInBytes == bound.indices.BufferLocation;
+    profile::Count(profile::kDrawsSameState, same_state);
+    profile::Count(profile::kDrawsSameStreams, same_streams);
+    profile::Count(profile::kDrawsFusable, fusable);
+    p.fence = skip_draw ? 0 : batch_fence;
+    p.operation = batch_operations;
+    p.bound = bound;
+    p.shared = shared;
+    p.base_vertex = r.base_vertex;
+  }
   if (batch_operations >= kBatchOperationsMax && !state_->CloseBatch(batch_reason, hr)) return fail(batch_reason, hr);
   if (!r.want_evidence) {  // A batched draw formats nothing.
     evidence.clear();
