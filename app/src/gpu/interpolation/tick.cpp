@@ -59,6 +59,8 @@ struct EngineDt {
   float dt = 0.0f, raw = 0.0f;  // +64, +68.
 };
 EngineDt view_saved, view_set;
+double view_ahead = 0;  // ViewAhead(), seconds.
+double view_factor = 1;  // ViewFactor().
 uint32_t view_address = 0;  // The time structure written, 0 when nothing is.
 bool view_started = false;
 double view_shown = 0;  // The image's time of the last view block, in periods.
@@ -245,6 +247,8 @@ void BeginView(uint8_t* base) {
   view_set = {uint64_t(int64_t(double(int64_t(view_saved.us)) * factor)), float(view_saved.dt * factor),
               float(view_saved.raw * factor)};
   WriteDt(base, time, view_set);
+  view_ahead = ViewTime() == 2 ? 0.0 : double(view_saved.dt) * frame.alpha;
+  view_factor = factor;
   view_address = time;
   window_view_dt += view_set.dt;
   window_tick_dt += view_saved.dt;
@@ -255,7 +259,13 @@ void EndView(uint8_t* base) {
   const EngineDt now = ReadDt(base, view_address);
   if (now.us == view_set.us && now.dt == view_set.dt && now.raw == view_set.raw) WriteDt(base, view_address, view_saved);
   view_address = 0;
+  view_ahead = 0;
+  view_factor = 1;
 }
+
+double ViewAhead() { return view_address ? view_ahead : 0.0; }
+
+double ViewFactor() { return view_address ? view_factor : 1.0; }
 
 const char* Label() {
   if (!Enabled() || !by_variable) return "";
