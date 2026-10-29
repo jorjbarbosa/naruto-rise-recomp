@@ -87,14 +87,15 @@ function(native_renderer_patched_copy file patch source_sha256 patch_sha256 patc
 endfunction()
 # D3D12: the adapter loop skips an adapter whose shader model query fails
 # without using its released device, and the swap chain releases what a failed
-# creation made and closes its frame latency handle.
+# creation made, closes its frame latency handle, is destroyed safely after a
+# failed creation and keeps the creation's HRESULT (D3D12LastSwapChainResult).
 if(NARUTORISE_NATIVE_D3D12)
     set(plume_d3d12_dir "${CMAKE_BINARY_DIR}/plume-d3d12")
     native_renderer_patched_copy(plume_d3d12.cpp
         "${CMAKE_CURRENT_LIST_DIR}/plume-patches/d3d12-release-and-adapter.patch"
         7738a95c6b9f6760a5dc1bde7da2b2e3ae6754033ed6242482b1c9d2d10ebc74
-        283f32b936b4cc3012514bad80059f2e84b875da43edbd15fea42a152499e158
-        0346a50612df6807794cd7447ba0ac7baa339d4097bdb9543467dcedc14d1c9c
+        933076f8455b0345d013e0aec95aa9b62bbf741f65e7ed26d81c1966737c01c6
+        7d0756e35312f2ccf9836b16daadf9c5a0ae59683b6f1ea508c3a8f4ff18e163
         "${plume_d3d12_dir}")
     add_library(native_renderer_plume STATIC
         "${plume_d3d12_dir}/plume_d3d12.cpp"
