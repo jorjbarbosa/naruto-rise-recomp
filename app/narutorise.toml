@@ -23,7 +23,8 @@ skip_intro_videos = true
 
 # Optional uploads of native crash dumps, technical details and startup timing.
 # Dumps may contain personal data. Saves and game files are never attached.
-# Also available in Settings > Advanced. Restart to enable.
+# Asked over the first frame of the game, then crash_reporting_asked = true.
+# Also available in Settings > Advanced; enabling there after a refusal needs a restart.
 crash_reporting = false
 
 # Game language: 1 = English, 4 = French, 3 = German, 5 = Spanish, 6 = Italian.

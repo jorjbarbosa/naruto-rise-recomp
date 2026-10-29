@@ -37,9 +37,11 @@ const char* Override(const char* name, const char* fallback) {
 
 bool Initialize(const std::filesystem::path& executable_dir,
                 const std::filesystem::path& cache_root, const std::string& version,
-                bool consent) {
+                Consent consent) {
 #ifdef NARUTORISE_ENABLE_SENTRY
-  if (initialized) return SetConsent(consent);
+  if (initialized) return consent == Consent::kPending || SetConsent(consent == Consent::kGiven);
+  // A pending answer keeps the destination: the SDK holds uploads until consent.
+  const bool destination = consent != Consent::kRefused;
   try {
 #ifdef _WIN32
     const auto handler = executable_dir / "crashpad_handler.exe";
@@ -60,7 +62,7 @@ bool Initialize(const std::filesystem::path& executable_dir,
     sentry_options_set_logger_enabled_when_crashed(options, 0);
     sentry_options_set_debug(options, 1);
     // An empty DSN removes the destination as well as requiring SDK consent.
-    sentry_options_set_dsn(options, consent ? Override("SENTRY_DSN", NARUTORISE_SENTRY_DSN) : "");
+    sentry_options_set_dsn(options, destination ? Override("SENTRY_DSN", NARUTORISE_SENTRY_DSN) : "");
     const auto release = "narutorise@" + (version.empty() ? std::string("dev") : version)
                          + "+" + NARUTORISE_BUILD_REVISION;
     sentry_options_set_release(options, Override("SENTRY_RELEASE", release.c_str()));
@@ -76,7 +78,7 @@ bool Initialize(const std::filesystem::path& executable_dir,
     // TEB limits, a crash dump is ~250 MB, over the upload limit (rejected as
     // invalid multipart) and the local incident quota.
     sentry_options_set_crashpad_limit_stack_capture_to_sp(options, 1);
-    if (consent && !local.empty()) {
+    if (destination && !local.empty()) {
 #ifdef _WIN32
       sentry_options_add_attachmentw(options, (local / "channel.bin").c_str());
 #else
@@ -89,9 +91,9 @@ bool Initialize(const std::filesystem::path& executable_dir,
           const std::filesystem::path log(file->filename());
           incident::SetLog(log);
 #ifdef _WIN32
-          if (consent) sentry_options_add_attachmentw(options, log.c_str());
+          if (destination) sentry_options_add_attachmentw(options, log.c_str());
 #else
-          if (consent) sentry_options_add_attachment(options, log.c_str());
+          if (destination) sentry_options_add_attachment(options, log.c_str());
 #endif
           break;
         }
@@ -110,8 +112,9 @@ bool Initialize(const std::filesystem::path& executable_dir,
       return false;
     }
     initialized = true;
-    upload_session = consent; revoked = false;
-    if (consent) sentry_user_consent_give(); else sentry_user_consent_revoke();
+    upload_session = destination; revoked = false;
+    if (consent == Consent::kGiven) sentry_user_consent_give();
+    else if (consent == Consent::kRefused) sentry_user_consent_revoke();
     incident::Collector(true, "Crashpad initialized synchronously; local capture independent of upload");
 #ifdef _WIN32
     incident::SetMetadata("fast_fail_coverage", std::filesystem::is_regular_file(executable_dir / "crashpad_wer.dll")
@@ -121,14 +124,16 @@ bool Initialize(const std::filesystem::path& executable_dir,
     incident::SetMetadata("release", release);
     incident::SetMetadata("guest_register_policy", "published PPCContext; compiler-local values may differ; LR is not the native PC");
     incident::SetMetadata("session_id", incident::SessionId());
-    incident::Event("transport", consent ? "authorized" : "local-only", "database isolated per session; old sessions never reopened for upload");
+    const char* const transport[] = {"local-only", "pending", "authorized"};
+    const char* const uploads[] = {"disabled", "pending consent", "enabled"};
+    incident::Event("transport", transport[int(consent)], "database isolated per session; old sessions never reopened for upload");
     sentry_set_tag("application", "narutorise");
     sentry_set_tag("build_revision", NARUTORISE_BUILD_REVISION);
     sentry_set_tag("session_id", incident::SessionId().c_str());
     auto* context = sentry_transaction_context_new("Application startup", "app.start");
     startup = sentry_transaction_start(context, sentry_value_new_null());
     REXLOG_INFO("[sentry] Local capture ready; uploads {}; release {}; incident {}",
-                consent ? "enabled" : "disabled", release, incident::SessionId());
+                uploads[int(consent)], release, incident::SessionId());
     return true;
   } catch (const std::exception& error) {
     REXLOG_WARN("[sentry] Reporting unavailable: {}", error.what());
@@ -146,6 +151,10 @@ bool SetConsent(bool consent) {
 #ifdef NARUTORISE_ENABLE_SENTRY
   if (initialized) {
     if (consent && (!upload_session || revoked)) return false; // New session/restart required.
+    if (consent && sentry_user_consent_get() != SENTRY_USER_CONSENT_GIVEN) {
+      sentry_user_consent_give();
+      incident::Event("transport", "authorized", "given during the session; uploads from this session only");
+    }
     if (!consent) {
       revoked = true;
       sentry_user_consent_revoke();

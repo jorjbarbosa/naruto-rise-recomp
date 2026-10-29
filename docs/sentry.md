@@ -13,15 +13,21 @@ The DSN identifies the destination for events. It is not an administration or sy
 
 ## Player preference
 
-Reporting is off by default, including for existing configurations without the new key.
-Players can enable **Settings > Advanced > Send crash reports** and restart. The choice is
-stored as `crash_reporting` in the active `narutorise.toml`, outside the cache. Local capture starts independently of uploads.
+Reporting is off until the player answers. With the native renderer, the first frame of the game
+shows **Send crash reports?** with **Send reports** and **Don't send** (B/Esc picks the second);
+the game input and the game menu wait for the answer. Until then the session keeps the
+destination but the SDK holds every upload, and **Send reports** enables uploads in the same
+session. The answer is stored as `crash_reporting` with `crash_reporting_asked = true` in the active
+`narutorise.toml`, outside the cache. `crash_reporting = true` from older versions, or
+`--crash_reporting` on the command line (tests and scripted boots), counts as an answer and skips
+the question. Later changes go through **Settings > Advanced > Send crash reports**; enabling
+there after a refusal needs a restart. Local capture starts independently of uploads.
 
 When enabled, the SDK sends native crash dumps and technical context, and samples 10% of
 startup timing transactions. Crash dumps can contain personal information from process memory.
 Session logs and the bounded diagnostics channel are attached only with consent. Saves and game files are not attached. Do not describe
 dumps as guaranteed free of personal data. Disabling the setting revokes consent for new
-uploads immediately; a request already in flight may have been received. Each session has its own database under `<data_root>/incidents/<session>/capture`. Off sessions use an empty DSN. Re-enabling requires a new session and never reopens older databases.
+uploads immediately; a request already in flight may have been received. Each session has its own database under `<data_root>/incidents/<session>/capture`. Off sessions use an empty DSN. Re-enabling requires a new session and never reopens older databases. A session that starts unanswered and gets **Send reports** uploads only what that session captured.
 
 Local incident packages, fixed PowerPC context, explicit renderer failure events, retention, supervision and hang snapshots are described in [Local diagnostics](crash-reports.md).
 
