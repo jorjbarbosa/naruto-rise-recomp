@@ -66,7 +66,7 @@ Both interfaces offer languages in this order:
 
 Use **Settings → Game → Menu language** to change the interface. This does not change the game language: the game selector offers the five native languages listed above plus installed translation packages.
 
-The installer always starts with English selected, independently of the Windows language or a previous installation's language. Numbered installer options preserve the order above. On a fresh installation, the selected installer language becomes the menu language. Reinstallation preserves existing configuration, including language preferences.
+The compatibility bridge (`NarutoRiseInstaller.exe`) always starts with English selected, independently of the Windows language or a previous installation's language. Its numbered options preserve the order above. On a fresh installation, the selected language becomes the menu language. Updating preserves the existing configuration, including language preferences.
 
 ## Ultrawide
 
@@ -106,6 +106,8 @@ The values below match `app/narutorise.toml`:
 | `present_effect` | `"cas"` | Presentation effect; integration depends on the SDK |
 | `skip_intro_videos` | `true` | Skip boot logos (`Ubisoft.bik`, `LOGO_CORPO_EMEA.bik`, `LOGO_CORPO_US.bik`); preserve the campaign opening (`Intro.bik`) |
 | `show_fps_overlay` | `false` | FPS/frametime overlay |
+| `show_startup_menu` | `true` | Open the initial menu before the game; **Settings → Advanced → Show menu at startup** |
+| `crash_reporting` | `false` | Send crash reports to Sentry. The first start asks over the game and saves the answer here with `crash_reporting_asked = true`; `--crash_reporting` on the command line skips the question. See [Sentry](sentry.md) |
 | `input_backend` | `"sdl"` | Physical input provider (`sdl` or `xinput`); changing it requires a game restart |
 | `mnk_mode` | `false` | Legacy keyboard/mouse selection; native Automatic and per-port profiles take precedence |
 | `log_level` | `"info"` | Logging level |
