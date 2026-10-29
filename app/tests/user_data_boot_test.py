@@ -72,14 +72,15 @@ def main():
                 assert 'Setup screen:' not in text()
             else:
                 win.wait_for(lambda: 'Setup screen: requested' in text(), process)
-                assert (expected / 'launch.marker').is_file(), 'marker must use the effective root'
+                assert (data / 'launch.marker').is_file(), 'marker must stay at the data folder root'
+                assert not (expected / 'launch.marker').exists(), 'marker must not follow the user root'
             logged = text().replace('\\', '/')
             assert 'User data:      ' + expected.as_posix() in logged, logged[-2000:]
             assert 'Cache root:     ' + expected_cache.as_posix() in logged, logged[-2000:]
             win.user32.PostMessageW(hwnd, 0x10, 0, 0)
             process.wait(timeout=25)
             assert process.returncode == 0
-            assert not (expected / 'launch.marker').exists()
+            assert not (data / 'launch.marker').exists()
             assert sentinel.read_bytes() == b'existing save'
             shutil.copy2(log, output / (name + '.log'))
             result = {'case': name, 'passed': True, 'exit': process.returncode, 'root': str(expected), 'cache': str(expected_cache)}
