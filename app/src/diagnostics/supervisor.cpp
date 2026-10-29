@@ -419,14 +419,15 @@ int Observe(Mapping& mapping, const fs::path& directory, const fs::path& executa
           for (auto& word : words) { input >> std::hex >> word; if (!input) { valid = false; break; } }
           if (valid) {
             Json context{{"native_pc", words[0]}, {"fault_address", words[1]}, {"sdk_exception_kind", words[2]},
-                {"guest_thread", words[3]}, {"guest_memory_base", words[4]}, {"lr", words[5]}, {"ctr", words[6]},
+                {"guest_thread", words[3]}, {"guest_memory_base", words[4]}, {"lr", words[5]}, {"ctr", nullptr},
                 {"guest_context_available", words[4] != 0},
-                {"register_origin", "published PPCContext; compiler-local values are not reconstructed"},
+                {"register_origin", "published PPCContext r0-r13 and LR; CTR and r14-r31 are locals of the "
+                    "recompiled functions, not published"},
                 {"access_operation", words[39] == 1 ? "read" : words[39] == 2 ? "write" : "unknown"},
                 {"fatal_correlation", "not-confirmed; match native PC and host thread against the exception dump"},
                 {"guest_stack_bounds", "not read on the fatal path; r1/r13 and memory base are provided"},
                 {"lr_is_native_pc", false}, {"gpr", Json::array()}};
-            for (size_t i = 7; i < 39; ++i) context["gpr"].push_back(words[i]);
+            for (size_t i = 7; i < 39; ++i) context["gpr"].push_back(i < 21 ? Json(words[i]) : Json(nullptr));
             manifest[field]["data"] = context;
             AtomicText(directory / "guest-context.json", Dump(context));
           }

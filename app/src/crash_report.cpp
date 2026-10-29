@@ -81,20 +81,19 @@ bool Handler(rex::arch::Exception* ex, void*) {
   narutorise::incident::GuestFault(ex->pc(), address, uint32_t(ex->code()), 0, 0, {}, 0, 0, access);
   auto* state = rex::runtime::ThreadState::Get();
   const auto* ctx = state ? state->context() : nullptr;
+  // CTR and r14-r31 are locals of each recompiled function
+  // (narutorise_manifest.toml), so their context fields are stale; only r0-r13
+  // and LR are published, and the supervisor records the rest as unavailable.
   const std::array<uint64_t, 32> registers = ctx ? std::array<uint64_t, 32>{
       ctx->r0.u64, ctx->r1.u64, ctx->r2.u64, ctx->r3.u64,
       ctx->r4.u64, ctx->r5.u64, ctx->r6.u64, ctx->r7.u64,
       ctx->r8.u64, ctx->r9.u64, ctx->r10.u64, ctx->r11.u64,
-      ctx->r12.u64, ctx->r13.u64, ctx->r14.u64, ctx->r15.u64,
-      ctx->r16.u64, ctx->r17.u64, ctx->r18.u64, ctx->r19.u64,
-      ctx->r20.u64, ctx->r21.u64, ctx->r22.u64, ctx->r23.u64,
-      ctx->r24.u64, ctx->r25.u64, ctx->r26.u64, ctx->r27.u64,
-      ctx->r28.u64, ctx->r29.u64, ctx->r30.u64, ctx->r31.u64
+      ctx->r12.u64, ctx->r13.u64
   } : std::array<uint64_t, 32>{};
   narutorise::incident::GuestFault(ex->pc(), address,
       uint32_t(ex->code()), state ? state->thread_id() : 0,
       state && state->memory() ? reinterpret_cast<uint64_t>(state->memory()->virtual_membase()) : 0,
-      registers, ctx ? ctx->lr : 0, ctx ? ctx->ctr.u64 : 0,
+      registers, ctx ? ctx->lr : 0, 0,
       access);
   observing = false;
   return false;

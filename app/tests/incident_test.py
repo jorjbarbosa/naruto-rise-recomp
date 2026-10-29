@@ -48,6 +48,8 @@ def main():
             guest = manifest['guest_context']['data']
             assert guest['native_pc'] == 0x2222 and guest['access_operation'] == 'write', guest
             assert guest['gpr'][1] == 0x7010fc00 and len(guest['gpr']) == 32, guest
+            # CTR and r14-r31 are locals of the recompiled functions: recorded as unavailable.
+            assert guest['gpr'][13] == 0x80010000 and guest['gpr'][14] is None and guest['ctr'] is None, guest
             assert (manifests[0].parent / 'guest-context.json').is_file()
         # Every persisted line must be valid JSON even under concurrent writes.
         for line in (manifests[0].parent / 'events.jsonl').read_text(encoding='utf-8').splitlines():
