@@ -37,7 +37,7 @@ def main():
         record = product/'input.txt'
         config = dict(renderer='native', native_backend=api, fullscreen=False, skip_intro_videos=True, show_startup_menu=False,
                       frame_rate=60, mnk_mode=True, mnk_mouse=False, custom_game_root=str(iso),
-                      check_for_updates=False, show_fps_overlay=False)
+                      check_for_updates=False, show_fps_overlay=False, crash_reporting_asked=True)
         (product / 'data').mkdir(exist_ok=True)
         (product/'data/narutorise.toml').write_text('\n'.join(f'{key} = {json.dumps(value)}' for key,value in config.items()), encoding='utf-8')
         process = subprocess.Popen([str(product/'narutorise.exe')], cwd=product,
