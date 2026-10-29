@@ -41,6 +41,11 @@
 // values come back. The effects' work thread gets its dt as an argument
 // (826AB438). REX_NATIVE_INTERPOLATION_VIEW_TIME=0 leaves the tick's dt;
 // =tick gives the tick's dt in the ticks and 0 between them (a probe).
+//
+// The game's time (+48, the sum of +56) stays the tick's: some readers in the
+// view block step once per value of it (the wind field's samples, 8267D450).
+// What derives a phase from it gets the image's advance from ViewAhead(), and
+// what steps by a fixed amount per display gets ViewFactor() (wind.cpp).
 #include <cstdint>
 
 namespace gpu::tick {
@@ -80,4 +85,11 @@ const char* Label();
 // thread: the engine's dt of the view block (above).
 void BeginView(uint8_t* base);
 void EndView(uint8_t* base);
+// Inside a view block whose time is scaled, the game's time of the image past
+// the last tick: alpha of the tick's dt (+64, with the time scale), seconds;
+// 0 elsewhere.
+double ViewAhead();
+// Inside such a view block, the share of the tick's dt it gets (the advance of
+// the image since the last view block, in periods: 0.5 at 60 Hz); 1 elsewhere.
+double ViewFactor();
 }  // namespace gpu::tick
