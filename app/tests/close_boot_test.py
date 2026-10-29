@@ -82,7 +82,7 @@ def main():
                     shutil.copy2(item, product/item.name)
             config = dict(renderer='native', native_backend=api, fullscreen=False, skip_intro_videos=True,
                           frame_rate=60, mnk_mode=True, mnk_mouse=True, custom_game_root=str(iso), check_for_updates=False,
-                          show_startup_menu=False)
+                          show_startup_menu=False, crash_reporting_asked=True)
             (product / 'data').mkdir(exist_ok=True)
             (product/'data/narutorise.toml').write_text('\n'.join(f'{key} = {json.dumps(value)}' for key,value in config.items()), encoding='utf-8')
             process = subprocess.Popen([str(product/'narutorise.exe')], cwd=product,

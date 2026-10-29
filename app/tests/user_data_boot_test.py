@@ -42,7 +42,7 @@ def main():
         config = {'renderer': 'native', 'native_backend': 'd3d12', 'fullscreen': False,
                   'custom_game_root': str(iso), 'user_data_root': str(configured.relative_to(product)),
                   'check_for_updates': False, 'log_level': 'debug', 'skip_intro_videos': True,
-                  'show_startup_menu': name != 'direct'}
+                  'show_startup_menu': name != 'direct', 'crash_reporting_asked': True}
         (data / 'narutorise.toml').write_text('\n'.join(f'{k} = {json.dumps(v, ensure_ascii=False)}' for k, v in config.items()), encoding='utf-8')
         env = {k: v for k, v in os.environ.items() if k not in ('REX_USER_DATA_ROOT', 'REX_CACHE_ROOT')}
         env['REX_DATA_ROOT'] = str(data)

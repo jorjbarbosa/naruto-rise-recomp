@@ -158,7 +158,7 @@ def main():
             marker.write_text('started\n')
         config = {'renderer': 'native', 'native_backend': api, 'fullscreen': False,
                   'skip_intro_videos': True, 'frame_rate': 60, 'input_backend': 'sdl', 'launcher_language': language,
-                  'check_for_updates': False, 'show_startup_menu': show_menu}
+                  'check_for_updates': False, 'show_startup_menu': show_menu, 'crash_reporting_asked': True}
         if not first:
             config['custom_game_root'] = str(root)
         (data/'narutorise.toml').write_text('\n'.join(f'{key} = {json.dumps(value, ensure_ascii=False)}' for key,value in config.items()), encoding='utf-8')
