@@ -83,6 +83,7 @@ REXCVAR_DEFINE_BOOL(show_startup_menu, true, "narutorise/UI",
                     "Show the initial menu before the game (Settings > Advanced)");
 REXCVAR_DEFINE_BOOL(check_for_updates, true, "narutorise/UI", "Notify when a new release is available");
 REXCVAR_DEFINE_BOOL(crash_reporting, false, "narutorise/Reporting", "Allow crash reports and startup timing to be sent to Sentry");
+REXCVAR_DEFINE_BOOL(crash_reporting_asked, false, "narutorise/Reporting", "The crash report question at the first start was answered");
 REXCVAR_DEFINE_STRING(sentry_test, "", "narutorise/Internal", "Developer verification: error or crash; requires crash_reporting=true")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_STRING(incident_test, "", "narutorise/Internal", "Disposable-process local capture verification; no game data required")
@@ -272,8 +273,10 @@ class NarutoriseApp : public rex::ReXApp {
     narutorise::incident::Event("data-and-configuration", "end");
     narutorise::incident::SetMetadata("renderer_requested", rex::cvar::GetFlagByName("renderer"));
     narutorise::incident::SetMetadata("native_backend_requested", rex::cvar::GetFlagByName("native_backend"));
+    const auto consent = CrashReportingConsent();
+    ask_crash_reporting_ = consent == narutorise::reporting::Consent::kPending;
     narutorise::reporting::Initialize(rex::filesystem::GetExecutableFolder(), active.cache_root,
-                                    narutorise::Version(), REXCVAR_GET(crash_reporting));
+                                    narutorise::Version(), consent);
     narutorise::incident::Event("runtime-and-xex", "begin");
     for (const auto* key : {"renderer", "native_backend", "graphics_device", "resolution_scale", "msaa_samples",
                             "frame_rate", "translation_mod", "skip_intro_videos", "log_level"})
@@ -287,6 +290,17 @@ class NarutoriseApp : public rex::ReXApp {
       REXLOG_INFO("[narutorise] {}", message);
     if (game_data_root().empty()) return;
     LogGameData(game_data_root());
+  }
+  // Asked over the first frame of the game, unless the configuration or the
+  // command line (tests, scripted boots) already holds an answer. An opt-in
+  // from before the question counts as one.
+  static narutorise::reporting::Consent CrashReportingConsent() {
+    using narutorise::reporting::Consent;
+    if (REXCVAR_GET(crash_reporting)) return Consent::kGiven;
+    const auto source = rex::cvar::GetFlagSource("crash_reporting");
+    const bool answered = REXCVAR_GET(crash_reporting_asked) || source == rex::cvar::Source::kCommandLine ||
+                          source == rex::cvar::Source::kEnvironment;
+    return answered ? Consent::kRefused : Consent::kPending;
   }
   void LogGameData(const std::filesystem::path& root) {
     using narutorise::game_image::Status;
@@ -1285,7 +1299,10 @@ class NarutoriseApp : public rex::ReXApp {
     DrawNativeUi(); // Replace the persistent GPU frame when nothing remains.
     REXLOG_INFO("[narutorise] Game menu closed; guest input resumes after release");
   }
-  void ToggleGameMenu() { if (ui_.OverlayShown()) CloseGameMenu(); else OpenGameMenu(); }
+  void ToggleGameMenu() {
+    if (crash_question_open_) return;  // Opening the menu would close the question unanswered.
+    if (ui_.OverlayShown()) CloseGameMenu(); else OpenGameMenu();
+  }
   void CreateDesktopShortcut() {
     const bool ok = narutorise::menu::WriteShortcut(narutorise::menu::DesktopShortcut(),
         prepared_data_->paths.install_dir / "narutorise.exe", prepared_data_->paths, SessionExtraArguments());
@@ -1410,13 +1427,40 @@ class NarutoriseApp : public rex::ReXApp {
       app_context().CallInUIThread([this] {
         if (closing_.load()) return;
         RemoveLaunchMarker();
-        if (game_running_ && !shortcut_hint_.empty()) {
-          shortcut_hint_pending_ = true;
-          shortcut_hint_due_ = std::chrono::steady_clock::now() + std::chrono::seconds(4);
-        }
+        if (game_running_ && ask_crash_reporting_) AskCrashReporting();
+        else ScheduleShortcutHint();
       });
     });
 #endif
+  }
+  void ScheduleShortcutHint() {
+    if (game_running_ && !shortcut_hint_.empty()) {
+      shortcut_hint_pending_ = true;
+      shortcut_hint_due_ = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+    }
+  }
+  // The crash report question (reporting::Consent::kPending). The guest input
+  // waits for the answer; B/Esc picks the last action, local reports only.
+  void AskCrashReporting() {
+    using narutorise::menu::Text;
+    ask_crash_reporting_ = false;
+    crash_question_open_ = true;
+    narutorise::menu::input_blocked = true;
+    const auto answer = [this](bool consent) {
+      crash_question_open_ = false;
+      if (!menu_settings_.AnswerCrashReporting(consent))
+        REXLOG_WARN("[narutorise] Crash reporting answer not saved; the question returns at the next start");
+      rex::cvar::SetFlagByName("crash_reporting", consent ? "true" : "false");
+      rex::cvar::SetFlagByName("crash_reporting_asked", "true");
+      narutorise::reporting::SetConsent(consent);
+      narutorise::menu::input_blocked = ui_.OverlayShown();
+      REXLOG_INFO("[narutorise] Crash reporting answered: {}", consent ? "uploads enabled" : "local reports only");
+      ScheduleShortcutHint();
+    };
+    ui_.ShowDialog(Text("crash-reporting-ask"), Text("crash-reporting-ask-help"),
+                   {{Text("crash-reporting-send"), [answer] { answer(true); }},
+                    {Text("crash-reporting-local"), [answer] { answer(false); }}});
+    REXLOG_INFO("[narutorise] Crash reporting question shown; guest input neutral");
   }
   void SetFpsVisible(bool visible) {
     ui_.SetFpsVisible(visible);
@@ -1451,6 +1495,8 @@ class NarutoriseApp : public rex::ReXApp {
   std::string shortcut_hint_;
   bool shortcut_hint_pending_ = false;
   std::chrono::steady_clock::time_point shortcut_hint_due_{};
+  bool ask_crash_reporting_ = false;  // Shown over the first frame of the game.
+  bool crash_question_open_ = false;  // The game menu waits for the answer.
   std::atomic<bool> ui_draw_pending_{false};
   std::atomic<bool> closing_{false};
   rex::RuntimeConfig* runtime_config_ = nullptr;  // ReXApp's, from OnPreSetup on.

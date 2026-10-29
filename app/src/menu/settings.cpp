@@ -116,6 +116,17 @@ void Settings::Change(const std::string& key, std::function<void(GameConfig&)> c
   }
   CommitChange(key, std::move(next));
 }
+bool Settings::AnswerCrashReporting(bool consent) {
+  auto next = config_;
+  next.crash_reporting = consent;
+  next.crash_reporting_asked = true;
+  if (pending_config_ || !Save(next)) return false;
+  config_ = std::move(next);
+  // Applied in this session: nothing for the settings to mark as changed.
+  initial_.crash_reporting = consent;
+  initial_.crash_reporting_asked = true;
+  return true;
+}
 void Settings::CommitChange(const std::string& key, GameConfig next, std::string focus) {
   config_ = std::move(next);
   edited_flags_.insert(key);
@@ -305,7 +316,8 @@ std::vector<PanelRow> Settings::Rows(int group) {
     toggle("triple_buffering", TextId::TripleBufferingLabel, TextId::TripleBufferingDescription, &GameConfig::triple_buffering);
     rows.push_back({"crash_reporting", Text("crash-reporting"), Bool(config_.crash_reporting), Text("crash-reporting-help"),
         config_.crash_reporting != initial_.crash_reporting, true, {Text("off"), Text("on")}, config_.crash_reporting ? 1 : 0,
-        [this](int value) { Change("crash_reporting", [value](GameConfig& config) { config.crash_reporting = value != 0; }); }, {}});
+        [this](int value) { Change("crash_reporting", [value](GameConfig& config) {
+          config.crash_reporting = value != 0; config.crash_reporting_asked = true; }); }, {}});
     if (!incident::Directory().empty()) {
       rows.push_back({"diagnostics-open", Text("diagnostics-open"), "", Text("diagnostics-help"), false, false, {}, 0, {},
           [] { launcher_ui::OpenFolder(incident::ReportsDirectory()); }});

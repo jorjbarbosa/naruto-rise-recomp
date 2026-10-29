@@ -56,6 +56,11 @@ int main(int argc, char** argv) {
     opted_in.crash_reporting = false;
     Require(ConfigManager::Save(reporting_path, opted_in) && ConfigManager::Load(reporting_path, opted_in)
                 && !opted_in.crash_reporting, "Reporting revocation did not survive reload");
+    Require(!opted_in.crash_reporting_asked, "The first-start question must not count as answered");
+    opted_in.crash_reporting_asked = true;
+    Require(ConfigManager::Save(reporting_path, opted_in) && ConfigManager::Load(reporting_path, opted_in)
+                && opted_in.crash_reporting_asked && !opted_in.crash_reporting,
+            "The answer to the first-start question did not survive reload");
 
     Write(path, "launcher_language = 'pt_BR'\n");
     GameConfig legacy;

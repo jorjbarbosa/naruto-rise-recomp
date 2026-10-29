@@ -86,7 +86,8 @@ class Ui final : public rex::ui::UIDrawer, public rex::ui::WindowInputListener {
   void SetShadersVisible(bool visible, uint32_t pending = 0, float progress = -1);
   // A document is shown (any thread): the native mode draws frames then.
   bool Shown() const { return fps_visible_.load() || setup_shown_.load() || panel_shown_.load() ||
-                              controls_shown_.load() || overlay_shown_.load() || status_shown_.load(); }
+                              controls_shown_.load() || overlay_shown_.load() || status_shown_.load() ||
+                              dialog_shown_.load(); }
   // A frame of the UI, on the UI thread: the app's call in the native mode,
   // the presenter's with Xenos.
   void Draw(rex::ui::UIDrawContext& context) override;
@@ -107,7 +108,9 @@ class Ui final : public rex::ui::UIDrawer, public rex::ui::WindowInputListener {
   std::unique_ptr<MenuEvents> overlay_events_, status_events_;
   Rml::ElementDocument* overlay_ = nullptr;
   Rml::ElementDocument* status_ = nullptr;
-  std::atomic<bool> overlay_shown_{false}, status_shown_{false}, game_menu_enabled_{false};
+  // A dialog can show alone over the game (the crash report question): its
+  // answer runs on the next frame, so it keeps the frames coming too.
+  std::atomic<bool> overlay_shown_{false}, status_shown_{false}, game_menu_enabled_{false}, dialog_shown_{false};
   std::function<void()> toggle_menu_;
   std::string menu_key_ = "F1";
   struct Notice { std::string text, action_label; std::function<void()> action; std::string title; };
