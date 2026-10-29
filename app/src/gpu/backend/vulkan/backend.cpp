@@ -197,10 +197,12 @@ struct VmaImage {
   VmaAllocator allocator = VK_NULL_HANDLE;
   VkImage image = VK_NULL_HANDLE;
   VmaAllocation allocation = VK_NULL_HANDLE;
+  ImageViews views;  // Its sampled views, gone before the image.
   VmaImage() = default;
   VmaImage(const VmaImage&) = delete;
   VmaImage& operator=(const VmaImage&) = delete;
   ~VmaImage() {
+    views.Clear();
     if (image) vmaDestroyImage(allocator, image, allocation);
   }
 };
@@ -473,6 +475,7 @@ struct Backend::State {
   // Own textures of guest texture headers: the resolve destinations.
   struct Texture {
     std::unique_ptr<plume::RenderTexture> texture;
+    ImageViews views;  // Its sampled views; declared after the texture, destroyed first.
     uint32_t width = 0, height = 0;
     bool depth = false, content_defined = false;
     bool render_target = false;  // Created for the resolve passes (depth, one color sample).
@@ -523,6 +526,18 @@ struct Backend::State {
   std::array<VkImageView, 3> fallback_views{};
   bool fallback_initialized = false;
   std::unordered_map<uint64_t, PipelineSet::Pipeline> pipelines;
+  // The draw keys PrefetchPipelines computed for a batch, in its order, with
+  // the target each was computed for: the dispatcher draws that batch right
+  // after, and DrawIndexed takes the key of the next request from here. Any
+  // other request ends the batch.
+  struct PrefetchedKey {
+    uint64_t key = 0;  // 0: not computed.
+    uint32_t samples = 0;
+    bool depth = false, color = false;
+  };
+  const DrawRequest* prefetched_batch = nullptr;
+  std::vector<PrefetchedKey> prefetched_keys;
+  size_t prefetched_next = 0;
   std::map<uint64_t, PipelineDesc> pipeline_descs;
   std::map<uint64_t, std::string> pipeline_origins;
   std::map<uint64_t, uint32_t> pipeline_worlds, pipeline_create_us;

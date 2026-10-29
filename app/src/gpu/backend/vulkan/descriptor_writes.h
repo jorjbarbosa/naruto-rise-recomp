@@ -8,7 +8,8 @@ namespace gpu::vulkan {
 // One descriptor slot is used once per batch and only reused after the fence.
 // Image descriptors all have SHADER_READ_ONLY_OPTIMAL layout. Element zero of
 // each image set is the backend's permanent fallback (or a null descriptor).
-// Samplers belong to the cache and survive every recycle. Views do not.
+// Samplers belong to the cache and survive every recycle. Views belong to
+// their images and may be gone once the batch that bound them completed.
 struct DescriptorWriteState {
   std::array<uint32_t, 4> Plan(const std::array<uint64_t, 128>& key) {
     std::array<uint32_t, 4> masks{};
