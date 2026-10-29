@@ -1,0 +1,66 @@
+diff --git a/include/rex/input/input_system.h b/include/rex/input/input_system.h
+--- a/include/rex/input/input_system.h
++++ b/include/rex/input/input_system.h
+@@ -10,7 +10,9 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include <array>
+ #include <memory>
++#include <utility>
+ #include <vector>
+ 
+ #include <rex/input/device_assignment.h>
+@@ -65,6 +67,14 @@ class InputSystem : public system::IInputSystem {
+   // does not renumber pad two.
+   std::vector<DeviceInfo> devices_;
+   std::vector<InputDriver*> device_owners_;
++
++  // The packet number GetState reports per guest user, with the device packets
++  // it last saw.
++  struct UserPackets {
++    std::vector<std::pair<DeviceId, uint32_t>> devices;
++    uint32_t packet = 0;
++  };
++  std::array<UserPackets, kMaxGuestUsers> user_packets_;
+ };
+ 
+ /// Create a default InputSystem with SDL + NOP drivers.
+diff --git a/src/input/input_system.cpp b/src/input/input_system.cpp
+--- a/src/input/input_system.cpp
++++ b/src/input/input_system.cpp
+@@ -226,6 +226,7 @@ X_RESULT InputSystem::GetState(uint32_t user_index, X_INPUT_STATE* out_state) {
+ 
+   X_INPUT_STATE merged = {};
+   bool any = false;
++  std::vector<std::pair<DeviceId, uint32_t>> packets;
+   for (DeviceId id : ids) {
+     auto* driver = DriverForDevice(id);
+     if (!driver) {
+@@ -236,6 +237,7 @@ X_RESULT InputSystem::GetState(uint32_t user_index, X_INPUT_STATE* out_state) {
+       continue;
+     }
+     active_devices_.Observe(user_index, id, state.gamepad);
++    packets.emplace_back(id, static_cast<uint32_t>(state.packet_number));
+     if (!any) {
+       merged = state;
+       any = true;
+@@ -247,6 +249,18 @@ X_RESULT InputSystem::GetState(uint32_t user_index, X_INPUT_STATE* out_state) {
+   if (!any) {
+     return X_ERROR_DEVICE_NOT_CONNECTED;
+   }
++  // Each device counts its own packets, so the highest count stands still while
++  // a device behind it changes (a pad next to a keyboard that was used more),
++  // and the title ignores that input. The user's own count moves whenever the
++  // packet of any of its devices does.
++  if (user_index < kMaxGuestUsers) {
++    auto& user = user_packets_[user_index];
++    if (packets != user.devices) {
++      user.devices = std::move(packets);
++      ++user.packet;
++    }
++    merged.packet_number = user.packet;
++  }
+   if (out_state) {
+     *out_state = merged;
+   }

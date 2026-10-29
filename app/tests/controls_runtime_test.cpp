@@ -91,6 +91,20 @@ int main() {
       pad->key = "sdl:session:new-connection"; pad->present = true;
       Check(first_run.GetState(0, &state) == X_ERROR_SUCCESS && uint16_t(state.gamepad.buttons) == 0x1000,
             "reconnected controller with a new identity");
+      // Each device counts its own packets: a controller change still moves the
+      // packet of player one after the keyboard changed more often.
+      pad->state.gamepad.buttons = 0;
+      for (int i = 0; i < 8; ++i) {
+        keys->OnKeyDown(down); first_run.GetState(0, &state);
+        keys->OnKeyUp(up); first_run.GetState(0, &state);
+      }
+      const uint32_t released = state.packet_number;
+      pad->state.gamepad.buttons = 0x1000;
+      Check(first_run.GetState(0, &state) == X_ERROR_SUCCESS && uint32_t(state.packet_number) != released,
+            "controller change behind a busier keyboard moves the packet");
+      const uint32_t pressed = state.packet_number;
+      Check(first_run.GetState(0, &state) == X_ERROR_SUCCESS && uint32_t(state.packet_number) == pressed,
+            "an unchanged state keeps its packet");
       second->present = true; second->state.gamepad.buttons = 0x8000;
       Assign(automatic, 1, second->key, "Second controller"); Publish(automatic);
       Check(first_run.GetState(0, &state) == X_ERROR_SUCCESS && uint16_t(state.gamepad.buttons) == 0x1000,
