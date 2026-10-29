@@ -92,7 +92,7 @@ def main():
                 return max(files, key=lambda p:p.stat().st_mtime).read_text(encoding='utf-8', errors='replace') if files else ''
             try:
                 hwnd = win.wait_for(lambda:win.window(process.pid), process)
-                win.wait_for(lambda:'Native renderer backend:' in log() and not (product/'user/launch.marker').exists(), process)
+                win.wait_for(lambda:'Native renderer backend:' in log() and not (product/'data/launch.marker').exists(), process)
                 time.sleep(2)
                 def key(value):
                     scan = win.user32.MapVirtualKeyW(value, 0)

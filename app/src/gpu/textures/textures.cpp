@@ -412,6 +412,7 @@ struct TextureSlot {
   std::mutex mutex;
   uint64_t layout = 0, version = 0;  // Posted to the engine (FIFO), under mutex.
   std::atomic<uint64_t> posted_layout{0}, posted_version{0};  // The same, for the draw's check without the lock.
+  std::atomic<bool> committed{false};  // A sweep found its physical page committed.
 };
 struct TextureEntry {
   DrawTexture t;  // Format, size, levels, key (the base) and layout; no data.
@@ -486,6 +487,10 @@ class TextureRegistry {
     return slot;
   }
   uint64_t Generation() const { return generation_.load(std::memory_order_acquire); }
+  std::vector<std::pair<uint32_t, std::shared_ptr<TextureSlot>>> Slots() {
+    std::lock_guard lock(mutex_);
+    return {slots_.begin(), slots_.end()};
+  }
   // The bases with an engine copy, and the entries registered and the
   // bases forgotten since the start (the scene changes of the transition captures).
   struct Totals {
@@ -512,7 +517,7 @@ class TextureRegistry {
 std::atomic<uint64_t> texture_uploads{0}, texture_reads{0}, texture_upload_bytes{0}, texture_binding_translations{0},
     texture_binding_reuses{0}, texture_header_hits{0}, texture_verifies{0}, texture_header_registrations{0},
     texture_header_uncovered{0}, texture_unlocks{0}, texture_unlock_uploads{0}, texture_unlock_uncovered{0},
-    texture_anisotropy_forced{0};
+    texture_anisotropy_forced{0}, texture_freed_bases{0};
 // Under e.slot->mutex: reads the content again when it was never read, a
 // write reached its pages or force (an Unlock), and posts it when the engine's
 // copy of the base is not this version. False: reason.
@@ -864,30 +869,62 @@ void NoteUnlock(PPCContext& ctx, uint8_t* base, uint32_t resource, uint32_t comm
   }
   if (upload() == "texture-upload-unproved") StopInOrder(ctx, "DBE0-texture-upload-unproved", 88);
 }
-// A destroyed header's base leaves the registry, and the
-// engine releases its copy (at once or retired with the fence of its last
-// use). True if no copy was posted or the release ran.
-bool ReleaseTextureBase(uint32_t address, std::string& evidence) {
-  // The engine release goes first (through the stage, after the captures
-  // that still bind the base); the registry forgets the base once it ran, so
-  // no capture in between creates a new entry for memory the title frees.
-  bool posted = false;
-  if (const auto slot = texture_registry.Slot(address)) {
-    std::lock_guard lock(slot->mutex);
-    posted = slot->layout != 0;
+// The bases leave the registry, and the engine releases their copies (at once
+// or retired with the fence of their last use). True if no copy was posted or
+// the releases ran.
+static bool ReleaseTextureBases(const std::vector<uint32_t>& addresses, std::string& evidence) {
+  // The engine releases go first (through the stage, after the captures
+  // that still bind the bases), in one run; the registry forgets the bases
+  // once it ran, so no capture in between creates a new entry for memory the
+  // title frees.
+  std::vector<uint32_t> posted;
+  for (const uint32_t address : addresses) {
+    if (const auto slot = texture_registry.Slot(address)) {
+      std::lock_guard lock(slot->mutex);
+      if (slot->layout != 0) posted.push_back(address);
+    }
   }
-  if (posted) {
+  if (!posted.empty()) {
     auto* dispatcher = host::ActiveDispatcher();
-    if (!dispatcher || !dispatcher->Run([address](Engine& engine, std::string& out) {
-          return engine.ReleaseSampled(address, out); }, evidence))
+    if (!dispatcher || !dispatcher->Run([posted](Engine& engine, std::string& out) {
+          for (const uint32_t address : posted)
+            if (!engine.ReleaseSampled(address, out)) return false;
+          return true;
+        }, evidence))
       return false;
   }
-  const auto slot = texture_registry.Forget(address);
-  if (!slot) return true;
-  std::lock_guard lock(slot->mutex);
-  slot->layout = slot->version = 0;
-  slot->posted_layout.store(0);
-  slot->posted_version.store(0);
+  for (const uint32_t address : addresses) {
+    const auto slot = texture_registry.Forget(address);
+    if (!slot) continue;
+    std::lock_guard lock(slot->mutex);
+    slot->layout = slot->version = 0;
+    slot->posted_layout.store(0);
+    slot->posted_version.store(0);
+  }
+  return true;
+}
+// A destroyed header's base.
+bool ReleaseTextureBase(uint32_t address, std::string& evidence) { return ReleaseTextureBases({address}, evidence); }
+// The title frees memory that still holds texture headers without destroying
+// them (a level's memory released whole), so no D750 reaches their bases. A
+// base whose physical page a sweep found committed and no longer is leaves as
+// its D750 would. Resolve headers (virtual keys) are not physical bases.
+bool ReleaseFreedTextureBases(std::string& evidence) {
+  auto* memory = GuestMemory();
+  auto* heap = memory ? memory->GetPhysicalHeap() : nullptr;
+  if (!heap) return true;
+  std::vector<uint32_t> freed;
+  for (const auto& [address, slot] : texture_registry.Slots()) {
+    if (address >= 0x20000000u) continue;
+    rex::memory::HeapAllocationInfo info{};
+    if (heap->QueryRegionInfo(address, &info) && (info.state & rex::memory::kMemoryAllocationCommit))
+      slot->committed.store(true, std::memory_order_relaxed);
+    else if (slot->committed.load(std::memory_order_relaxed))
+      freed.push_back(address);
+  }
+  if (freed.empty()) return true;
+  if (!ReleaseTextureBases(freed, evidence)) return false;
+  texture_freed_bases += freed.size();
   return true;
 }
 // The copy posted for a base (START evidence).
@@ -906,13 +943,13 @@ std::string TextureRegistrySummary() {
   return texture_registry.Summary() + fmt::format(
       ",\"uploads\":{},\"reads\":{},\"upload_bytes\":{},\"binding_translations\":{},\"binding_reuses\":{},\"binding_cached\":{},"
       "\"header_hits\":{},\"header_registrations\":{},\"header_uncovered\":{},\"unlocks\":{},\"unlock_uploads\":{},"
-      "\"unlock_uncovered\":{},\"verifies\":{},\"fetch\":{{\"refreshes\":{},\"full\":{},\"slot_changes\":{}}},"
+      "\"unlock_uncovered\":{},\"verifies\":{},\"freed_bases\":{},\"fetch\":{{\"refreshes\":{},\"full\":{},\"slot_changes\":{}}},"
       "\"watch\":{{\"epoch\":{},\"notifications\":{},\"notified_pages\":{},\"unlock_ranges\":{},\"armed_ranges\":{}}}",
       texture_uploads.load(), texture_reads.load(), texture_upload_bytes.load(), texture_binding_translations.load(),
       texture_binding_reuses.load(), texture_binding_cached.load(), texture_header_hits.load(), texture_header_registrations.load(),
       texture_header_uncovered.load(), texture_unlocks.load(), texture_unlock_uploads.load(),
-      texture_unlock_uncovered.load(), texture_verifies.load(), fetch_refreshes.load(), fetch_full_refreshes.load(),
-      fetch_slot_changes.load(), write_watch::epoch.load(), write_watch::notifications.load(),
+      texture_unlock_uncovered.load(), texture_verifies.load(), texture_freed_bases.load(), fetch_refreshes.load(),
+      fetch_full_refreshes.load(), fetch_slot_changes.load(), write_watch::epoch.load(), write_watch::notifications.load(),
       write_watch::notified_pages.load(), write_watch::unlock_ranges.load(), write_watch::armed_ranges.load());
 }
 }  // namespace gpu

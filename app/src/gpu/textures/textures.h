@@ -47,6 +47,8 @@ void RegisterTextureHeader(uint8_t* base, uint32_t header);
 void NoteUnlock(PPCContext& ctx, uint8_t* base, uint32_t resource, uint32_t common, uint32_t base_address,
                 uint32_t lines, uint32_t mip_address, uint32_t mip_lines);
 bool ReleaseTextureBase(uint32_t address, std::string& evidence);
+// The bases whose physical memory the title freed without a D750 (Swap, title thread).
+bool ReleaseFreedTextureBases(std::string& evidence);
 // The copy posted for a base (START evidence).
 bool TexturePosted(uint32_t address, uint64_t& layout, uint64_t& version);
 std::string TextureRegistrySummary();

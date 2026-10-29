@@ -53,7 +53,7 @@ def main():
             return state[-1] if state else None
         try:
             hwnd = win.wait_for(lambda:win.window(process.pid), process)
-            win.wait_for(lambda:'Native renderer backend:' in log() and not (user/'launch.marker').exists(), process)
+            win.wait_for(lambda:'Native renderer backend:' in log() and not (product/'data/launch.marker').exists(), process)
             time.sleep(.1)
             win.capture(hwnd, output/(api+'-startup.png'))
             focus.focus_window(hwnd)

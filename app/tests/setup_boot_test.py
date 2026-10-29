@@ -35,15 +35,50 @@ gdi32.DeleteDC.argtypes = [w.HDC]
 user32.PrintWindow.argtypes = [w.HWND, w.HDC, w.UINT]
 user32.PostMessageW.argtypes = [w.HWND, w.UINT, w.WPARAM, w.LPARAM]
 user32.SetForegroundWindow.argtypes = [w.HWND]
+# A private handle: the module is loaded again by the tests that reuse it, and
+# the shared windll.kernel32 would keep the argtypes of another load.
+kernel32 = ctypes.WinDLL('kernel32')
+kernel32.CreateToolhelp32Snapshot.restype = w.HANDLE
+kernel32.CreateToolhelp32Snapshot.argtypes = [w.DWORD, w.DWORD]
+kernel32.CloseHandle.argtypes = [w.HANDLE]
+
+
+class ProcessEntry(ctypes.Structure):
+    _fields_ = [('dwSize', w.DWORD), ('cntUsage', w.DWORD), ('th32ProcessID', w.DWORD),
+                ('th32DefaultHeapID', ctypes.c_size_t), ('th32ModuleID', w.DWORD), ('cntThreads', w.DWORD),
+                ('th32ParentProcessID', w.DWORD), ('pcPriClassBase', w.LONG), ('dwFlags', w.DWORD),
+                ('szExeFile', w.WCHAR * 260)]
+
+
+kernel32.Process32FirstW.argtypes = kernel32.Process32NextW.argtypes = [w.HANDLE, ctypes.POINTER(ProcessEntry)]
+
+
+def process_tree(pid):
+    """pid and its children: the game runs as a child of the session supervisor."""
+    tree = {pid}
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if snapshot in (None, w.HANDLE(-1).value):
+        return tree
+    try:
+        entry = ProcessEntry(dwSize=ctypes.sizeof(ProcessEntry))
+        more = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while more:
+            if entry.th32ParentProcessID == pid:
+                tree.add(entry.th32ProcessID)
+            more = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return tree
 
 
 def window(pid):
+    owners = process_tree(pid)
     found = []
     @ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
     def visit(hwnd, _):
         owner = w.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
-        if owner.value == pid and user32.IsWindowVisible(hwnd):
+        if owner.value in owners and user32.IsWindowVisible(hwnd):
             found.append(hwnd)
         return True
     user32.EnumWindows(visit, 0)
@@ -113,7 +148,12 @@ def main():
     def case(name, reason=None, api='d3d12', args=(), first=False, failed=False, play=False, language='en', root=iso, show_menu=True):
         user = product / ('user-' + name)
         user.mkdir()
-        marker = user/'launch.marker'
+        data = product / 'data'
+        data.mkdir(exist_ok=True)
+        # The marker lives at the data folder root, which the cases share:
+        # each case starts with only the marker it plants.
+        marker = data/'launch.marker'
+        marker.unlink(missing_ok=True)
         if failed:
             marker.write_text('started\n')
         config = {'renderer': 'native', 'native_backend': api, 'fullscreen': False,
@@ -121,10 +161,11 @@ def main():
                   'check_for_updates': False, 'show_startup_menu': show_menu}
         if not first:
             config['custom_game_root'] = str(root)
-        data = product / 'data'
-        data.mkdir(exist_ok=True)
         (data/'narutorise.toml').write_text('\n'.join(f'{key} = {json.dumps(value, ensure_ascii=False)}' for key,value in config.items()), encoding='utf-8')
         before = set((data/'logs').glob('*.log'))
+        # The menu items take the focus on mouseover: a resting cursor over the
+        # new window would move it off Play before the Enter.
+        user32.SetCursorPos(0, 0)
         process = subprocess.Popen([str(product/'narutorise.exe'), *args], cwd=product,
                                    env=dict(os.environ, REX_DATA_ROOT=str(data), REX_USER_DATA_ROOT=str(user)))
         log = None
@@ -192,7 +233,8 @@ def main():
     case('default-menu', 'startup')
     case('direct', show_menu=False)
     case('command-line', args=('--game_data_root='+str(iso),), failed=True, show_menu=False)
-    case('command-line-menu', 'startup', args=('--game_data_root='+str(iso),))
+    # A named game ignores a stale marker (startup, not start-failed) and keeps it.
+    case('command-line-menu', 'startup', args=('--game_data_root='+str(iso),), failed=True)
     unicode_root = product/'jogo-ação.iso'
     try:
         os.link(iso, unicode_root)
