@@ -526,6 +526,18 @@ struct Backend::State {
   std::array<VkImageView, 3> fallback_views{};
   bool fallback_initialized = false;
   std::unordered_map<uint64_t, PipelineSet::Pipeline> pipelines;
+  // The draw keys PrefetchPipelines computed for a batch, in its order, with
+  // the target each was computed for: the dispatcher draws that batch right
+  // after, and DrawIndexed takes the key of the next request from here. Any
+  // other request ends the batch.
+  struct PrefetchedKey {
+    uint64_t key = 0;  // 0: not computed.
+    uint32_t samples = 0;
+    bool depth = false, color = false;
+  };
+  const DrawRequest* prefetched_batch = nullptr;
+  std::vector<PrefetchedKey> prefetched_keys;
+  size_t prefetched_next = 0;
   std::map<uint64_t, PipelineDesc> pipeline_descs;
   std::map<uint64_t, std::string> pipeline_origins;
   std::map<uint64_t, uint32_t> pipeline_worlds, pipeline_create_us;

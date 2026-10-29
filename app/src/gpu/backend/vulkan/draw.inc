@@ -100,22 +100,29 @@ bool Backend::PostPipeline(const PipelineDesc& desc) {
   return state_->pipeline_set.Post(key, std::move(d), true, false);
 }
 void Backend::PrefetchPipelines(const std::vector<DrawRequest>& requests) {
-  for (const auto& r : requests) {
+  auto& s = *state_;
+  s.prefetched_batch = requests.data();
+  s.prefetched_next = 0;
+  s.prefetched_keys.assign(requests.size(), {});
+  for (size_t i = 0; i < requests.size(); ++i) {
+    const auto& r = requests[i];
     if (r.pipeline_take != DrawRequest::PipelineTake::kPrefetch || !r.elements) continue;
-    auto color = state_->surfaces.find(r.color_key), depth = state_->surfaces.find(r.depth_key);
-    const bool has_color = color != state_->surfaces.end();
-    const bool has_depth = (r.depth_enable || r.stencil_enable) && depth != state_->surfaces.end();
+    auto color = s.surfaces.find(r.color_key), depth = s.surfaces.find(r.depth_key);
+    const bool has_color = color != s.surfaces.end();
+    const bool has_depth = (r.depth_enable || r.stencil_enable) && depth != s.surfaces.end();
     if (!has_color && !has_depth) continue;
-    // As PostPipeline keys it; a pipeline the backend holds needs no copy of
-    // its description nor a post.
+    const uint32_t samples = has_color ? color->second.desc.samples : depth->second.desc.samples;
     const uint64_t layout_id = r.layout_id ? r.layout_id : ElementsId(*r.elements);
     std::array<uint32_t, 21> words{};
-    if (!DrawStateWords(r, has_color ? color->second.desc.samples : depth->second.desc.samples,
-                        has_depth, has_color, words)) continue;
+    if (!DrawStateWords(r, samples, has_depth, has_color, words)) continue;
+    const uint64_t key = VulkanPipelineKey(r.vs, r.ps, layout_id, words);
+    s.prefetched_keys[i] = {key, samples, has_depth, has_color};
+    // As PostPipeline keys it, with the samples of the render mode; a pipeline
+    // the backend holds needs no copy of its description nor a post.
     auto keyed = words;
-    keyed[8] = state_->PipelineSamples(keyed[8]);
-    if (auto it = state_->pipelines.find(VulkanPipelineKey(r.vs, r.ps, layout_id, keyed));
-        it != state_->pipelines.end() && it->second) continue;
+    keyed[8] = s.PipelineSamples(keyed[8]);
+    const uint64_t posted = keyed == words ? key : VulkanPipelineKey(r.vs, r.ps, layout_id, keyed);
+    if (auto it = s.pipelines.find(posted); it != s.pipelines.end() && it->second) continue;
     PostPipeline(PipelineDesc{r.vs, r.ps, r.elements, layout_id, words});
   }
 }
@@ -149,6 +156,11 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fence, std::string& ev
   auto& s = *state_;
   if (!s.ready || s.owner_thread != rex::thread::current_thread_system_id() || s.operation_poisoned || s.unproved_execution)
     return fail("native-draw-owner-or-state");
+  const State::PrefetchedKey* prefetched = nullptr;
+  if (s.prefetched_batch) {
+    if (&r == s.prefetched_batch + s.prefetched_next) prefetched = &s.prefetched_keys[s.prefetched_next];
+    if (!prefetched || ++s.prefetched_next == s.prefetched_keys.size()) s.prefetched_batch = nullptr;
+  }
   State::Surface *color = nullptr, *depth = nullptr;
   if (!r.depth_only || r.color_key) {
     auto it = s.surfaces.find(r.color_key);
@@ -173,13 +185,18 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fence, std::string& ev
     if (e.slot >= r.streams.size() || !r.streams[e.slot].stride) return fail("native-draw-vertex-element");
   if (!s.EnsureGraphics(evidence)) return false;
   const uint64_t layout_id = r.layout_id ? r.layout_id : ElementsId(*r.elements);
+  // The prefetch's key holds for the same request on the same target; the
+  // state words are then needed only for a pipeline the backend lacks.
   std::array<uint32_t, 21> state_words{};
-  if (!DrawStateWords(r, target.desc.samples, depth != nullptr, color != nullptr, state_words))
-    return fail("native-draw-topology-uncovered");
-  const uint64_t key = VulkanPipelineKey(r.vs, r.ps, layout_id, state_words);
+  auto words = [&] { return DrawStateWords(r, target.desc.samples, depth != nullptr, color != nullptr, state_words); };
+  const bool keyed = prefetched && prefetched->key && prefetched->samples == target.desc.samples &&
+                     prefetched->depth == (depth != nullptr) && prefetched->color == (color != nullptr);
+  if (!keyed && !words()) return fail("native-draw-topology-uncovered");
+  const uint64_t key = keyed ? prefetched->key : VulkanPipelineKey(r.vs, r.ps, layout_id, state_words);
   auto& pipeline = s.pipelines[key];
   const bool created = !pipeline;
   if (!pipeline) {
+    if (keyed && !words()) { s.pipelines.erase(key); return fail("native-draw-topology-uncovered"); }
     // The description is copied only for a pipeline the backend lacks.
     const PipelineDesc desc{r.vs, r.ps, r.elements, layout_id, state_words};
     const uint64_t triple = TripleKey(r.vs.key, r.ps.key, layout_id);
