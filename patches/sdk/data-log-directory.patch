@@ -1,0 +1,133 @@
+diff --git a/include/rex/rex_app.h b/include/rex/rex_app.h
+--- a/include/rex/rex_app.h
++++ b/include/rex/rex_app.h
+@@ -44,6 +44,9 @@
+   std::filesystem::path cache_root;
+   std::filesystem::path metadata_root;
+   std::filesystem::path config_path;
++  // Empty preserves the executable-relative logging default. Explicit
++  // log_file still takes precedence over this sequential-log directory.
++  std::filesystem::path log_dir{};
+ };
+ 
+ namespace ui {
+diff --git a/src/core/cvar.cpp b/src/core/cvar.cpp
+--- a/src/core/cvar.cpp
++++ b/src/core/cvar.cpp
+@@ -643,7 +643,12 @@
+   }
+ 
+   try {
+-    auto config = toml::parse_file(config_path.string());
++    std::ifstream input(config_path, std::ios::binary);
++    if (!input) {
++      REXLOG_ERROR("Failed to open config file");
++      return;
++    }
++    auto config = toml::parse(input);
+     ApplyTomlTable(config, "");
+     REXLOG_DEBUG("Loaded config from {}", config_path.string());
+   } catch (const toml::parse_error& err) {
+diff --git a/src/core/logging.cpp b/src/core/logging.cpp
+--- a/src/core/logging.cpp
++++ b/src/core/logging.cpp
+@@ -13,6 +13,7 @@
+ #include <cctype>
+ #include <charconv>
+ #include <filesystem>
++#include <fstream>
+ #include <mutex>
+ #include <unordered_map>
+ #include <vector>
+@@ -23,6 +24,7 @@
+ #include <toml++/toml.hpp>
+ 
+ #include <rex/cvar.h>
++#include <rex/filesystem.h>
+ #include <rex/logging.h>
+ #include <rex/platform.h>
+ #include <rex/platform/env.h>
+@@ -217,17 +219,26 @@
+   }
+ 
+   // File sink (rotating) with sequential naming fallback
+-  std::string resolved_path;
++  // CLI/config strings are UTF-8; keep native filenames through the sink on
++  // Windows rather than round-tripping through its ANSI code page.
++  std::filesystem::path resolved_path;
+   if (config.log_file) {
+-    resolved_path = config.log_file;
++    resolved_path = rex::to_path(std::string_view(config.log_file));
+   } else if (!config.app_name.empty()) {
+     auto log_dir = config.log_dir.empty() ? std::filesystem::current_path() / "logs"
+-                                          : std::filesystem::path(config.log_dir);
+-    resolved_path = NextSequentialLogPath(log_dir, config.app_name).string();
++        : rex::to_path(config.log_dir);
++    resolved_path = NextSequentialLogPath(log_dir, config.app_name);
+   }
+   if (!resolved_path.empty()) {
++#if defined(_WIN32) && !defined(SPDLOG_WCHAR_FILENAMES)
++    // Other SDK builds retain the legacy sink ABI unless configured for wide
++    // filenames. The shipped Windows SDK enables that option consistently.
++    const auto sink_path = resolved_path.string();
++#else
++    const auto& sink_path = resolved_path.native();
++#endif
+     auto sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+-        resolved_path, static_cast<size_t>(REXCVAR_GET(log_max_file_size_mb)) * 1024 * 1024,
++        sink_path, static_cast<size_t>(REXCVAR_GET(log_max_file_size_mb)) * 1024 * 1024,
+         static_cast<size_t>(REXCVAR_GET(log_max_files)), false);
+     sink->set_level(spdlog::level::trace);
+     sink->set_pattern(config.file_pattern);
+@@ -544,7 +555,9 @@
+     return result;
+ 
+   try {
+-    auto config = toml::parse_file(config_path.string());
++    std::ifstream input(config_path, std::ios::binary);
++    if (!input) return result;
++    auto config = toml::parse(input);
+     auto* log_table = config["log"].as_table();
+     if (!log_table)
+       return result;
+diff --git a/src/ui/rex_app.cpp b/src/ui/rex_app.cpp
+--- a/src/ui/rex_app.cpp
++++ b/src/ui/rex_app.cpp
+@@ -168,7 +168,8 @@
+                                         log_level_str, category_levels);
+   if (log_file_cvar.empty()) {
+     log_config.app_name = std::string(GetName());
+-    log_config.log_dir = (exe_dir / "logs").string();
++    log_config.log_dir = rex::path_to_utf8(resolved_defaults_.log_dir.empty() ? exe_dir / "logs"
++                                                                          : resolved_defaults_.log_dir);
+   }
+ 
+   rex::InitLogging(log_config);
+@@ -187,12 +188,12 @@
+     REXLOG_DEBUG("  Game directory: {}", game_data_root_.string());
+   }
+   if (!user_data_root_.empty()) {
+-    REXLOG_DEBUG("  User data:      {}", user_data_root_.string());
++    REXLOG_DEBUG("  User data:      {}", rex::path_to_utf8(user_data_root_));
+   }
+   if (!update_data_root_.empty()) {
+     REXLOG_DEBUG("  Update data:    {}", update_data_root_.string());
+   }
+-  REXLOG_DEBUG("  Cache root:     {}", cache_root_.string());
++  REXLOG_DEBUG("  Cache root:     {}", rex::path_to_utf8(cache_root_));
+   if (!metadata_root_.empty()) {
+     REXLOG_DEBUG("  Metadata root:  {}", metadata_root_.string());
+   }
+diff --git a/thirdparty/CMakeLists.txt b/thirdparty/CMakeLists.txt
+--- a/thirdparty/CMakeLists.txt
++++ b/thirdparty/CMakeLists.txt
+@@ -177,6 +177,9 @@
+ set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+ set(SPDLOG_BUILD_BENCH OFF CACHE BOOL "" FORCE)
+ set(SPDLOG_INSTALL ON CACHE BOOL "" FORCE)
++if(WIN32)
++    set(SPDLOG_WCHAR_FILENAMES ON CACHE BOOL "Native Windows log filenames" FORCE)
++endif()
+ add_subdirectory(spdlog)
+ target_compile_options(spdlog PRIVATE -w)
+ 

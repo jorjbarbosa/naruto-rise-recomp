@@ -51,10 +51,22 @@ struct Settings {
 // Registers the options of the Xenos plugin under its names, once, when the
 // native mode is configured: with the Xenos renderer the plugin owns them.
 void RegisterPluginOptions();
-// Reads the options once, when the native mode is configured (the runtime has
-// loaded the configuration by then); CurrentSettings returns those values.
+// Initial snapshot, before the guest starts. Later edits are queued below.
 void LoadSettings();
-const Settings& CurrentSettings();
-// The options in use, with where each value came from, as journal fields.
+// Value snapshots: menu, translator and render threads never share mutable data.
+Settings CurrentSettings();
+Settings RequestedSettings();
+uint64_t RequestSettings(Settings settings);
+struct SettingsResult {
+  uint64_t revision = 0;
+  bool applied = false;
+  std::string evidence;
+};
+SettingsResult LastSettingsResult();
+class Dispatcher;
+// Render thread, between frames. Runs behind all preceding translation work.
+void ApplyPendingSettings(Dispatcher& dispatcher);
+// The boot options and their sources, as journal fields. Runtime applications
+// have their own native-live-settings records, including the effective GPU mode.
 std::string SettingsEvidence();
 }  // namespace gpu

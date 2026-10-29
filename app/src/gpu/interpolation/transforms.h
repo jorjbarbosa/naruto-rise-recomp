@@ -58,6 +58,8 @@
 
 namespace gpu::interpolation {
 bool Enabled();
+// Main thread, outside a view block, when the pacing mode changes.
+void ResetHistory(uint8_t* base);
 // The last view block: the matrices written (objects), a camera entry written
 // and a camera cut at the tick, and the object cuts of the last tick; the
 // poses copied on the main thread, the bone matrices written, cut at the tick

@@ -1,11 +1,31 @@
 diff --git a/include/rex/input/mnk/mnk_input_driver.h b/include/rex/input/mnk/mnk_input_driver.h
-index c8751b7..33794ea 100644
+index c8751b7..d611dd9 100644
 --- a/include/rex/input/mnk/mnk_input_driver.h
 +++ b/include/rex/input/mnk/mnk_input_driver.h
-@@ -25,6 +25,18 @@ namespace rex::input::mnk {
+@@ -15,6 +15,8 @@
+ #include <rex/ui/window_listener.h>
+ 
+ #include <atomic>
++#include <array>
++#include <memory>
+ #include <cstdint>
+ #include <mutex>
+ #include <queue>
+@@ -24,6 +26,28 @@ namespace rex::input::mnk {
+ 
  void SetMouseLookActive(bool active);
  bool IsMouseLookActive();
- 
++struct Profile {
++  bool enabled = false, mouse = true;
++  uint32_t user = 0;
++  double sensitivity = 1.0;
++  std::array<std::string, 24> bindings;
++};
++// A host may publish a profile without racing cvar strings read by the guest.
++void SetProfile(std::shared_ptr<const Profile> profile);
++std::shared_ptr<const Profile> GetProfile();
++double MouseCameraSensitivity();
++
 +// Mouse camera: a game hook that turns the camera by the mouse itself, instead
 +// of the mouse standing in for the right stick. The hook calls
 +// NoteMouseCameraHook() whenever it runs; for a short time after, the mouse
@@ -17,12 +37,11 @@ index c8751b7..33794ea 100644
 +// screen directions: x right, y down. Zero unless keyboard and mouse mode and
 +// the mouse camera (mnk_mouse) are on.
 +void TakeMouseCameraDelta(float& dx, float& dy);
-+
+ 
  class MnkInputDriver final : public InputDriver,
                               public rex::ui::WindowInputListener,
-                              public rex::ui::WindowListener {
 diff --git a/src/input/mnk/mnk_input_driver.cpp b/src/input/mnk/mnk_input_driver.cpp
-index 3f9422d..ad82530 100644
+index 3f9422d..f410ab9 100644
 --- a/src/input/mnk/mnk_input_driver.cpp
 +++ b/src/input/mnk/mnk_input_driver.cpp
 @@ -18,6 +18,7 @@
@@ -33,7 +52,37 @@ index 3f9422d..ad82530 100644
  #include <cmath>
  #include <cstdlib>
  #include <cstring>
-@@ -68,9 +69,12 @@ constexpr rex::input::DeviceId kMnkDevice = static_cast<rex::input::DeviceId>(0x
+@@ -59,6 +60,29 @@ REXCVAR_DEFINE_STRING(keybind_start, "X,Return", "Input/Keybinds/Controller", "S
+ REXCVAR_DEFINE_STRING(keybind_guide, "", "Input/Keybinds/Controller", "Guide button");
+ 
+ namespace rex::input::mnk {
++namespace {
++std::atomic<std::shared_ptr<const Profile>> host_profile;
++double MotionValue(std::string_view token, double dx, double dy) {
++  if (token == "MouseUp") return std::max(0.0, -dy);
++  if (token == "MouseDown") return std::max(0.0, dy);
++  if (token == "MouseLeft") return std::max(0.0, -dx);
++  if (token == "MouseRight") return std::max(0.0, dx);
++  return 0;
++}
++double BoundMotion(const std::string& bind, double dx, double dy) {
++  double result = 0; size_t at = 0;
++  do {
++    auto end = bind.find(',', at);
++    result = std::max(result, MotionValue(std::string_view(bind).substr(at, end == std::string::npos ? end : end-at), dx, dy));
++    if (end == std::string::npos) break;
++    at = end+1;
++  } while (true);
++  return result;
++}
++}
++void SetProfile(std::shared_ptr<const Profile> profile) { host_profile.store(std::move(profile)); }
++std::shared_ptr<const Profile> GetProfile() { return host_profile.load(); }
++double MouseCameraSensitivity() { auto p = GetProfile(); return p ? p->sensitivity : REXCVAR_GET(mnk_sensitivity); }
+ 
+ namespace {
+ 
+@@ -68,9 +92,12 @@ constexpr rex::input::DeviceId kMnkDevice = static_cast<rex::input::DeviceId>(0x
  // Bind values are a comma-separated list of alternatives, each optionally
  // carrying modifier prefixes: "Q,I" or "Shift+W". Modifier matching is exact,
  // so "Up" stays silent while Shift is held and "Shift+Up" stays silent without
@@ -49,7 +98,7 @@ index 3f9422d..ad82530 100644
  constexpr uint8_t kModShift = 1u << 0;
  constexpr uint8_t kModCtrl = 1u << 1;
  constexpr uint8_t kModAlt = 1u << 2;
-@@ -86,6 +90,20 @@ uint8_t LiveModifiers(const bool (&key_down)[256]) {
+@@ -86,6 +113,20 @@ uint8_t LiveModifiers(const bool (&key_down)[256]) {
    return mods;
  }
  
@@ -70,7 +119,7 @@ index 3f9422d..ad82530 100644
  // Strips leading modifier prefixes off 'token', advancing it to the bare key
  // name and returning the mask they require.
  uint8_t TakeModifiers(std::string_view& token) {
-@@ -122,21 +140,81 @@ std::string_view TrimSpaces(std::string_view s) {
+@@ -122,21 +163,81 @@ std::string_view TrimSpaces(std::string_view s) {
    return s;
  }
  
@@ -156,7 +205,7 @@ index 3f9422d..ad82530 100644
  }  // namespace
  
  void SetMouseLookActive(bool active) {
-@@ -147,6 +225,28 @@ bool IsMouseLookActive() {
+@@ -147,6 +248,31 @@ bool IsMouseLookActive() {
    return mouse_look_active.load(std::memory_order_relaxed);
  }
  
@@ -175,9 +224,12 @@ index 3f9422d..ad82530 100644
 +
 +void TakeMouseCameraDelta(float& dx, float& dy) {
 +  std::lock_guard lock(mouse_camera_mutex);
-+  const bool on = REXCVAR_GET(mnk_mode) && REXCVAR_GET(mnk_mouse) && IsMouseLookActive();
-+  dx = on ? mouse_camera_dx : 0.0f;
-+  dy = on ? mouse_camera_dy : 0.0f;
++  auto profile = GetProfile();
++  const bool on = (profile ? profile->enabled && profile->mouse && profile->user == 0 : REXCVAR_GET(mnk_mode) && REXCVAR_GET(mnk_mouse)) && IsMouseLookActive();
++  if (profile && on) {
++    dx = float(BoundMotion(profile->bindings[19], mouse_camera_dx, mouse_camera_dy) - BoundMotion(profile->bindings[18], mouse_camera_dx, mouse_camera_dy));
++    dy = float(BoundMotion(profile->bindings[17], mouse_camera_dx, mouse_camera_dy) - BoundMotion(profile->bindings[16], mouse_camera_dx, mouse_camera_dy));
++  } else { dx = on ? mouse_camera_dx : 0.0f; dy = on ? mouse_camera_dy : 0.0f; }
 +  mouse_camera_dx = 0.0f;
 +  mouse_camera_dy = 0.0f;
 +}
@@ -185,8 +237,13 @@ index 3f9422d..ad82530 100644
  using rex::ui::VirtualKey;
  
  MnkInputDriver::MnkInputDriver(rex::ui::Window* window, size_t window_z_order)
-@@ -200,23 +300,14 @@ bool MnkInputDriver::IsEnabled() const {
-   return REXCVAR_GET(mnk_mode);
+@@ -197,26 +323,18 @@ void MnkInputDriver::DetachFromWindow() {
+ }
+ 
+ bool MnkInputDriver::IsEnabled() const {
+-  return REXCVAR_GET(mnk_mode);
++  auto profile = GetProfile();
++  return profile ? profile->enabled : REXCVAR_GET(mnk_mode);
  }
  
 -static bool IsBindPressed(const bool (&key_down)[256], const std::string& cvar_val) {
@@ -217,7 +274,69 @@ index 3f9422d..ad82530 100644
  }
  
  void MnkInputDriver::EnumerateDevices(std::vector<DeviceInfo>& out) {
-@@ -274,64 +365,90 @@ X_RESULT MnkInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state) {
+@@ -227,6 +345,7 @@ void MnkInputDriver::EnumerateDevices(std::vector<DeviceInfo>& out) {
+   DeviceInfo info;
+   info.id = kMnkDevice;
+   info.name = "Keyboard and Mouse";
++  info.key = "keyboard";
+   info.synthetic = true;
+   out.push_back(info);
+ }
+@@ -248,8 +367,8 @@ X_RESULT MnkInputDriver::GetDeviceCapabilities(DeviceId id, uint32_t flags,
+     out_caps->gamepad.thumb_ly = static_cast<int16_t>(0x7FFF);
+     out_caps->gamepad.thumb_rx = static_cast<int16_t>(0x7FFF);
+     out_caps->gamepad.thumb_ry = static_cast<int16_t>(0x7FFF);
+-    out_caps->vibration.left_motor_speed = 0xFFFF;
+-    out_caps->vibration.right_motor_speed = 0xFFFF;
++    out_caps->vibration.left_motor_speed = 0;
++    out_caps->vibration.right_motor_speed = 0;
+   }
+   return X_ERROR_SUCCESS;
+ }
+@@ -259,6 +378,42 @@ X_RESULT MnkInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state) {
+     return X_ERROR_DEVICE_NOT_CONNECTED;
+   }
+ 
++  const auto profile = GetProfile();
++  if (profile) {
++    QueueMouseCaptureUpdate(profile->mouse && IsMouseLookActive() && has_focus_ && is_active());
++    std::lock_guard lock(state_mutex_);
++    if (!has_focus_ || !is_active()) {
++      mouse_dx_ = mouse_dy_ = 0;
++      ClearMouseCameraDelta();
++      if (out_state) { *out_state = {}; out_state->packet_number = packet_number_; }
++      return X_ERROR_SUCCESS;
++    }
++    uint8_t standalone = 0;
++    for (const auto& bind : profile->bindings) standalone |= StandaloneModifiers(bind);
++    standalone |= StandaloneModifiers(REXCVAR_GET(keybind_guide));
++    const uint8_t mods = LiveModifiers(key_down_) & static_cast<uint8_t>(~standalone);
++    std::array<double, 24> values{};
++    const bool direct = profile->user == 0 && IsMouseCameraHookActive();
++    for (size_t action = 0; action < values.size(); ++action) {
++      if (IsBindPressed(key_down_, profile->bindings[action], mods)) values[action] = 1;
++      if (profile->mouse && IsMouseLookActive() && !(direct && action >= 16 && action < 20))
++        values[action] = std::max(values[action], std::min(1.0, BoundMotion(profile->bindings[action], mouse_dx_, mouse_dy_) * profile->sensitivity * 200.0 / 32767.0));
++    }
++    mouse_dx_ = mouse_dy_ = 0;
++    X_INPUT_STATE state{}; state.packet_number = ++packet_number_;
++    constexpr uint16_t buttons[] = {0x1000,0x2000,0x4000,0x8000,0x100,0x200,0,0,0x40,0x80,0x10,0x20};
++    uint16_t pressed = 0;
++    for (size_t i = 0; i < 12; ++i) if (values[i] > .5) pressed |= buttons[i];
++    for (size_t i = 0; i < 4; ++i) if (values[20+i] > .5) pressed |= uint16_t(1u << i);
++    state.gamepad.buttons = pressed;
++    if (IsBindPressed(key_down_, REXCVAR_GET(keybind_guide), mods))
++      state.gamepad.buttons = uint16_t(state.gamepad.buttons) | X_INPUT_GAMEPAD_GUIDE;
++    state.gamepad.left_trigger = uint8_t(values[6]*255); state.gamepad.right_trigger = uint8_t(values[7]*255);
++    state.gamepad.thumb_lx = int16_t((values[15]-values[14])*32767); state.gamepad.thumb_ly = int16_t((values[12]-values[13])*32767);
++    state.gamepad.thumb_rx = int16_t((values[19]-values[18])*32767); state.gamepad.thumb_ry = int16_t((values[16]-values[17])*32767);
++    if (out_state) *out_state = state;
++    return X_ERROR_SUCCESS;
++  }
+   // Mouse look is opt in. Without this gate, keyboard input alone would hide
+   // and lock the cursor, breaking the ImGui overlays.
+   QueueMouseCaptureUpdate(IsEnabled() && REXCVAR_GET(mnk_mouse) && IsMouseLookActive() &&
+@@ -274,64 +429,90 @@ X_RESULT MnkInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state) {
  
    std::lock_guard lock(state_mutex_);
  
@@ -334,7 +453,46 @@ index 3f9422d..ad82530 100644
      double sensitivity = REXCVAR_GET(mnk_sensitivity);
      constexpr double kBaseScale = 200.0;
      rx += static_cast<int32_t>(double(mouse_dx_) * sensitivity * kBaseScale);
-@@ -541,13 +658,14 @@ void MnkInputDriver::OnMouseMove(rex::ui::MouseEvent& e) {
+@@ -489,8 +670,6 @@ void MnkInputDriver::OnKeyDown(rex::ui::KeyEvent& e) {
+ }
+ 
+ void MnkInputDriver::OnKeyUp(rex::ui::KeyEvent& e) {
+-  if (!IsEnabled())
+-    return;
+   std::lock_guard lock(state_mutex_);
+   uint16_t vk = static_cast<uint16_t>(e.virtual_key());
+   SetKeyState(vk, false);
+@@ -510,14 +689,16 @@ void MnkInputDriver::OnMouseDown(rex::ui::MouseEvent& e) {
+     case rex::ui::MouseEvent::Button::kMiddle:
+       SetKeyState(static_cast<uint16_t>(VirtualKey::kMButton), true);
+       break;
++    case rex::ui::MouseEvent::Button::kX1:
++      SetKeyState(static_cast<uint16_t>(VirtualKey::kXButton1), true); break;
++    case rex::ui::MouseEvent::Button::kX2:
++      SetKeyState(static_cast<uint16_t>(VirtualKey::kXButton2), true); break;
+     default:
+       break;
+   }
+ }
+ 
+ void MnkInputDriver::OnMouseUp(rex::ui::MouseEvent& e) {
+-  if (!IsEnabled())
+-    return;
+   std::lock_guard lock(state_mutex_);
+   switch (e.button()) {
+     case rex::ui::MouseEvent::Button::kLeft:
+@@ -529,6 +710,10 @@ void MnkInputDriver::OnMouseUp(rex::ui::MouseEvent& e) {
+     case rex::ui::MouseEvent::Button::kMiddle:
+       SetKeyState(static_cast<uint16_t>(VirtualKey::kMButton), false);
+       break;
++    case rex::ui::MouseEvent::Button::kX1:
++      SetKeyState(static_cast<uint16_t>(VirtualKey::kXButton1), false); break;
++    case rex::ui::MouseEvent::Button::kX2:
++      SetKeyState(static_cast<uint16_t>(VirtualKey::kXButton2), false); break;
+     default:
+       break;
+   }
+@@ -541,13 +726,14 @@ void MnkInputDriver::OnMouseMove(rex::ui::MouseEvent& e) {
    int32_t y = e.y();
    {
      std::lock_guard lock(state_mutex_);
@@ -356,7 +514,7 @@ index 3f9422d..ad82530 100644
      }
    }
    prev_mouse_x_ = x;
-@@ -569,6 +687,7 @@ void MnkInputDriver::OnLostFocus(rex::ui::UISetupEvent&) {
+@@ -569,6 +755,7 @@ void MnkInputDriver::OnLostFocus(rex::ui::UISetupEvent&) {
      mouse_dx_ = 0.0f;
      mouse_dy_ = 0.0f;
    }

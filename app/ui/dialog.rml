@@ -1,0 +1,2 @@
+<rml><head><title>Dialog</title><link type="text/rcss" href="theme.rcss"/><link type="text/rcss" href="dialog.rcss"/></head>
+<body><div id="dialog"><div id="dialog-title"/><div id="dialog-message"/><div id="dialog-actions"/></div></body></rml>

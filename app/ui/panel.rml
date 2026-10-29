@@ -1,0 +1,2 @@
+<rml><head><title>Settings</title><link type="text/rcss" href="theme.rcss"/><link type="text/rcss" href="panel.rcss"/></head>
+<body><div id="veil"/><div id="panel"><div id="tab-background"/><div id="tabs"/><span id="panel-title"/><button id="panel-close"><span class="cross-one"/><span class="cross-two"/></button><div id="divider"/><div id="options"/><div id="detail"/><div id="footer"/></div></body></rml>

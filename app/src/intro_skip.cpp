@@ -10,6 +10,8 @@
 
 #include <cstdint>
 #include <string>
+#include <atomic>
+#include "intro_skip.h"
 
 #include <rex/cvar.h>
 #include <rex/hook.h>
@@ -21,6 +23,7 @@ REXCVAR_DEFINE_BOOL(skip_intro_videos, false, "narutorise",
                     "Skip the boot intro videos (Ubisoft and logo videos)");
 
 namespace {
+std::atomic<int> live_skip{-1};
 
 // Funções geradas usadas pelo caminho de falha do wrapper (ver o corpo gerado
 // de sub_822DCA80 em narutorise_recomp.88.cpp).
@@ -67,8 +70,11 @@ bool IsBootLogoVideo(const std::string& lower_path) {
 
 }  // namespace
 
+void narutorise::SetSkipIntroVideos(bool enabled) { live_skip.store(enabled ? 1 : 0); }
+
 REX_HOOK_RAW(sub_822DCA80) {
-  if (REXCVAR_GET(skip_intro_videos)) {
+  const int live = live_skip.load();
+  if (live < 0 ? REXCVAR_GET(skip_intro_videos) : live != 0) {
     std::string path = ToLower(ReadGuestPath(base, ctx.r3.u32));
     if (IsBootLogoVideo(path)) {
       REXLOG_INFO("[narutorise] intro video skipped: {}", path);

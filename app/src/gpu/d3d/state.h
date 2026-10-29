@@ -30,16 +30,18 @@ namespace gpu {
 struct ConstantShadow {
   std::array<uint8_t, 4096> bytes{};
   bool valid = false;
-  uint64_t version = 0;  // Carried by the request: the engine reuses the CBV of the batch when unchanged.
-  // The groups (64 bytes, bit 63 - group as the title's mask) refreshed
-  // since the last request that carried them; all ones until the engine has
-  // seen the whole block.
+  // Carried by the request: the engine reuses the CBV of the batch when
+  // unchanged. Raised only when a refresh changed a byte (or was full).
+  uint64_t version = 0;
+  // The groups (64 bytes, bit 63 - group as the title's mask) whose bytes a
+  // refresh changed since the last request that carried them; all ones until
+  // the engine has seen the whole block.
   uint64_t pending = ~0ull;
 };
 extern ConstantShadow vs_shadow, ps_shadow;  // Render thread only.
 extern std::atomic<uint64_t> state_refreshes, state_reuses;
 void RefreshConstants(uint8_t* base, uint32_t at, uint32_t mask_hi, uint32_t mask_lo, bool full, ConstantShadow& s);
-void TakeConstants(ConstantShadow& s, bool whole, std::vector<uint8_t>& block, std::vector<uint8_t>& delta);
+void TakeConstants(ConstantShadow& s, bool whole, ConstantBytes& block, ConstantBytes& delta);
 // A draw the translation skipped gives back what its take carried: the
 // groups pending before it (pending_before) and the counts of the take (a
 // whole block, or delta_bytes of delta records).
@@ -50,10 +52,10 @@ void ReturnConstants(ConstantShadow& s, uint64_t pending_before, bool whole, siz
 // over a carried delta; a carried whole block takes the delta records) and
 // empties the carry.
 struct ConstantCarry {
-  std::vector<uint8_t> block, delta;
+  ConstantBytes block, delta;
   bool any() const { return !block.empty() || !delta.empty(); }
 };
-void JoinConstants(ConstantCarry& carry, std::vector<uint8_t>& block, std::vector<uint8_t>& delta);
+void JoinConstants(ConstantCarry& carry, ConstantBytes& block, ConstantBytes& delta);
 // After an out-of-band draw replaced the engine's blocks (the isolated START
 // run), the next request carries the whole blocks again.
 void ForceFullConstants();

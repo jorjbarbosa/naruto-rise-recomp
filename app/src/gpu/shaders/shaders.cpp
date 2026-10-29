@@ -11,11 +11,11 @@
 #include "gpu/host/services.h"
 #include "gpu/diagnostics/profile.h"
 #include "gpu/settings.h"
+#include <bit>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <dxgiformat.h>
 #include <array>
 #include <chrono>
 #include <atomic>
@@ -31,7 +31,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <windows.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <rex/cvar.h>
@@ -257,7 +256,7 @@ bool ReadBoundShader(uint8_t* base, uint32_t object, bool vertex, BoundShader& s
   if (!s.code_size || s.code_size > 0x10000 || (s.code_size & 3)) return fail("microcode-size");
   std::vector<uint8_t> raw(s.code_size);
   if (!ReadPhysical(base, s.code_physical, s.code_size, raw.data())) return fail("microcode-unreadable");
-  for (uint32_t i = 0; i < s.code_size; i += 4) s.code.push_back(_byteswap_ulong(*reinterpret_cast<uint32_t*>(&raw[i])));
+  for (uint32_t i = 0; i < s.code_size; i += 4) s.code.push_back(std::byteswap(*reinterpret_cast<uint32_t*>(&raw[i])));
   s.virtual_hash = Fnv64(base + s.container, s.virtual_size);
   s.hash = Fnv64(raw.data(), raw.size(), s.virtual_hash);
   return true;
@@ -305,6 +304,9 @@ bool ReadSamplers(uint8_t* base, const BoundShader& s, std::vector<ShaderSampler
 std::mutex shader_entries_mutex;
 std::unordered_map<uint32_t, std::shared_ptr<ShaderEntry>> shader_entries;  // object address -> entry
 uint64_t shader_generations = 0;  // Under shader_entries_mutex.
+// Raised under shader_entries_mutex at every change of shader_entries: the
+// lookups of FindShaderEntry kept by each thread hold while it does not move.
+std::atomic<uint64_t> shader_entries_epoch{0};
 std::atomic<uint64_t> shader_births{0}, shader_births_unreadable{0}, shader_entries_replaced{0},
     shader_entries_forgotten{0}, shader_binds_missed{0}, shader_binds_stale{0}, shader_identified_exact{0},
     shader_identified_tolerant{0}, shader_identified_missed{0};
@@ -325,6 +327,7 @@ void RegisterShaderObject(uint8_t* base, uint32_t object, bool vertex, uint32_t 
     entry->generation = ++shader_generations;
     replaced = shader_entries.count(object) != 0;
     shader_entries[object] = entry;
+    shader_entries_epoch.fetch_add(1, std::memory_order_release);
   }
   if (replaced) ++shader_entries_replaced;
   if (gpu::Active() && Diagnostics() && shader_birth_records.fetch_add(1) < 16)
@@ -334,15 +337,25 @@ void RegisterShaderObject(uint8_t* base, uint32_t object, bool vertex, uint32_t 
         vertex, read, why, entry->bound.virtual_hash, entry->bound.virtual_size, entry->bound.code_size,
         entry->code_base, entry->generation, replaced, lr, GuestThread()));
 }
-// The entry of a bound object, or null (missed or stale), counted.
+// The entry of a bound object, or null (missed or stale), counted. Each
+// thread keeps its last lookups by object (the draw runs two per capture), valid
+// while the epoch of the map holds; a miss takes the lock.
 std::shared_ptr<ShaderEntry> FindShaderEntry(uint8_t* base, uint32_t object, bool vertex) {
   if (!object) return nullptr;
-  std::shared_ptr<ShaderEntry> entry;
-  {
+  struct Lookup {
+    uint32_t object = 0;
+    uint64_t epoch = ~0ull;
+    std::shared_ptr<ShaderEntry> entry;
+  };
+  thread_local std::array<Lookup, 64> lookups;
+  Lookup& lookup = lookups[(object * 0x9E3779B1u) >> 26];
+  const uint64_t epoch = shader_entries_epoch.load(std::memory_order_acquire);
+  if (lookup.object != object || lookup.epoch != epoch) {
     std::lock_guard lock(shader_entries_mutex);
     auto it = shader_entries.find(object);
-    if (it != shader_entries.end()) entry = it->second;
+    lookup = {object, epoch, it != shader_entries.end() ? it->second : nullptr};
   }
+  std::shared_ptr<ShaderEntry> entry = lookup.entry;
   if (!entry || entry->vertex != vertex) { ++shader_binds_missed; return nullptr; }
   if (Get32(base, object + (vertex ? 0x20 : 0x18)) != entry->code_base) { ++shader_binds_stale; return nullptr; }
   return entry;
@@ -365,7 +378,10 @@ std::string ShaderNameOf(uint32_t object, bool vertex) {
 bool ForgetShaderObject(uint32_t object) {
   std::lock_guard lock(shader_entries_mutex);
   const bool forgotten = shader_entries.erase(object) != 0;
-  if (forgotten) ++shader_entries_forgotten;
+  if (forgotten) {
+    ++shader_entries_forgotten;
+    shader_entries_epoch.fetch_add(1, std::memory_order_release);
+  }
   return forgotten;
 }
 // Exact identification of an entry, once (render thread).

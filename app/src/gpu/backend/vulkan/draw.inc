@@ -1,9 +1,10 @@
 // Included after Backend::State, inside gpu::vulkan.
 namespace {
-uint64_t VulkanPipelineKey(const PipelineDesc& d) {
-  const uint64_t logical = PipelineKey(d.vs.key, d.ps.key, d.layout_id, d.state);
-  const uint32_t spec[]{d.vs.spec_mask, d.vs.spec_value & d.vs.spec_mask,
-                         d.ps.spec_mask, d.ps.spec_value & d.ps.spec_mask};
+uint64_t VulkanPipelineKey(const ShaderRef& vs, const ShaderRef& ps, uint64_t layout_id,
+                           const std::array<uint32_t, 21>& state) {
+  const uint64_t logical = PipelineKey(vs.key, ps.key, layout_id, state);
+  const uint32_t spec[]{vs.spec_mask, vs.spec_value & vs.spec_mask,
+                         ps.spec_mask, ps.spec_value & ps.spec_mask};
   uint64_t hash = logical;
   for (uint32_t value : spec) for (unsigned i = 0; i < 4; ++i) {
     hash ^= (value >> (8 * i)) & 255;
@@ -11,6 +12,7 @@ uint64_t VulkanPipelineKey(const PipelineDesc& d) {
   }
   return hash;
 }
+uint64_t VulkanPipelineKey(const PipelineDesc& d) { return VulkanPipelineKey(d.vs, d.ps, d.layout_id, d.state); }
 ShaderRef PassShader(const char* name, ShaderStage stage) {
   std::string error;
   const auto* package = EmbeddedShaderPackage(ShaderFormat::kSpirv, error);
@@ -75,7 +77,7 @@ bool Backend::State::EnsureGraphics(std::string& evidence) {
 }
 
 bool Backend::PreparePipelines(std::string& evidence) {
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId())
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id())
     return GraphicsError(evidence, "native-prepare-owner");
   if (!state_->EnsureGraphics(evidence)) return false;
   evidence = "{\"prepared\":true,\"backend\":\"vulkan\"}";
@@ -85,7 +87,7 @@ bool Backend::PrecompilePipeline(const PipelineDesc& desc, bool& present, std::s
   present = false;
   if (!state_->draw_layout || !desc.elements) return GraphicsError(evidence, "native-precompile-not-prepared");
   PipelineDesc d = desc;
-  d.state[8] = state_->render_mode.Samples(d.state[8]);
+  d.state[8] = state_->PipelineSamples(d.state[8]);
   const auto result = state_->pipeline_set.Precompile(VulkanPipelineKey(d), d, present);
   if (!result.ok) return GraphicsError(evidence, result.reason, VkResult(result.code));
   evidence = fmt::format("{{\"precompiled\":true,\"present\":{}}}", present);
@@ -93,20 +95,35 @@ bool Backend::PrecompilePipeline(const PipelineDesc& desc, bool& present, std::s
 }
 bool Backend::PostPipeline(const PipelineDesc& desc) {
   if (!state_->draw_layout || !desc.elements) return false;
-  PipelineDesc d = desc; d.state[8] = state_->render_mode.Samples(d.state[8]);
+  PipelineDesc d = desc; d.state[8] = state_->PipelineSamples(d.state[8]);
   const uint64_t key = VulkanPipelineKey(d);
   return state_->pipeline_set.Post(key, std::move(d), true, false);
 }
 void Backend::PrefetchPipelines(const std::vector<DrawRequest>& requests) {
-  for (const auto& r : requests) {
+  auto& s = *state_;
+  s.prefetched_batch = requests.data();
+  s.prefetched_next = 0;
+  s.prefetched_keys.assign(requests.size(), {});
+  for (size_t i = 0; i < requests.size(); ++i) {
+    const auto& r = requests[i];
     if (r.pipeline_take != DrawRequest::PipelineTake::kPrefetch || !r.elements) continue;
-    auto color = state_->surfaces.find(r.color_key), depth = state_->surfaces.find(r.depth_key);
-    const bool has_color = color != state_->surfaces.end();
-    const bool has_depth = (r.depth_enable || r.stencil_enable) && depth != state_->surfaces.end();
+    auto color = s.surfaces.find(r.color_key), depth = s.surfaces.find(r.depth_key);
+    const bool has_color = color != s.surfaces.end();
+    const bool has_depth = (r.depth_enable || r.stencil_enable) && depth != s.surfaces.end();
     if (!has_color && !has_depth) continue;
-    PipelineDesc d{r.vs, r.ps, r.elements, r.layout_id ? r.layout_id : ElementsId(*r.elements)};
-    if (DrawStateWords(r, has_color ? color->second.desc.samples : depth->second.desc.samples,
-                       has_depth, has_color, d.state)) PostPipeline(d);
+    const uint32_t samples = has_color ? color->second.desc.samples : depth->second.desc.samples;
+    const uint64_t layout_id = r.layout_id ? r.layout_id : ElementsId(*r.elements);
+    std::array<uint32_t, 21> words{};
+    if (!DrawStateWords(r, samples, has_depth, has_color, words)) continue;
+    const uint64_t key = VulkanPipelineKey(r.vs, r.ps, layout_id, words);
+    s.prefetched_keys[i] = {key, samples, has_depth, has_color};
+    // As PostPipeline keys it, with the samples of the render mode; a pipeline
+    // the backend holds needs no copy of its description nor a post.
+    auto keyed = words;
+    keyed[8] = s.PipelineSamples(keyed[8]);
+    const uint64_t posted = keyed == words ? key : VulkanPipelineKey(r.vs, r.ps, layout_id, keyed);
+    if (auto it = s.pipelines.find(posted); it != s.pipelines.end() && it->second) continue;
+    PostPipeline(PipelineDesc{r.vs, r.ps, r.elements, layout_id, words});
   }
 }
 std::vector<PipelineDesc> Backend::PipelineDescs() {
@@ -137,8 +154,13 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fence, std::string& ev
   fence = 0;
   auto fail = [&](const char* reason, VkResult code = VK_ERROR_UNKNOWN) { return GraphicsError(evidence, reason, code); };
   auto& s = *state_;
-  if (!s.ready || s.owner_thread != GetCurrentThreadId() || s.operation_poisoned || s.unproved_execution)
+  if (!s.ready || s.owner_thread != rex::thread::current_thread_system_id() || s.operation_poisoned || s.unproved_execution)
     return fail("native-draw-owner-or-state");
+  const State::PrefetchedKey* prefetched = nullptr;
+  if (s.prefetched_batch) {
+    if (&r == s.prefetched_batch + s.prefetched_next) prefetched = &s.prefetched_keys[s.prefetched_next];
+    if (!prefetched || ++s.prefetched_next == s.prefetched_keys.size()) s.prefetched_batch = nullptr;
+  }
   State::Surface *color = nullptr, *depth = nullptr;
   if (!r.depth_only || r.color_key) {
     auto it = s.surfaces.find(r.color_key);
@@ -162,13 +184,22 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fence, std::string& ev
   for (const auto& e : *r.elements)
     if (e.slot >= r.streams.size() || !r.streams[e.slot].stride) return fail("native-draw-vertex-element");
   if (!s.EnsureGraphics(evidence)) return false;
-  PipelineDesc desc{r.vs, r.ps, r.elements, r.layout_id ? r.layout_id : ElementsId(*r.elements)};
-  if (!DrawStateWords(r, target.desc.samples, depth != nullptr, color != nullptr, desc.state))
-    return fail("native-draw-topology-uncovered");
-  const uint64_t key = VulkanPipelineKey(desc), triple = TripleKey(r.vs.key, r.ps.key, desc.layout_id);
+  const uint64_t layout_id = r.layout_id ? r.layout_id : ElementsId(*r.elements);
+  // The prefetch's key holds for the same request on the same target; the
+  // state words are then needed only for a pipeline the backend lacks.
+  std::array<uint32_t, 21> state_words{};
+  auto words = [&] { return DrawStateWords(r, target.desc.samples, depth != nullptr, color != nullptr, state_words); };
+  const bool keyed = prefetched && prefetched->key && prefetched->samples == target.desc.samples &&
+                     prefetched->depth == (depth != nullptr) && prefetched->color == (color != nullptr);
+  if (!keyed && !words()) return fail("native-draw-topology-uncovered");
+  const uint64_t key = keyed ? prefetched->key : VulkanPipelineKey(r.vs, r.ps, layout_id, state_words);
   auto& pipeline = s.pipelines[key];
   const bool created = !pipeline;
   if (!pipeline) {
+    if (keyed && !words()) { s.pipelines.erase(key); return fail("native-draw-topology-uncovered"); }
+    // The description is copied only for a pipeline the backend lacks.
+    const PipelineDesc desc{r.vs, r.ps, r.elements, layout_id, state_words};
+    const uint64_t triple = TripleKey(r.vs.key, r.ps.key, layout_id);
     // Normal and diagnostic draws both remain visible on Vulkan. Never skip
     // a draw because a pipeline compilation is pending.
     auto take = s.pipeline_set.Take(key, triple, r.pipeline_take == DrawRequest::PipelineTake::kSkip ?
@@ -236,19 +267,10 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fence, std::string& ev
     s.fallback_initialized = true;
   }
   std::array<VkDescriptorSet, 4> sets{};
-  std::array<std::array<VkDescriptorImageInfo, 32>, 4> infos{};
-  VkSamplerCreateInfo default_sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-  default_sampler.maxLod = VK_LOD_CLAMP_NONE;
   VkSampler point{};
-  if ((result = resources.Sampler(default_sampler, point)) != VK_SUCCESS)
+  if ((result = resources.DefaultSampler(point)) != VK_SUCCESS)
     return fail("native-vulkan-default-sampler", result);
-  for (uint32_t i = 0; i < 32; ++i) {
-    for (uint32_t j = 0; j < 3; ++j) {
-      infos[j][i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-      infos[j][i].imageView = s.fallback_views[j];
-    }
-    infos[3][i].sampler = point;
-  }
+  DrawCache::Bindings bindings;
   auto shared = r.shared_constants;
   // Descriptor index fields only: preserve booleans, fetch descriptors and planes.
   std::fill(shared.begin(), shared.begin() + 256, 0);
@@ -259,11 +281,13 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fence, std::string& ev
   for (const auto& t : r.textures) {
     if (t.reg >= 20) return fail("native-draw-texture-register");
     VkImage image{}; VkFormat format{}; uint32_t levels = 1;
+    ImageViews* views = nullptr;  // The image's own: they live as long as it does.
     if (t.resolved) {
       auto it = s.textures.find(t.key);
       if (it == s.textures.end() || !it->second.content_defined) return fail("native-draw-resolve-texture-undefined");
       auto& texture = it->second;
       image = texture.Image(); format = texture.depth ? VK_FORMAT_R32_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+      views = &texture.views;
       s.DrawTransition(image, VK_IMAGE_ASPECT_COLOR_BIT, texture.state, kShaderRead);
       texture.last_use = s.batch.sequence;
     } else {
@@ -271,14 +295,15 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fence, std::string& ev
       if (it == s.sampled.end() || it->second.version < t.version) return fail("native-draw-sampled-copy-stale");
       auto& texture = it->second;
       image = texture.image->image; format = ImageFormat(texture.format); levels = texture.levels;
+      views = &texture.image->views;
       s.DrawTransition(image, VK_IMAGE_ASPECT_COLOR_BIT, texture.state, kShaderRead);
       texture.last_use = s.batch.sequence;
     }
     VkImageView view{};
-    if ((result = resources.View(image, format, VK_IMAGE_ASPECT_COLOR_BIT, levels, t.cube, t.component_mapping, view)) != VK_SUCCESS)
+    if ((result = views->Get(s.vulkan->vk, image, format, levels, t.cube, t.component_mapping, s.draw_counters, view)) != VK_SUCCESS)
       return fail("native-vulkan-sampled-view", result);
     const uint32_t slot = t.reg + 1;
-    infos[t.cube ? 2 : 0][slot].imageView = view;
+    bindings.View(t.cube, slot, view);
     VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     sampler.minFilter = t.min_filter == Filter::kLinear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
     sampler.magFilter = t.mag_filter == Filter::kLinear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
@@ -307,12 +332,12 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fence, std::string& ev
     }
     VkSampler made{};
     if ((result = resources.Sampler(sampler, made)) != VK_SUCCESS) return fail("native-vulkan-sampler", result);
-    infos[3][slot].sampler = made;
+    bindings.Sampler(slot, made);
     const uint32_t image_offset = t.reg < 16 ? (t.cube ? 128 : 0) + t.reg * 4 : 288 + (t.reg - 16) * 4;
     const uint32_t sampler_offset = t.reg < 16 ? 192 + t.reg * 4 : 304 + (t.reg - 16) * 4;
     std::memcpy(shared.data() + image_offset, &slot, 4); std::memcpy(shared.data() + sampler_offset, &slot, 4);
   }
-  if ((result = resources.Descriptors(s.draw_sets, infos, sets)) != VK_SUCCESS)
+  if ((result = resources.Descriptors(s.draw_sets, s.fallback_views, point, bindings, sets)) != VK_SUCCESS)
     return fail("native-vulkan-draw-descriptors", result);
   // Each draw gets one contiguous allocation; offsets are stable even if the
   // upload page vector grows on the next draw.
@@ -398,8 +423,8 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fence, std::string& ev
   }
   if (color) color->last_use = s.batch.sequence;
   if (depth) depth->last_use = s.batch.sequence;
-  VkViewport viewport{r.viewport[0] * scale.x, r.viewport[1] * scale.y, r.viewport[2] * scale.x,
-                       r.viewport[3] * scale.y, r.viewport[4], r.viewport[5]};
+  const HostViewport host = ViewportInHost(scale, r.viewport);  // regions.h
+  VkViewport viewport{host.x, host.y, host.width, host.height, r.viewport[4], r.viewport[5]};
   const int32_t left = std::clamp(scale.X(r.scissor[0]), 0, int32_t(target.desc.width));
   const int32_t top = std::clamp(scale.Y(r.scissor[1]), 0, int32_t(target.desc.height));
   VkRect2D scissor{{left, top}, {uint32_t(std::max(0, std::min(scale.X(r.scissor[2]), int32_t(target.desc.width)) - left)),

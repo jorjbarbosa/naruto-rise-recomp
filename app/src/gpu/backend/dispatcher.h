@@ -75,8 +75,9 @@ class Dispatcher final {
   // Runs work(i, engine) for every i below count on `threads` pool threads,
   // concurrently with the owner; work may call only the engine's free-threaded
   // operations (PrecompilePipeline). The threads follow the title's loading
-  // screen (common/title_loading.h): all of them at the highest priority while
-  // it is up, kPoolThreadsInGame at the lowest otherwise. done(stopped) runs
+  // screen (common/title_loading.h): all of them above normal priority while
+  // it is up, all of them at the lowest in the title's menus, and
+  // kPoolThreadsInGame at the lowest in the game. done(stopped) runs
   // once, on the last thread to finish. Shutdown stops the pool (no new index)
   // and joins it before the engine goes. One pool per dispatcher; false when
   // it ran already or the dispatcher is not running.
@@ -92,7 +93,7 @@ class Dispatcher final {
   bool Deferred() const;
   bool OnTranslator() const;  // The calling thread is the translator.
   // Queues a task of the stage; the caller waits while kStageMax tasks are
-  // pending (the title waits when the translator falls behind). False when the
+  // queued (the consumer may own a small local batch). False when the
   // stage is off or closed: the task is dropped. Not for the translator.
   static constexpr size_t kStageMax = 8192;
   bool Enqueue(std::unique_ptr<StageTask> task);

@@ -22,13 +22,13 @@
 </p>
 
 > [!WARNING]
-> This project is a work in progress. Expect bugs, crashes, and visual issues; the native renderer, now the default, is the newest part, and Xenos remains available in the launcher if something does not look right. Keep a backup of your saves and report problems on the [Issues page](https://github.com/jorjbarbosa/naruto-rise-recomp/issues).
+> This project is a work in progress. Expect bugs, crashes, and visual issues; the native renderer, now the default, is the newest part, and Xenos remains available through manual configuration if something does not look right. Keep a backup of your saves and report problems on the [Issues page](https://github.com/jorjbarbosa/naruto-rise-recomp/issues).
 
 ## About
 
 A PC port of **Naruto: Rise of a Ninja**, originally released for Xbox 360. The project uses the [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) to translate the game's PowerPC code into C++ and compile it for native execution. The SDK runtime provides system services, audio, and input.
 
-The game can be drawn by two renderers, chosen in the launcher: the **native renderer**, the default, which draws the game's Direct3D calls with Direct3D 12 and can present at 60 or 120 FPS, and **Xenos**, the SDK's emulation of the Xbox 360 GPU, as the alternative.
+The game can be drawn by two renderers, available in the executable: the **native renderer**, the default, which draws the game's Direct3D calls with Direct3D 12 or Vulkan and can present at 60 or 120 FPS, and **Xenos**, the SDK's emulation of the Xbox 360 GPU, as the alternative.
 
 The current build and distribution workflow targets **Windows x64**. Presets for other platforms exist, but do not represent complete or verified support for this port.
 
@@ -41,23 +41,25 @@ The current build and distribution workflow targets **Windows x64**. Presets for
 
 - **Two renderers:** the native Direct3D 12 renderer (default) and Xenos as the alternative. See [Native renderer and 60 FPS](#native-renderer-and-60-fps).
 - **60 and 120 FPS** with the native renderer, keeping the game's logic at its original rate.
-- **21:9 and 32:9 ultrawide** with the Xenos renderer, with projection adjustments and anamorphic presentation; a 16:9 option is available in the launcher.
+- **21:9 and 32:9 ultrawide** with the Xenos renderer, with projection adjustments and anamorphic presentation; configured through `narutorise.toml`.
 - **Internal resolution from 1× to 4×** (also 1.5× with the native renderer), up to 16× anisotropic filtering, FXAA, FidelityFX CAS/FSR, fullscreen, and VSync.
 - **Native renderer options:** MSAA (2×, 4×, 8×), transparency antialiasing, brightness, frame latency, and triple buffering.
 - **Graphics card selection** for both renderers; hybrid laptops use the dedicated card by default.
 
 **Content and languages**
 
-- **DLC support**, with launcher import and STFS package installation at game startup. Character DLCs use additional recompiled engine modules.
-- **Game language selection**, with English, French, German, Spanish, and Italian options in the launcher; available text and voices depend on your game files.
-- **External translation mods**, selected in the launcher's game language list, with UTF-8 text replacements by ID and fallback to the original English text. Releases include the complete Brazilian Portuguese package. See the [translation mod guide](docs/translation-mods.md).
+- **DLC support**, with import from the setup screen or in-game menu and STFS package installation at game startup. Character DLCs use additional recompiled engine modules.
+- **Game language selection**, with English, French, German, Spanish, and Italian options in Settings → Game; available text and voices depend on your game files.
+- **External translation mods**, selected in the menu's game language list, with UTF-8 text replacements by ID and fallback to the original English text. Releases include the complete Brazilian Portuguese package. See the [translation mod guide](docs/translation-mods.md).
 
-**Launcher and distribution**
+**Menus and distribution**
 
-- **Launcher** with settings grouped into Game, Display, Quality, Controls, and Advanced, a description of each option, DLC import, the installed version, and automatic update notices from GitHub Releases. It is available in seven languages.
-- **FPS and frametime overlay** (`F1`, Xenos renderer) showing the guest (game) and host frame rates, and an option to skip intro videos.
-- **Shader caches:** the bundled Xenos shader storage is copied into the user cache; the native renderer's shaders are translated when the port is built and embedded in the executable.
-- **Portable distribution and Windows installer**, with optional ISO import and a manual update mode for existing installations. The installer is also available in seven languages.
+- **Open the game directly:** extract the ZIP, run `narutorise.exe`, and select your original Xbox 360 ISO or a complete extracted copy. The ISO is read in place.
+- **Setup screen** on first launch, for missing game files, or in safe mode (hold Shift while opening or use `--setup`).
+- **In-game menu** with Settings, DLC and Exit game: press `F1` or `Back+Start`. Both shortcuts are remappable. The game continues running while menu input is captured.
+- **Seven interface languages**, shared settings before and during the game, Show FPS, shader progress, update notices and desktop shortcut creation.
+- **ZIP distribution**, plus a temporary compatibility bridge for older installed copies.
+- **Shader caches:** bundled Xenos storage seeds the user cache; native shaders are translated at build time and embedded in the executable.
 
 ## Native renderer and 60 FPS
 
@@ -65,12 +67,12 @@ On Xbox 360, the game runs its logic in fixed steps: 30 per second in the open w
 
 | | Xenos | Native (default) |
 | --- | --- | --- |
-| How it draws | Emulates the Xbox 360 GPU and the command buffers the game writes for it | Intercepts the game's Direct3D calls and issues them with Direct3D 12; the shaders are translated when the port is built |
-| Frame rate | The game's: 30, and 60 in fights | 30, 60 or 120 in the launcher (up to 240 in `narutorise.toml`) |
+| How it draws | Emulates the Xbox 360 GPU and the command buffers the game writes for it | Intercepts the game's Direct3D calls and issues them with Direct3D 12 or Vulkan; the shaders are translated when the port is built |
+| Frame rate | The game's: 30, and 60 in fights | 30, 60 or 120 in Settings (up to 240 in `narutorise.toml`) |
 | Aspect ratio | 16:9, 21:9, and 32:9 | 16:9, with bars on wider monitors |
 | Options only in this renderer | Aspect ratio, dithering, `F1`/`F3` overlays | MSAA, transparency antialiasing, frame rate, brightness, frame latency, triple buffering |
 
-The native renderer is the default: choose the rate with the **Frame rate** slider under **Settings → Display** in the launcher (60 by default). To use Xenos instead, select it in **Settings → Display → Renderer**. A configuration saved by an earlier build with Xenos selected keeps it until you change it. The renderer option exists only in builds that include the native renderer ([build guide](docs/build-and-run.md#native-renderer-optional)); other builds always use Xenos.
+The native renderer is the default: choose Direct3D 12 or Vulkan and the **Frame rate** under **Settings → Display** (60 by default). Xenos is available by setting `renderer = "xenos"` in `narutorise.toml`; its path does not provide the native setup or in-game menu. Builds without the native renderer use Xenos ([build guide](docs/build-and-run.md#native-renderer-optional)).
 
 Above 30 FPS, the game's logic keeps its original step, and the renderer draws the frames in between by interpolating objects, characters' poses, and the camera between the last two logic steps. Game speed, physics, and timing stay those of the console. With VSync on, the rate does not exceed the monitor's refresh rate. The HUD minimap still updates at 30 FPS, and the image trails the logic by one step (up to about 33 ms in the open world).
 
@@ -79,51 +81,28 @@ See [Renderers and frame rate](docs/renderers.md) for how it works, its limits, 
 ## Requirements
 
 - Windows x64.
-- A Direct3D 12-compatible GPU, for either renderer. The launcher uses Direct3D 11.
+- A GPU and driver compatible with Direct3D 12 or the native Vulkan backend (Xenos requires Direct3D 12).
 - The [Microsoft Visual C++ x64 Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe).
-- The files from your Xbox 360 copy of the game, including `default.xex`. The source tree does not include game data or DLC packages.
-- An SDL-compatible controller is recommended. Keyboard and mouse can be turned on and mapped in the launcher; see [Keyboard and mouse](docs/configuration.md#keyboard-and-mouse).
+- Your Xbox 360 ISO or a complete extracted copy, including `default.xex`. The source tree does not include game data or DLC packages.
+- An SDL-compatible controller is recommended. Keyboard and mouse can be configured in Settings → Controls; see [Keyboard and mouse](docs/configuration.md#keyboard-and-mouse).
 
 ## Installing
 
-Download `NarutoRiseInstaller.exe` from the **Assets** of the latest Windows release on the [Releases page](https://github.com/jorjbarbosa/naruto-rise-recomp/releases). The installer includes the PC port; you must provide the original Xbox 360 game files separately. To build the port yourself, follow the [build guide](docs/build-and-run.md).
+Download `naruto-rise-recomp-win-amd64.zip` from the [Releases page](https://github.com/jorjbarbosa/naruto-rise-recomp/releases). Extract it to a writable folder and run `narutorise.exe`. Game data is supplied separately. The ZIP creates `data/` for preferences, logs, saves and DLC packages; `defaults/narutorise.toml` is the factory template. Settings → Advanced can show, open or change the data folder after restart. Linux AppImage uses the XDG data directory by default. See [Data folder and recovery](docs/data-folder.md).
 
-1. Run `NarutoRiseInstaller.exe` and choose the installer language.
-2. Select **Install a new copy or import an ISO**.
-3. Choose the destination folder. The default is `%LOCALAPPDATA%\NarutoRisePC`, a per-user installation that does not require administrator privileges.
-4. Select the ISO from your Xbox 360 copy to extract it into `game/`, or leave the ISO field empty to use files you already extracted.
-5. Choose the shortcuts, review the summary, and install.
-6. Open `narutorise_launcher.exe`, select your monitor's aspect ratio, adjust settings, and launch the game.
+On first launch, choose your original Xbox 360 ISO or `default.xex` from a complete extracted copy. The game validates the supported revision and reads the ISO directly. Later launches follow the Show menu at startup preference. Hold **Shift** while opening, or run `narutorise.exe --setup`, to return to setup.
 
-If you skipped ISO import, place your extracted files in `game/` next to the launcher or select their folder in the launcher's **Game Files** tab. The selected game folder must contain `default.xex`. To import an ISO later, run the installer again and select **Install a new copy or import an ISO**; the destination's `game/` folder must be empty.
-
-For the portable ZIP, extract it to a writable folder and run `narutorise_launcher.exe`. Place or select the extracted game files as described above. ISO import is available through the installer.
-
-For additional content, see the [DLC guide](docs/dlc.md).
+Press **F1** or **Back+Start** while playing for Settings, DLC and Exit game. Create a desktop shortcut from **Settings → Advanced**. See the [DLC guide](docs/dlc.md) for additional content.
 
 ## Updating
 
-The launcher checks GitHub's latest published release in the background when opened. The update notice has two actions: **Download and install** and **What's new**. **Check for updates**, below the cover, checks manually. Releases marked as pre-releases on GitHub are excluded; a tag containing `beta` is still eligible when its release is published normally.
+The game checks GitHub Releases in the background and offers to open the release page. It does not download or install updates. Release eligibility follows GitHub's published/pre-release flag; a `beta` tag can still be eligible. Checks are cached; playing offline works.
 
-**Download and install** first asks **Yes / No** before downloading. After confirming, the launcher downloads the installer and verifies its size and SHA-256. A second **Yes / No** dialog asks permission to run it. **Yes** saves your settings, opens Setup in update mode for this folder and closes the launcher. **No** keeps the launcher open; the verified download remains available for another attempt during this session. Close the game and other launchers using the same folder before installing. Setup remains interactive and offers to reopen the launcher when finished. During download, the first button becomes **Cancel download**.
+Close the game, download the new ZIP, and replace the package files while **keeping the active `data/` folder and `data_location.json` selection file**. Preserve `game/`, `game_root/`, saves, DLC and mods. All active mods and translations live in the active data folder's `mods/`; eligible old mods are copied there with originals preserved. Updates refresh only the immutable `defaults/mods/pt-br` seed and preserve active personalizations. To update an active translation, back it up and merge the new seed deliberately. See [data-folder recovery](docs/data-folder.md).
 
-For a portable copy, the first dialog explicitly explains that using Setup registers the copy as a Windows application in the same folder. Both `narutorise.exe` and `narutorise_launcher.exe` must be present to run the update. The launcher uses the installer only; ZIP updates still require manual extraction and are available on the release page through **What's new**.
+For an installed **0.3.0-beta** copy, use the separately attached `NarutoRiseInstaller.exe` compatibility bridge. The old launcher's updater can hand off to it using `/MODE=update`. It keeps the installation folder and user data, replaces the known shortcuts to open `narutorise.exe`, and removes the old launcher. You can also run the bridge manually, choose **Update an existing installation** and select the PC port folder. There is no ISO import step.
 
-Successful checks are cached for six hours; failed checks are retried on a later launch after fifteen minutes. Manual checks bypass the cache, with a one-minute cooldown after each request. The game remains playable without internet. Older launchers need one manual update to receive this feature.
-
-To update manually, download `NarutoRiseInstaller.exe` from the [Releases page](https://github.com/jorjbarbosa/naruto-rise-recomp/releases/latest). Use the same installer for a new installation or to update an existing copy.
-
-1. Close the game and launcher.
-2. Run the new `NarutoRiseInstaller.exe` and choose the installer language.
-3. Select **Update an existing installation**. This option is preselected when an installation is detected in the initial destination.
-4. Confirm the existing installation folder: it must contain both `narutorise.exe` and `narutorise_launcher.exe`. Select the PC port folder, rather than the folder containing only your Xbox 360 game files.
-5. Review the destination and versions, apply the update, and reopen the launcher when it finishes.
-
-The installer detects previous Inno Setup and legacy native installations, including custom destinations. For a portable copy, select its folder manually; updating it through the installer registers it as an installed Windows application and adds an uninstaller.
-
-Updates replace the PC port binaries and bundled assets while preserving your game files, `narutorise.toml`, language preferences, saves, DLCs, and personal files. You do not need to uninstall the previous version or import your ISO again; the ISO page is skipped during an update. Existing `game/` and legacy `game_root/` folders are preserved.
-
-See the [packaging guide](packaging/README.md) for installer details and command-line options.
+The bridge remains attached for several releases because older launchers check only the latest release. For a portable ZIP updated manually, the old `narutorise_launcher.exe` is left untouched; you may delete it. See the [packaging guide](packaging/README.md) for commands and migration tests.
 
 ## Documentation
 
@@ -135,21 +114,18 @@ See the [packaging guide](packaging/README.md) for installer details and command
 | [DLCs and Title Updates](docs/dlc.md) | Content installation and additional module build |
 | [Architecture and analysis](docs/architecture.md) | Project structure, technical workflow, and areas to address |
 | [Troubleshooting](docs/troubleshooting.md) | Build failures, runtime issues, and diagnostics |
-| [Packaging](packaging/README.md) | Portable ZIP and Inno Setup installer |
-| [Installer verification](docs/installer-status.md) | Existing tests and manual verification steps |
+| [Packaging](packaging/README.md) | ZIP distribution and compatibility bridge |
 
 ## Roadmap
 
 Planned work, in no particular order:
 
-- **Linux support.** Build presets exist, but the port has not been validated on Linux, and the launcher, preparation scripts, and installer still depend on Windows.
-- **Vulkan.** Both renderers currently require Direct3D 12.
+- **Linux support.** Build presets exist, but the port has not been validated on Linux, and native file dialogs and restart behavior still need platform integration.
 - **Ultrawide with the native renderer.** It currently draws at 16:9, with bars on wider monitors.
-- **Graphics settings in game.** An overlay to change the graphics options while playing, kept in sync with the launcher. Today they are changed in the launcher.
 
 ## Contributing
 
-Read the [technical analysis](docs/architecture.md) before changing the runtime or code generation files. When reporting an issue, include reproduction steps, version/build, CPU, GPU, driver, the renderer and frame rate you use, your configuration, and logs from `logs/` next to the executable. Also mention whether you use ultrawide, DLCs, or a Title Update.
+Read the [technical analysis](docs/architecture.md) before changing the runtime or code generation files. When reporting an issue, include reproduction steps, version/build, CPU, GPU, driver, the renderer and frame rate you use, your configuration, and logs from `logs/` inside the active data folder shown in Settings → Advanced. Also mention whether you use ultrawide, DLCs, or a Title Update.
 
 Keep game files, content packages, derived shader data, and generated recompiled code out of commits. SDK changes should include reproducible patches in `patches/sdk/`.
 
@@ -176,6 +152,6 @@ Keep game files, content packages, derived shader data, and generated recompiled
 
 Copyright (C) 2026 Jorge Barbosa. The source code of this port is licensed under version 3 of the [GNU General Public License](LICENSE) (GPL-3.0-only). The v0.2.0-beta.1 release was published under the MIT License.
 
-Third-party code keeps its own license: the ReXGlue SDK (`sdk/`, BSD-3-Clause) and its dependencies, the XenosRecomp fork (`tools/xenosrecomp/`, MIT), Plume and D3D12 Memory Allocator (MIT, built into the executable with the native renderer), extract-xiso (`tools/extract-xiso/`), and the Lato fonts (`launcher/assets/fonts/`, OFL-1.1). Release packages include the notices of every component they ship in `licenses/` ([component list](packaging/third-party-licenses.psd1)).
+Third-party code keeps its own license: the ReXGlue SDK (`sdk/`, BSD-3-Clause) and its dependencies, the XenosRecomp fork (`tools/xenosrecomp/`, MIT), Plume and D3D12 Memory Allocator (MIT), RmlUi (MIT), FreeType (FTL), and the embedded Roboto Condensed fonts (`app/ui/fonts/`, OFL-1.1). The developer extractor remains under its own license in `tools/extract-xiso/`. Release packages include the notices of every component they ship in `licenses/` ([component list](packaging/third-party-licenses.psd1)).
 
 Naruto: Rise of a Ninja, its content, and its artwork and trademarks, including the game artwork in `launcher/assets/` and `docs/assets/`, belong to their respective owners and are not covered by this license. No game data is distributed with this project.

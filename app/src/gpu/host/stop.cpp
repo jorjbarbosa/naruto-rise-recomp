@@ -1,13 +1,18 @@
 // The ordered stop of the native mode: one owner per process, the engine
 // released on its owner thread, the final records and the exit code.
 #include "gpu/host/internal.h"
+#include "diagnostics/incident.h"
+#include "sentry_reporting.h"
 #include "gpu/backend/dispatcher.h"
+#include "gpu/common/platform.h"
 #include <cstdlib>
+#include <optional>
 #include <fmt/format.h>
 #include <rex/logging.h>
 #include <rex/string.h>
 #include <rex/system/thread_state.h>
 #include <rex/system/xthread.h>
+#include <rex/thread.h>
 
 namespace gpu::host {
 // One ordered stop per process. The first host thread to stop owns
@@ -18,12 +23,12 @@ namespace gpu::host {
 // close (XThread::CheckTitleTermination, the SDK's cooperative exit), so the
 // close can join it; any other parked thread stays until the process exits.
 namespace {
-std::atomic<DWORD> stop_owner{0};
+std::atomic<uint32_t> stop_owner{0};
 std::atomic<uint32_t> parked_stops{0};
 }  // namespace
 void ClaimStop(std::string_view name, PPCContext* ctx) {
-  DWORD owner = 0;
-  const DWORD self = GetCurrentThreadId();
+  uint32_t owner = 0;
+  const uint32_t self = rex::thread::current_thread_system_id();
   if (stop_owner.compare_exchange_strong(owner, self) || owner == self) return;
   {
     std::lock_guard lock(event_mutex);
@@ -31,14 +36,14 @@ void ClaimStop(std::string_view name, PPCContext* ctx) {
   }
   parked_stops.fetch_add(1);
   for (;;) {
-    Sleep(10);
+    rex::thread::Sleep(std::chrono::milliseconds(10));
     rex::system::XThread::CheckTitleTermination();
   }
 }
 // The stop claimed without parking (the UI thread of the close fallback).
 bool TryClaimStop() {
-  DWORD owner = 0;
-  const DWORD self = GetCurrentThreadId();
+  uint32_t owner = 0;
+  const uint32_t self = rex::thread::current_thread_system_id();
   return stop_owner.compare_exchange_strong(owner, self) || owner == self;
 }
 uint32_t ParkedStops() { return parked_stops.load(); }
@@ -54,7 +59,10 @@ bool ReleaseEngineAndRecord(std::string_view name, PPCContext* ctx, uint32_t add
     std::lock_guard lock(engine_mutex);
     if (native_engine) {
       shutdown_ok = native_engine->Shutdown(shutdown);
-      if (shutdown_ok) native_engine.reset();
+      if (shutdown_ok) {
+        active_engine.store(nullptr, std::memory_order_release);
+        native_engine.reset();
+      }
     }
     if (shutdown_evidence) *shutdown_evidence = shutdown;
     if (failed_native_engine) {
@@ -109,34 +117,44 @@ std::string_view EvidenceField(std::string_view json, std::string_view key) {
 void ReportProductStop(std::string_view name, int code, bool released, std::string_view posted,
                        std::string_view shutdown) {
   constexpr size_t kEvidenceChars = 1500;
-  uint32_t removed = 0;
+  std::optional<uint32_t> removed;
   if (const auto field = EvidenceField(shutdown, "device_removed_reason"); !field.empty())
     removed = uint32_t(std::strtoul(std::string(field).c_str(), nullptr, 10));
   REXLOG_ERROR("[narutorise] Native renderer stopped: {} (exit {}, engine released {}, device removed reason "
-               "0x{:08X})", name, code, released, removed);
+               "{})", name, code, released, removed ? fmt::format("0x{:08X}", *removed) : "not-queried");
   if (!posted.empty())
     REXLOG_ERROR("[narutorise] Native renderer failed operation: {}", posted.substr(0, kEvidenceChars));
   rex::FlushLogging();
   std::string message = fmt::format("The native renderer stopped and the game will close.\n\nReason: {}", name);
-  if (FAILED(HRESULT(removed)))
-    message += fmt::format("\nThe graphics card stopped responding (0x{:08X}).", removed);
+  if (removed && int32_t(*removed) < 0)  // A failed HRESULT.
+    message += fmt::format("\nThe graphics card stopped responding (0x{:08X}).", *removed);
+#ifdef _WIN32
   message += "\n\nThe details are in the log, in the logs folder next to narutorise.exe. "
-             "If this happens again, the Xenos renderer can be chosen in the launcher.";
-  const auto wide = rex::string::to_utf16(message);
-  MessageBoxW(nullptr, reinterpret_cast<const wchar_t*>(wide.c_str()), L"narutorise",
-              MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
+             "If this happens again, choose the other graphics API in Settings > Display.";
+#else
+  message += "\n\nThe details are in the log, in the logs folder next to the narutorise executable.";
+#endif
+  platform::ShowError("narutorise", message);
 }
 }  // namespace
 
 [[noreturn]] void Stop(std::string_view name, PPCContext* ctx,
                        uint32_t address, uint32_t value, int code) {
+  // Independent of the journal/logger and before ownership waits or teardown.
+  narutorise::incident::FirstFailure(name);
+  narutorise::incident::Event("renderer-stop", "begin", name);
   ClaimStop(name, ctx);
+  narutorise::incident::Event("renderer-quiesce", "begin");
   frame_completion::Quiesce();
+  narutorise::incident::Event("renderer-quiesce", "end");
   // The posted operation that latched the engine, read before the release.
   std::string posted, shutdown;
   if (!Journaled())
     if (auto* dispatcher = ActiveDispatcher()) dispatcher->PostedFailure(posted);
+  narutorise::incident::Event("renderer-release", "begin");
   const bool released = ReleaseEngineAndRecord(name, ctx, address, value, true, &shutdown);
+  narutorise::incident::Event("renderer-release", released ? "end" : "failed", shutdown);
+  narutorise::reporting::CaptureFailure(std::string(name), posted);
   if (!Journaled()) ReportProductStop(name, released ? code : 88, released, posted, shutdown);
   // Diagnostic termination. No guest return, fence, read pointer or callback.
   // The record writer stays locked, so the exit cuts no line of another thread.

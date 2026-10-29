@@ -6,7 +6,7 @@
 #include "gpu/diagnostics/diagnostics.h"
 #include "gpu/diagnostics/motion.h"
 #include "gpu/host/services.h"
-#include <windows.h>
+#include "gpu/common/platform.h"
 #include <fmt/format.h>
 #include <rex/hook.h>
 #include <rex/ppc/context.h>
@@ -91,7 +91,8 @@ struct Written {
   uint32_t object = 0;  // An object matrix's object, 0 otherwise.
 };
 
-int enabled = -1, bones_enabled = -1, turned_enabled = -1;
+std::atomic<int> enabled{-1}, bones_enabled{-1};
+int turned_enabled = -1;
 std::unordered_map<uint32_t, Track> tracks;  // By object.
 std::unordered_map<uint32_t, BoneTrack> bone_tracks;  // By matrix.
 std::unordered_set<uint32_t> object_written;  // The object matrices written in this view block.
@@ -119,16 +120,16 @@ constexpr size_t kFreedMax = 1 << 20;
 // mounted a tick ago, or from a bone array, may no longer point at mapped
 // memory; CopyFromGuest fails instead of faulting.
 bool Read32(uint8_t* base, uint32_t address, uint32_t& out) {
-  if (!CopyFromGuest(&out, base + address, 4)) return false;
-  out = _byteswap_ulong(out);
+  if (!CopyFromGuest(GuestMemory(), address, &out, 4)) return false;
+  out = std::byteswap(out);
   return true;
 }
 bool ReadFloats(uint8_t* base, uint32_t address, float* out, size_t count) {
-  if (!CopyFromGuest(out, base + address, 4 * count)) return false;
+  if (!CopyFromGuest(GuestMemory(), address, out, 4 * count)) return false;
   for (size_t i = 0; i < count; ++i) {
     uint32_t v;
     std::memcpy(&v, out + i, 4);
-    v = _byteswap_ulong(v);
+    v = std::byteswap(v);
     std::memcpy(out + i, &v, 4);
   }
   return true;
@@ -234,7 +235,7 @@ bool TurnedEnabled() {
 bool f7_down = false;
 void SwitchTurned() {
   if (!Diagnostics()) return;
-  const bool down = (GetAsyncKeyState(VK_F7) & 0x8000) != 0;
+  const bool down = platform::KeyDown(platform::Key::kF7);
   if (down && !f7_down) {
     turned_enabled = TurnedEnabled() ? 0 : 1;
     host::Record("native-d3d-interpolation-turned-switch", fmt::format("\"on\":{}", turned_enabled == 1));
@@ -559,6 +560,16 @@ bool Enabled() {
 }
 
 const Applied& LastApplied() { return applied; }
+void ResetHistory(uint8_t* base) {
+  Restore(base);
+  tracks.clear(); bone_tracks.clear(); cameras.clear();
+  mounted.clear(); candidates.clear(); object_written.clear(); camera_entries_done.clear();
+  applied = {};
+  enabled = bones_enabled = -1;
+  watching.store(false);
+  std::lock_guard lock(freed_mutex);
+  freed.clear(); freed_overflow = false;
+}
 
 uint32_t PoseObject() { return pose_object; }
 

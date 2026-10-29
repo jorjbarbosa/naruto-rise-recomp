@@ -7,11 +7,12 @@
 #include "gpu/backend/dispatcher.h"
 #include "gpu/host/services.h"
 #include "gpu/settings.h"
+#include "gpu/common/platform.h"
+#include <windows.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <dxgiformat.h>
 #include <array>
 #include <chrono>
 #include <atomic>
@@ -27,9 +28,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <windows.h>
-#include <wrl/client.h>
-#include <dxcapi.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <rex/cvar.h>
@@ -47,6 +45,37 @@
 using namespace gpu;
 
 namespace gpu {
+namespace {
+// The window helpers of the proof (Windows only, like the proof).
+HWND DisplayHwnd() { return static_cast<HWND>(DisplayNativeWindow().window); }
+std::pair<uint32_t, uint32_t> ClientSize(HWND hwnd) {
+  RECT r{};
+  if (!hwnd || !GetClientRect(hwnd, &r)) return {0, 0};
+  return {uint32_t(r.right - r.left), uint32_t(r.bottom - r.top)};
+}
+// Waits (bounded) until the client area has this size.
+bool WaitClient(HWND hwnd, uint32_t w, uint32_t h, int ms) {
+  for (int i = 0; i < ms / 10; ++i) {
+    if (ClientSize(hwnd) == std::pair<uint32_t, uint32_t>{w, h}) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return ClientSize(hwnd) == std::pair<uint32_t, uint32_t>{w, h};
+}
+// Resizes the window on the UI thread so its client area has w x h pixels.
+bool SetClientSize(HWND hwnd, uint32_t w, uint32_t h) {
+  bool set = false;
+  const bool called = InUiThread([&] {
+    RECT window{}, client{};
+    if (!GetWindowRect(hwnd, &window) || !GetClientRect(hwnd, &client)) return;
+    const LONG fw = (window.right - window.left) - (client.right - client.left);
+    const LONG fh = (window.bottom - window.top) - (client.bottom - client.top);
+    set = SetWindowPos(hwnd, nullptr, 0, 0, LONG(w) + fw, LONG(h) + fh,
+                       SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE) != 0;
+  });
+  return called && set && WaitClient(hwnd, w, h, 2000);
+}
+std::string WindowFacts(HWND hwnd) { return platform::WindowFacts(platform::WindowHandles(hwnd)); }
+}  // namespace
 uint64_t ProofPercentile(std::vector<uint64_t> values, size_t percent) {
   if (values.empty()) return 0;
   std::sort(values.begin(), values.end());
@@ -127,7 +156,7 @@ bool PresentProofRequested() {
     return engine.WaitIdle(out);
   }, evidence);
   record("pattern", ok, fmt::format("\"clears\":1024,\"engine\":{}", evidence));
-  ok = run([&](Engine& engine, std::string& out) { return engine.AttachWindow(hwnd, out); }, evidence);
+  ok = run([&](Engine& engine, std::string& out) { return engine.AttachWindow(platform::WindowHandles(hwnd), out); }, evidence);
   record("attach", ok, fmt::format("\"engine\":{}", evidence));
   if (!all) StopInOrder(ctx, "native-present-proof-setup-failed", 88);
   // One case: stage, present once (follows the window size), then present and read back.

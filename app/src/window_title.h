@@ -8,6 +8,8 @@
 #include <string>
 
 namespace narutorise {
+// The version of this copy ("0.3.0-beta"), or empty when it is not known.
+std::string Version();
 // "Naruto: Rise of a Ninja - <version>", or the name alone when the version is not known.
 std::string WindowTitle();
 }  // namespace narutorise

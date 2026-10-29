@@ -1,38 +1,42 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-    Auxilia na instalação de DLCs e Title Updates para Naruto: Rise of a Ninja (PC port).
+    Install DLCs and Title Updates for Naruto: Rise of a Ninja (PC port).
 
 .DESCRIPTION
-    Este script organiza arquivos de DLC e Title Updates nas pastas esperadas
-    pelo ReXGlue SDK / port de PC. Ele NÃO extrai pacotes STFS sozinho; para
-    arquivos .live/.con/.pirs, use uma ferramenta externa (wxPirs, Xenia, etc.)
-    e depois utilize este script para copiar os arquivos soltos.
+    Organize DLC and Title Update files in the folders expected by the ReXGlue
+    SDK / PC port. For STFS packages (.live/.con/.pirs), extract the files with
+    an external tool (wxPirs, Xenia, etc.), then use this script to copy the
+    extracted files.
 
 .PARAMETER GameRoot
-    Pasta dos dados do jogo (onde fica default.xex). Usada para descobrir
-    user_data_root quando o launcher/TOML usam o padrão.
+    Game data folder containing default.xex, used for Title Updates.
+
+.PARAMETER UserDataRoot
+    Exact guest root used by the game: the user folder inside the active data
+    folder shown in Settings > Advanced, or your custom user_data_root. DLC operations require
+    an explicit value or REX_USER_DATA_ROOT; Documents is never assumed.
 
 .PARAMETER PrepareDlcFolders
-    Cria a hierarquia de pastas para DLCs em user_data_root.
+    Create the DLC folder hierarchy in user_data_root.
 
 .PARAMETER Scan
-    Varre uma pasta em busca de pacotes STFS (.live/.con/.pirs) e lista o que
-    encontrou, alertando que precisam ser extraídos externamente.
+    Scan a folder for STFS packages (.live/.con/.pirs) and list the packages
+    that need to be extracted with an external tool.
 
 .PARAMETER InstallLoose
-    Copia arquivos soltos (já extraídos) de uma pasta para a estrutura de DLC.
+    Copy extracted files from a folder into the DLC tree.
 
 .PARAMETER TitleUpdate
-    Copia o conteúdo de uma pasta para title_update/ ao lado de GameRoot.
+    Copy a folder's contents into title_update/ beside GameRoot.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tools/install-content.ps1 `
-        -GameRoot "C:\Games\Naruto - Rise of a Ninja\game" -PrepareDlcFolders
+        -UserDataRoot "C:\Games\Naruto - Rise of a Ninja\data\user" -PrepareDlcFolders
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tools/install-content.ps1 `
-        -GameRoot "C:\Games\Naruto - Rise of a Ninja\game" `
+        -UserDataRoot "C:\Games\Naruto - Rise of a Ninja\data\user" `
         -InstallLoose "C:\Users\You\Downloads\NarutoRiseShikamaru"
 
 .EXAMPLE
@@ -44,6 +48,9 @@
 param(
     [Parameter()]
     [string]$GameRoot = "",
+
+    [Parameter()]
+    [string]$UserDataRoot = "",
 
     [Parameter()]
     [switch]$PrepareDlcFolders,
@@ -67,7 +74,7 @@ $CommonXuid = "0000000000000000"
 function Resolve-GameRoot {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) {
-        # Tenta descobrir a partir do diretório atual ou de game_root/ ao lado.
+        # Check the repository and current working directory for game folders.
         $candidates = @(
             (Join-Path $PSScriptRoot "..\game_root"),
             (Join-Path $PSScriptRoot "..\game"),
@@ -80,22 +87,24 @@ function Resolve-GameRoot {
                 return $full.Path
             }
         }
-        throw "Não foi possível encontrar a pasta do jogo. Especifique -GameRoot."
+        throw "Could not find the game folder. Specify -GameRoot."
     }
     $full = Resolve-Path $Path -ErrorAction SilentlyContinue
-    if (-not $full) { throw "GameRoot não existe: $Path" }
+    if (-not $full) { throw "GameRoot does not exist: $Path" }
     if (-not (Test-Path (Join-Path $full.Path "default.xex"))) {
-        Write-Warning "GameRoot não contém default.xex. Continuando assim mesmo..."
+        Write-Warning "GameRoot does not contain default.xex. Continuing anyway..."
     }
     return $full.Path
 }
 
 function Get-UserDataRoot {
     param([string]$GameRoot)
-    # ReXApp usa GetUserFolder() / "narutorise". No Windows, GetUserFolder()
-    # tipicamente retorna Documents.
-    $documents = [Environment]::GetFolderPath("MyDocuments")
-    return Join-Path $documents "narutorise"
+    $requestedRoot = $script:UserDataRoot
+    if ([string]::IsNullOrWhiteSpace($requestedRoot)) { $requestedRoot = $env:REX_USER_DATA_ROOT }
+    if ([string]::IsNullOrWhiteSpace($requestedRoot)) {
+        throw "Specify -UserDataRoot with the active guest root. Documents is no longer assumed."
+    }
+    return [IO.Path]::GetFullPath($requestedRoot)
 }
 
 function Get-DlcRoot {
@@ -111,7 +120,7 @@ function Test-StfsMagic {
         $fs.Read($magic, 0, 4) | Out-Null
         $fs.Close()
         $s = [BitConverter]::ToString($magic) -replace '-', ''
-        # CON, LIVE, PIRS em big-endian
+        # CON, LIVE, PIRS in big-endian order
         return $s -in @("434F4E20", "4C495645", "50495253")
     } catch {
         return $false
@@ -123,13 +132,13 @@ function Invoke-PrepareDlcFolders {
     $userRoot = Get-UserDataRoot -GameRoot $GameRoot
     $dlcRoot = Get-DlcRoot -UserDataRoot $userRoot
     New-Item -ItemType Directory -Path $dlcRoot -Force | Out-Null
-    Write-Host "Estrutura de DLC criada em: $dlcRoot" -ForegroundColor Green
-    Write-Host "Coloque aqui as pastas dos DLCs já extraídos (uma pasta por DLC)." -ForegroundColor Cyan
+    Write-Host "DLC folder tree created at: $dlcRoot" -ForegroundColor Green
+    Write-Host "Place extracted DLC folders here (one folder per DLC)." -ForegroundColor Cyan
 }
 
 function Invoke-Scan {
     param([string]$Folder)
-    if (-not (Test-Path $Folder)) { throw "Pasta de scan não existe: $Folder" }
+    if (-not (Test-Path $Folder)) { throw "Scan folder does not exist: $Folder" }
     $files = Get-ChildItem -Path $Folder -Recurse -File
     $found = @()
     foreach ($f in $files) {
@@ -138,15 +147,14 @@ function Invoke-Scan {
             $found += $f.FullName
         }
     }
-    $defaultDlcRoot = Get-DlcRoot -UserDataRoot (Join-Path ([Environment]::GetFolderPath("MyDocuments")) "narutorise")
     if ($found.Count -eq 0) {
-        Write-Host "Nenhum pacote STFS encontrado em $Folder." -ForegroundColor Yellow
+        Write-Host "No STFS packages found in $Folder." -ForegroundColor Yellow
     } else {
-        Write-Host "Pacotes STFS encontrados (precisam ser extraídos externamente):" -ForegroundColor Cyan
+        Write-Host "STFS packages found (extract with an external tool):" -ForegroundColor Cyan
         $found | ForEach-Object { Write-Host "  $_" }
         Write-Host ""
-        Write-Host "Dica: use wxPirs, Xenia ou outra ferramenta para extrair esses arquivos." -ForegroundColor Cyan
-        Write-Host "Depois, coloque as pastas extraídas em: $defaultDlcRoot" -ForegroundColor Cyan
+        Write-Host "Use wxPirs, Xenia or another tool to extract these files." -ForegroundColor Cyan
+        Write-Host "Use Add DLC in the menu, or -InstallLoose with -UserDataRoot set to the active guest root." -ForegroundColor Cyan
     }
 }
 
@@ -155,7 +163,7 @@ function Invoke-InstallLoose {
         [string]$GameRoot,
         [string]$Source
     )
-    if (-not (Test-Path $Source)) { throw "Pasta de origem não existe: $Source" }
+    if (-not (Test-Path $Source)) { throw "Source folder does not exist: $Source" }
     $userRoot = Get-UserDataRoot -GameRoot $GameRoot
     $dlcRoot = Get-DlcRoot -UserDataRoot $userRoot
     New-Item -ItemType Directory -Path $dlcRoot -Force | Out-Null
@@ -163,9 +171,9 @@ function Invoke-InstallLoose {
     $sourceName = (Get-Item $Source).Name
     $dest = Join-Path $dlcRoot $sourceName
 
-    Write-Host "Copiando '$Source' para '$dest' ..." -ForegroundColor Cyan
+    Write-Host "Copying '$Source' to '$dest' ..." -ForegroundColor Cyan
     if (Test-Path $dest) {
-        Write-Warning "Destino já existe. Mesclando..."
+        Write-Warning "Destination already exists. Merging..."
     } else {
         New-Item -ItemType Directory -Path $dest -Force | Out-Null
     }
@@ -181,7 +189,7 @@ function Invoke-InstallLoose {
         }
     }
 
-    Write-Host "DLC instalado em: $dest" -ForegroundColor Green
+    Write-Host "DLC installed at: $dest" -ForegroundColor Green
 }
 
 function Invoke-TitleUpdate {
@@ -189,11 +197,11 @@ function Invoke-TitleUpdate {
         [string]$GameRoot,
         [string]$Source
     )
-    if (-not (Test-Path $Source)) { throw "Pasta de origem não existe: $Source" }
+    if (-not (Test-Path $Source)) { throw "Source folder does not exist: $Source" }
     $tuDest = Join-Path (Split-Path -Parent $GameRoot) "title_update"
     New-Item -ItemType Directory -Path $tuDest -Force | Out-Null
 
-    Write-Host "Copiando Title Update de '$Source' para '$tuDest' ..." -ForegroundColor Cyan
+    Write-Host "Copying Title Update from '$Source' to '$tuDest' ..." -ForegroundColor Cyan
     Get-ChildItem -Path $Source -Recurse | ForEach-Object {
         $target = $_.FullName.Replace($Source, $tuDest)
         if ($_.PSIsContainer) {
@@ -205,8 +213,8 @@ function Invoke-TitleUpdate {
         }
     }
 
-    Write-Host "Title Update instalado em: $tuDest" -ForegroundColor Green
-    Write-Host "O port detectará automaticamente 'title_update/' ao lado de 'game/' na próxima execução." -ForegroundColor Cyan
+    Write-Host "Title Update installed at: $tuDest" -ForegroundColor Green
+    Write-Host "The port will detect 'title_update/' beside 'game/' on the next launch." -ForegroundColor Cyan
 }
 
 # --- main ---
@@ -217,10 +225,9 @@ if (-not $PrepareDlcFolders -and [string]::IsNullOrWhiteSpace($Scan) -and
 }
 
 $resolvedGameRoot = $null
-if ($PrepareDlcFolders -or -not [string]::IsNullOrWhiteSpace($InstallLoose) -or
-    -not [string]::IsNullOrWhiteSpace($TitleUpdate)) {
+if (-not [string]::IsNullOrWhiteSpace($TitleUpdate)) {
     $resolvedGameRoot = Resolve-GameRoot -Path $GameRoot
-    Write-Host "Dados do jogo: $resolvedGameRoot" -ForegroundColor Cyan
+    Write-Host "Game data: $resolvedGameRoot" -ForegroundColor Cyan
 }
 
 if ($PrepareDlcFolders) {

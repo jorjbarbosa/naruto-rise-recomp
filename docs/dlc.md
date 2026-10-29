@@ -4,15 +4,17 @@
 
 The project implements installation and enumeration of additional content for Title ID **`555307E5`**, including STFS packages and already extracted folders. Content files must be supplied by the user.
 
-## 1. Install through the launcher
+## 1. Install through the game menu
 
-1. Close the game and open `narutorise_launcher.exe`.
-2. Open the **DLC** tab and select the folder containing your packages or extracted content.
-3. Launch the game to complete installation.
+1. Open **DLC** on the setup screen, or press **F1** / **Back+Start** during play and select **DLC**.
+2. Select the folder containing your packages or extracted content.
+3. For staged STFS packages, start or reopen the game to complete installation.
 
-The launcher recursively searches for packages with `CON `, `LIVE`, or `PIRS` signatures, even without a recognized extension. When packages are found, it copies them to `dlc/` next to `narutorise.exe`. The runtime installs them on the next launch and writes content metadata. If no STFS packages are found, it treats the selection as a folder of already extracted files.
+The DLC page recursively searches for packages with `CON `, `LIVE`, or `PIRS` signatures, even without a recognized extension. When packages are found, it copies them to `dlc/` in the active data folder (by default `<exe>/data/dlc/` on Windows). The runtime installs them on the next launch and writes content metadata. If no STFS packages are found, it treats the selection as a folder of already extracted files.
 
-The base game can run without DLC. Each **character DLC** requires its matching recompiled engine module; copying content packages alone does not create these DLLs.
+Staged packages show the name from their metadata, with the filename as a fallback when no name is available. Once the extracted content and runtime header exist in the user data folder, the page lists the DLC once as installed, even while the source package remains in `dlc/`.
+
+The page uses the effective user data folder, including `user_data_root` and CLI/environment overrides. The base game can run without DLC. Each **character DLC** requires its matching recompiled engine module; copying content packages alone does not create these DLLs.
 
 | Character DLC | Guest engine | Recompiled module | XEX entry point |
 | --- | --- | --- | --- |
@@ -30,24 +32,28 @@ Japanese Voices does not contain an engine DLL. When multiple character packs ar
 ├── narutorise_ai2c1.dll
 ├── narutorise_ai2c2.dll
 ├── narutorise_ai2c3.dll
-└── dlc/
-    └── <user-supplied STFS packages>
+└── defaults/narutorise.toml
 
-<Documents>/narutorise/
-└── 0000000000000000/
-    └── 555307E5/
-        ├── 00000002/
-        │   └── <contents of each package>/
-        └── Headers/
-            └── 00000002/
-                └── <.header metadata>
+<active data folder>/       # Windows default: <exe>/data/
+├── dlc/
+│   └── <user-supplied STFS packages>
+└── user/                   # the guest root (user_data_root)
+    └── 0000000000000000/
+        └── 555307E5/
+            ├── 00000002/
+            │   └── <contents of each package>/
+            └── Headers/
+                └── 00000002/
+                    └── <.header metadata>
 ```
 
-You can also place packages directly in `dlc/` and launch the game. `dlc_source_path` selects another source location; an empty string disables scanning that source, but does not remove installed content or disable its repair step.
+You can also place packages directly in `<active data folder>/dlc/` and launch the game. The default `dlc_source_path = "dlc"` follows the active data folder. A custom value preserves its historical base and is shared by the menu and runtime; an empty string disables scanning that source, but does not remove installed content or disable its repair step.
+
+Legacy staging is copied without altering its source. Different files with the same destination name are preserved and reported as conflicts; modification time never decides which content wins. See [Data folder and recovery](data-folder.md).
 
 Already installed packages are recognized by their content and corresponding header. The runtime also repairs content from earlier versions, long folder names, and missing headers. Check the log to confirm the result rather than treating the existence of a folder alone as proof of successful installation.
 
-`tools/install-content.ps1` helps copy **already extracted files** and Title Updates; it does not extract STFS packages. The launcher + runtime workflow described above performs that extraction.
+`tools/install-content.ps1` helps copy **already extracted files** and Title Updates; pass `-UserDataRoot` with the exact active guest root for DLC operations (or explicitly set `REX_USER_DATA_ROOT`); the tool does not guess Documents or a persisted selection. it does not extract STFS packages. The menu + runtime workflow described above performs that extraction.
 
 ## 3. Build with the DLC module
 
@@ -57,7 +63,7 @@ The base game uses the guest module `ai2c.dll`, recompiled as `narutorise_ai2c.d
 
 ### 3.2. Prepare the file
 
-Extract the three engine DLLs from your DLC packages using an STFS-compatible tool. If you have already imported the DLCs, they may also be present in the installed content folder in Documents.
+Extract the three engine DLLs from your DLC packages using an STFS-compatible tool. If you have already imported the DLCs, they may also be present in the effective guest content folder shown by your storage configuration (or legacy Documents before import).
 
 Copy `AI2C@1.dll` to **`game_root/ai2c1.dll`**, `AI2C@2.dll` to **`game_root/ai2c2.dll`**, and `AI2C@3.dll` to **`game_root/ai2c3.dll`**. Local names without `@` produce valid CMake target names; the guest names retain `@1`, `@2`, and `@3`.
 
@@ -90,7 +96,7 @@ Confirm that `narutorise_ai2c1.dll`, `narutorise_ai2c2.dll`, and `narutorise_ai2
 
 The application configures an update folder mounted as `update:\`. It searches in this order:
 
-1. A valid `update_data_root` in the TOML file next to the executable;
+1. A valid `update_data_root` in the active TOML file;
 2. An explicit cvar/command-line path;
 3. `title_update/` inside or alongside the game data folder;
 4. `update/` in those same locations.
@@ -118,7 +124,7 @@ test from the repository root. Use a new output directory:
 python packaging/tests/test_dlc_runtime.py `
   --package app/out/build/win-amd64-release `
   --game "C:/path/to/extracted/game" `
-  --content "$env:USERPROFILE/Documents/narutorise" `
+  --content "C:/path/to/active/data-or-explicit-guest-root" `
   --output out/dlc-startup-test
 ```
 

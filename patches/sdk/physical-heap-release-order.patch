@@ -1,0 +1,39 @@
+diff --git a/src/system/xmemory.cpp b/src/system/xmemory.cpp
+--- a/src/system/xmemory.cpp
++++ b/src/system/xmemory.cpp
+@@ -2047,12 +2047,6 @@ bool PhysicalHeap::Decommit(uint32_t address, uint32_t size) {
+ bool PhysicalHeap::Release(uint32_t base_address, uint32_t* out_region_size) {
+   auto global_lock = global_critical_region_.Acquire();
+ 
+-  uint32_t parent_base_address = GetPhysicalAddress(base_address);
+-  if (!parent_heap_->Release(parent_base_address, out_region_size)) {
+-    REXSYS_ERROR("PhysicalHeap::Release failed due to parent heap failure");
+-    return false;
+-  }
+-
+   // Must invalidate here because the range being released may be reused in
+   // another mapping of physical memory - but callback flags are set in each
+   // heap separately (https://github.com/xenia-project/xenia/issues/1559 -
+@@ -2066,7 +2060,21 @@ bool PhysicalHeap::Release(uint32_t base_address, uint32_t* out_region_size) {
+     TriggerCallbacks(std::move(global_lock), base_address, region_size, true, true);
+   }
+ 
+-  return BaseHeap::Release(base_address, out_region_size);
++  // This heap's region goes before the parent's pages. Alloc holds no global
++  // critical region when the pages are not smaller than the host's, and
++  // TriggerCallbacks drops it: with the parent released first, another thread
++  // could allocate the same pages and pin its region here over this one, and
++  // this release would then clear the new region's entries. An address that is
++  // not a region start here leaves the parent untouched.
++  if (!BaseHeap::Release(base_address, out_region_size)) {
++    return false;
++  }
++  uint32_t parent_base_address = GetPhysicalAddress(base_address);
++  if (!parent_heap_->Release(parent_base_address, nullptr)) {
++    REXSYS_ERROR("PhysicalHeap::Release failed due to parent heap failure");
++    return false;
++  }
++  return true;
+ }
+ 
+ bool PhysicalHeap::Protect(uint32_t address, uint32_t size, uint32_t protect,

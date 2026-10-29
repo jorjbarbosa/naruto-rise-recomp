@@ -10,8 +10,10 @@
 // command list goes to the queue only through FailureChannel::Authorize.
 //
 // Draws and resolves are in draw.inc/resolve.inc; presentation and its WSI
-// retirement are in present.inc/output.inc. They share this batch lifetime.
+// retirement are in present.inc/output.inc, and the UI layer of the Present in
+// ui.inc. They share this batch lifetime.
 #include "gpu/backend/backend.h"
+#include "gpu/backend/reconfigure.h"
 #include "gpu/backend/lifecycle.h"
 #include "gpu/backend/pipeline_set.h"
 #include "gpu/backend/regions.h"
@@ -25,6 +27,10 @@
 #include "gpu/d3d/init/initializer_services.h"
 #include "gpu/diagnostics/profile.h"
 #include "gpu/shaders/package.h"
+#if defined(__linux__)
+// Wayland's WSI: not in Plume's headers, which build for Xlib on Linux.
+#include <vulkan/vulkan_wayland.h>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -191,10 +197,12 @@ struct VmaImage {
   VmaAllocator allocator = VK_NULL_HANDLE;
   VkImage image = VK_NULL_HANDLE;
   VmaAllocation allocation = VK_NULL_HANDLE;
+  ImageViews views;  // Its sampled views, gone before the image.
   VmaImage() = default;
   VmaImage(const VmaImage&) = delete;
   VmaImage& operator=(const VmaImage&) = delete;
   ~VmaImage() {
+    views.Clear();
     if (image) vmaDestroyImage(allocator, image, allocation);
   }
 };
@@ -269,14 +277,19 @@ class Backend final : public gpu::Backend {
   bool ClearSurfaces(const ClearRequest& request, uint64_t& fence, std::string& evidence) override;
   bool WaitIdle(std::string& evidence) override;
   bool WaitSubmitted(std::string& evidence) override;
-  bool CloseFrame(void* event, uint64_t& target, std::string& evidence) override;
-  bool AttachWindow(void*, std::string& evidence, const PresentMode&) override;
+  bool CloseFrame(FrameEvent event, uint64_t& target, std::string& evidence) override;
+  bool AttachWindow(const platform::NativeWindow& window, std::string& evidence, const PresentMode&) override;
   bool DetachWindow(std::string& evidence) override;
   bool SetGammaRamp(const std::array<uint16_t, 768>&, std::string& evidence) override;
   bool SetVsync(bool, std::string& evidence) override;
+  bool Reconfigure(const RenderMode&, const PresentMode&, std::string& evidence) override;
   bool StageFront(uint32_t, uint32_t& slot, std::string& evidence) override;
   bool Present(uint32_t, bool, std::vector<uint8_t>& bgra, uint32_t& width, uint32_t& height,
-               std::string& evidence) override;
+               std::string& evidence, bool& presented) override;
+  bool UploadUiTexture(uint32_t key, uint32_t width, uint32_t height, const std::vector<uint8_t>& rgba,
+                       std::string& evidence) override;
+  bool ReleaseUiTexture(uint32_t key, std::string& evidence) override;
+  bool SetUiFrame(UiFrame frame, std::string& evidence) override;
   std::string ResourceCounts() override;
   bool ReleaseTexture(uint32_t key, std::string& evidence) override;
   bool ReleaseSampled(uint32_t address, std::string& evidence) override;
@@ -331,9 +344,13 @@ struct Backend::State {
   bool operation_poisoned = false;
   bool unproved_execution = false;  // A submission's outcome is unknown.
   bool device_lost = false;         // A Vulkan call answered VK_ERROR_DEVICE_LOST.
-  DWORD owner_thread = 0;
+  uint32_t owner_thread = 0;
   uint64_t epoch = 0;
   RenderMode render_mode;
+  std::atomic<uint32_t> pipeline_msaa{0};
+  uint32_t PipelineSamples(uint32_t guest) const {
+    const uint32_t count = pipeline_msaa.load(); return guest > 1 && count ? count : guest;
+  }
   void Observe(VkResult result) { device_lost = device_lost || result == VK_ERROR_DEVICE_LOST; }
 
   // Submits a recorded command buffer (none: only the fence, the readiness) as
@@ -442,6 +459,7 @@ struct Backend::State {
 
   struct Surface {
     SurfaceDesc desc;
+    SurfaceDesc guest;
     std::unique_ptr<plume::RenderTexture> texture;
     std::unique_ptr<plume::RenderFramebuffer> framebuffer;  // The surface alone: its clears.
     SyncState state;
@@ -457,6 +475,7 @@ struct Backend::State {
   // Own textures of guest texture headers: the resolve destinations.
   struct Texture {
     std::unique_ptr<plume::RenderTexture> texture;
+    ImageViews views;  // Its sampled views; declared after the texture, destroyed first.
     uint32_t width = 0, height = 0;
     bool depth = false, content_defined = false;
     bool render_target = false;  // Created for the resolve passes (depth, one color sample).
@@ -507,26 +526,43 @@ struct Backend::State {
   std::array<VkImageView, 3> fallback_views{};
   bool fallback_initialized = false;
   std::unordered_map<uint64_t, PipelineSet::Pipeline> pipelines;
+  // The draw keys PrefetchPipelines computed for a batch, in its order, with
+  // the target each was computed for: the dispatcher draws that batch right
+  // after, and DrawIndexed takes the key of the next request from here. Any
+  // other request ends the batch.
+  struct PrefetchedKey {
+    uint64_t key = 0;  // 0: not computed.
+    uint32_t samples = 0;
+    bool depth = false, color = false;
+  };
+  const DrawRequest* prefetched_batch = nullptr;
+  std::vector<PrefetchedKey> prefetched_keys;
+  size_t prefetched_next = 0;
   std::map<uint64_t, PipelineDesc> pipeline_descs;
   std::map<uint64_t, std::string> pipeline_origins;
   std::map<uint64_t, uint32_t> pipeline_worlds, pipeline_create_us;
   uint64_t depth_resolves = 0;
-  HWND window = nullptr;
+  platform::NativeWindow window;  // Kind kNone while no window is attached.
+  bool Attached() const { return window.kind != platform::NativeWindow::Kind::kNone; }
   VkSurfaceKHR window_surface{};
   VkSwapchainKHR swapchain{};
   VkExtent2D swap_extent{};
   VkPresentModeKHR swap_mode = VK_PRESENT_MODE_FIFO_KHR;
   bool recreate_swapchain = false;
+  bool surface_lost = false;  // A present found the surface lost: recreated at the next frame.
   uint64_t swap_generation = 0, staged_frames = 0, presents = 0;
   PresentMode present_mode;
   VkSemaphore submit_signal{};
   VkFence acquire_fence{};
   bool acquire_pending = false;
+  // Each present signals the image's fence (swapchain_maintenance1). Without
+  // it the retirement waits for the queue instead (RetireSwapchain).
+  bool present_fences = false;
   struct BackImage {
     VkImage image{};
     SyncState state;
     VkSemaphore rendered{};
-    VkFence presented{};
+    VkFence presented{};  // Signaled by the image's present; with present_fences only.
     bool pending = false;
   };
   std::vector<BackImage> back_images;
@@ -547,7 +583,10 @@ struct Backend::State {
   std::map<std::string, VkPipeline> compute_pipelines;
   bool WaitPresent(VkFence fence, std::string& evidence);
   bool RetireSwapchain(std::string& evidence);
+  // No swapchain (and success) while the surface reports no extent: a window
+  // minimized meanwhile. Present skips such frames.
   bool CreateSwapchain(uint32_t width, uint32_t height, std::string& evidence);
+  bool RecreateSurface(uint32_t width, uint32_t height, std::string& evidence);
   bool EnsureOutput(std::string& evidence);
   bool OutputTarget(OutputImage& target, uint32_t width, uint32_t height, VkFormat format, bool storage, std::string& evidence);
   bool OutputPass(OutputImage& input, VkImage output, SyncState& output_state, VkFormat format,
@@ -556,6 +595,34 @@ struct Backend::State {
   bool OutputEffects(OutputImage& source, BackImage& back, uint32_t x, uint32_t y, uint32_t width, uint32_t height,
                      VkBuffer ramp, VkDeviceSize ramp_offset, std::string& evidence);
   void ReleaseOutput();
+  // The UI layer of the Present (ui.inc): RGBA8 textures by key, each with its
+  // view and descriptor set (key 0 the white texture), the frame of SetUiFrame
+  // and the pipeline of ui_pass.hlsl. A replaced or released texture waits for
+  // the sequence of its last use.
+  struct UiTexture {
+    std::shared_ptr<VmaImage> image;
+    std::shared_ptr<GraphicsResources> objects;  // Its view and the pool of its set.
+    VkDescriptorSet set{};
+    uint32_t width = 0, height = 0;
+    SyncState state;
+    uint64_t last_use = 0;
+  };
+  std::unordered_map<uint32_t, UiTexture> ui_textures;
+  std::vector<UiTexture> retired_ui_textures;
+  UiFrame ui_frame;
+  VkSampler ui_sampler{};
+  VkDescriptorSetLayout ui_set{};
+  VkPipelineLayout ui_layout{};
+  PipelineSet::Pipeline ui_pipeline;
+  // Draws whose texture was released after their frame was set are skipped.
+  uint64_t ui_texture_uploads = 0, ui_frames_drawn = 0, ui_draws_skipped = 0;
+  bool UiFrameVisible() const {
+    return ui_frame.width > 0 && ui_frame.height > 0 && !ui_frame.draws.empty() && !ui_frame.indices.empty();
+  }
+  bool EnsureUiLayer(std::string& evidence);
+  bool WriteUiTexture(uint32_t key, uint32_t width, uint32_t height, const uint8_t* rgba, std::string& evidence);
+  bool DrawUi(BackImage& back, std::string& evidence);
+  void ReleaseUi();
   std::map<std::string, PipelineSet::Pipeline> resolve_pipelines;
   std::array<uint8_t, 4096> vs_block{}, ps_block{};
   bool EnsureGraphics(std::string& evidence);
@@ -585,13 +652,14 @@ struct Backend::State {
 #include "gpu/backend/vulkan/resolve.inc"
 #include "gpu/backend/vulkan/present.inc"
 #include "gpu/backend/vulkan/output.inc"
+#include "gpu/backend/vulkan/ui.inc"
 
 #if defined(NATIVE_RENDERER_ENGINE_FAULT_TEST)
 class Backend::State::Hooks final : public CompletionTestHooks {
  public:
   explicit Hooks(State& state) : state_(state) {}
   bool HoldSubmissions(std::string& evidence) override {
-    if (!state_.ready || state_.owner_thread != GetCurrentThreadId() || !state_.timeline_semaphore) {
+    if (!state_.ready || state_.owner_thread != rex::thread::current_thread_system_id() || !state_.timeline_semaphore) {
       evidence = "{\"held\":false,\"reason\":\"native-vulkan-hold-unavailable\"}";
       return false;
     }
@@ -765,6 +833,7 @@ void Backend::State::Reclaim(uint64_t completed) {
     ++buffers_released;
     return true;
   });
+  std::erase_if(retired_ui_textures, [&](const UiTexture& t) { return t.last_use <= completed; });
 }
 
 bool Backend::State::OpenBatch(const char*& reason, VkResult& result) {
@@ -919,10 +988,10 @@ Backend::Backend(std::shared_ptr<FailureChannel> failures) : state_(std::make_un
   state_->failures = std::move(failures);
 }
 Backend::~Backend() {
-  std::string ignored;
+  std::string evidence;
   // A caller must abort if draining failed. Never implicitly destroy resources
   // referenced by work whose completion has not been proved.
-  if (!Shutdown(ignored)) std::_Exit(88);
+  if (!Shutdown(evidence)) ExitUnreleased("native-vulkan-backend-destructor", evidence);
 }
 
 bool Backend::Initialize(std::string& evidence, const RenderMode& mode) {
@@ -935,13 +1004,15 @@ bool Backend::Initialize(std::string& evidence, const RenderMode& mode) {
   if (const char* reason = RenderModeError(mode)) return fail(reason);
   state_->render = plume::CreateVulkanInterface();
   if (!state_->render) return fail("native-vulkan-loader-or-instance-unavailable");
-  if (!mode.device.empty()) {
+  // A saved card that is gone (swapped, renamed by a driver) falls back to the
+  // automatic choice, as in D3D12: the evidence and the host's log tell the
+  // requested name from the one in use. Two cards of one name take the first.
+  std::string device = mode.device;
+  if (!device.empty()) {
     const auto& names = state_->render->getDeviceNames();
-    const auto matches = std::count(names.begin(), names.end(), mode.device);
-    if (matches != 1) return fail(matches ? "native-vulkan-device-name-ambiguous" : "native-vulkan-device-not-found",
-                                 VK_ERROR_INITIALIZATION_FAILED, fmt::format(",\"requested\":\"{}\"", JsonText(mode.device)));
+    if (std::find(names.begin(), names.end(), device) == names.end()) device.clear();
   }
-  state_->device = state_->render->createDevice(mode.device);
+  state_->device = state_->render->createDevice(device);
   if (!state_->device) return fail("Plume-device");
   auto* vulkan = state_->vulkan = static_cast<plume::VulkanDevice*>(state_->device.get());
   const VkPhysicalDevice physical = vulkan->physicalDevice;
@@ -999,6 +1070,7 @@ bool Backend::Initialize(std::string& evidence, const RenderMode& mode) {
     return true;
   };
   state_->render_mode.msaa_samples = SupportedSamples(mode.msaa_samples, msaa_supported);
+  state_->pipeline_msaa.store(state_->render_mode.msaa_samples);
   VkPhysicalDeviceTimelineSemaphoreFeatures timeline{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
   VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &timeline};
   VkPhysicalDeviceDriverProperties driver{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
@@ -1022,7 +1094,7 @@ bool Backend::Initialize(std::string& evidence, const RenderMode& mode) {
   state_->pending_sequence = 0;
   state_->epoch = AllocateEngineEpoch();
   if (state_->epoch == 0) return fail("native-owner-epoch-exhausted");
-  state_->owner_thread = GetCurrentThreadId();
+  state_->owner_thread = rex::thread::current_thread_system_id();
   state_->ready = true;
   const auto& p = vulkan->physicalDeviceProperties;
   std::string requested;
@@ -1058,7 +1130,7 @@ bool Backend::Shutdown(std::string& evidence) {
     evidence = "{\"released\":false,\"reason\":\"frontend-session-still-retained\"}";
     return false;
   }
-  if (state_->ready && state_->owner_thread != GetCurrentThreadId()) {
+  if (state_->ready && state_->owner_thread != rex::thread::current_thread_system_id()) {
     evidence = "{\"released\":false,\"reason\":\"native-owner-thread\",\"guest_shutdown\":false}";
     return false;
   }
@@ -1103,6 +1175,7 @@ bool Backend::Shutdown(std::string& evidence) {
   state_->retired_sampled.clear();
   state_->retired_buffers.clear();
   state_->pipeline_set.Clear();
+  state_->ReleaseUi();
   state_->ReleaseGraphics();
   state_->surfaces.clear();
   state_->textures.clear();
@@ -1135,7 +1208,7 @@ bool Backend::Shutdown(std::string& evidence) {
 
 bool Backend::InitializeFrontend(uint64_t generation, std::string& evidence) {
   // No admitted operation, resource generation or GPU callback is discarded.
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned ||
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || state_->operation_poisoned ||
       state_->pending_sequence || state_->unproved_execution || !state_->frontend.Initialize(generation)) {
     evidence = "{\"reason\":\"frontend-not-cold-or-duplicate\"}";
     return false;
@@ -1144,7 +1217,7 @@ bool Backend::InitializeFrontend(uint64_t generation, std::string& evidence) {
 }
 
 bool Backend::VerifyFrontend(uint64_t generation, std::string& evidence) {
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || !state_->device) {
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || !state_->device) {
     evidence = "{\"reason\":\"frontend-generation-idle-or-device-unproved\",\"failed\":[\"owner\"]}";
     return false;
   }
@@ -1164,7 +1237,7 @@ bool Backend::VerifyFrontend(uint64_t generation, std::string& evidence) {
                            state_->device_lost);
     return false;
   }
-  evidence = FrontendReadyEvidence(generation, state_->epoch, GetCurrentThreadId());
+  evidence = FrontendReadyEvidence(generation, state_->epoch, rex::thread::current_thread_system_id());
   return true;
 }
 
@@ -1180,7 +1253,7 @@ bool Backend::CreateSurface(const SurfaceDesc& guest, std::string& evidence) {
     evidence = fmt::format("{{\"created\":false,\"reason\":\"{}\",\"key\":{}}}", reason, desc.key);
     return false;
   };
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned)
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || state_->operation_poisoned)
     return fail("native-surface-owner-or-state");
   if (!desc.key || !desc.width || !desc.height || desc.width > 8192 || desc.height > 8192)
     return fail("native-surface-description");
@@ -1193,6 +1266,7 @@ bool Backend::CreateSurface(const SurfaceDesc& guest, std::string& evidence) {
       desc.samples == 2 ? plume::RenderSampleCount::COUNT_2 : plume::RenderSampleCount::COUNT_1);
   State::Surface surface;
   surface.desc = desc;
+  surface.guest = guest;
   surface.texture = state_->device->createTexture(depth ?
       plume::RenderTextureDesc::DepthTarget(desc.width, desc.height, plume::RenderFormat::D32_FLOAT_S8_UINT, samples) :
       plume::RenderTextureDesc::ColorTarget(desc.width, desc.height, plume::RenderFormat::R8G8B8A8_UNORM, samples));
@@ -1209,8 +1283,69 @@ bool Backend::CreateSurface(const SurfaceDesc& guest, std::string& evidence) {
   return true;
 }
 
+bool Backend::Reconfigure(const RenderMode& requested, const PresentMode& present, std::string& evidence) {
+  RenderMode render = requested;
+  auto& s = *state_;
+  if (!s.ready || s.owner_thread != rex::thread::current_thread_system_id() || s.operation_poisoned || s.unproved_execution)
+    return GraphicsError(evidence, "native-reconfigure-owner-or-state");
+  if (!ValidLiveModes(s.render_mode, render, present)) return GraphicsError(evidence, "native-reconfigure-mode");
+  render.msaa_samples = SupportedSamples(requested.msaa_samples, [&](uint32_t samples) {
+    for (const auto& [format, usage] : {
+      std::pair{VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT},
+      std::pair{VK_FORMAT_D32_SFLOAT_S8_UINT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT}}) {
+    VkImageFormatProperties props{};
+    if (vkGetPhysicalDeviceImageFormatProperties(s.vulkan->physicalDevice, format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
+        usage | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 0, &props) != VK_SUCCESS ||
+        !(props.sampleCounts & samples)) return false;
+    }
+    return true;
+  });
+  const bool targets = render.scale.x != s.render_mode.scale.x || render.scale.y != s.render_mode.scale.y ||
+                       render.msaa_samples != s.render_mode.msaa_samples;
+  for (const auto& [key, surface] : s.surfaces) {
+    const auto desc = render.Host(surface.guest);
+    if (!desc.width || !desc.height || desc.width > 8192 || desc.height > 8192)
+      return GraphicsError(evidence, "native-reconfigure-surface-size");
+  }
+  if (!WaitIdle(evidence)) return false;
+  const auto old_render = s.render_mode;
+  const auto old_present = s.present_mode;
+  decltype(s.surfaces) old_surfaces;
+  if (targets) {
+    old_surfaces.swap(s.surfaces); s.render_mode = render;
+    for (const auto& [key, surface] : old_surfaces) if (!CreateSurface(surface.guest, evidence)) {
+      s.surfaces.clear(); s.surfaces.swap(old_surfaces); s.render_mode = old_render;
+      return false;
+    }
+  }
+  const bool swap = present.vsync != old_present.vsync || present.allow_tearing != old_present.allow_tearing ||
+                    present.buffers != old_present.buffers;
+  s.present_mode = present;
+  if (swap && s.window.kind != platform::NativeWindow::Kind::kNone) {
+    uint32_t width = 0, height = 0;
+    if (platform::ClientSize(s.window, width, height)) {
+      if (!s.CreateSwapchain(width, height, evidence)) {
+        const auto error = evidence;
+        s.present_mode = old_present;
+        std::string rollback;
+        if (!s.CreateSwapchain(width, height, rollback)) s.operation_poisoned = true;
+        if (targets) { s.surfaces.clear(); s.surfaces.swap(old_surfaces); s.render_mode = old_render; }
+        evidence = error; return false;
+      }
+    } else s.recreate_swapchain = true;
+  }
+  s.render_mode = render;
+  s.pipeline_msaa.store(render.msaa_samples);
+  evidence = fmt::format("{{\"applied\":true,\"targets_rebuilt\":{},\"surfaces\":{},\"resolved_textures_retained\":{},"
+      "\"scale\":[{},{}],\"msaa_samples\":{},\"vsync\":{},\"brightness\":{},\"buffers\":{},\"effective_frame_latency\":1,"
+      "\"effect\":{},\"post_effect\":{}}}", targets, s.surfaces.size(), s.textures.size(), render.scale.x,
+      render.scale.y, render.msaa_samples, present.vsync, present.brightness, present.buffers,
+      uint32_t(present.effect), uint32_t(present.post_effect));
+  return true;
+}
+
 bool Backend::EnsureSurface(const SurfaceDesc& desc, std::string& evidence) {
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId()) {
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id()) {
     evidence = "{\"ensured\":false,\"reason\":\"native-surface-owner\"}";
     return false;
   }
@@ -1232,7 +1367,7 @@ bool Backend::EnsureSurface(const SurfaceDesc& desc, std::string& evidence) {
 }
 
 bool Backend::DestroySurface(uint32_t key, std::string& evidence) {
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId()) {
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id()) {
     evidence = "{\"destroyed\":false,\"reason\":\"native-surface-owner\"}";
     return false;
   }
@@ -1262,7 +1397,7 @@ bool Backend::ClearSurfaces(const ClearRequest& request, uint64_t& fence, std::s
     evidence = fmt::format("{{\"cleared\":false,\"reason\":\"{}\",\"vk_result\":{}}}", reason, int32_t(result));
     return false;
   };
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned ||
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || state_->operation_poisoned ||
       state_->unproved_execution) return fail("native-clear-owner-or-state");
   std::vector<State::Surface*> colors;
   for (uint32_t key : request.color_keys) {
@@ -1327,7 +1462,7 @@ bool Backend::WaitIdle(std::string& evidence) { return Wait(true, evidence); }
 bool Backend::WaitSubmitted(std::string& evidence) { return Wait(false, evidence); }
 bool Backend::Wait(bool close, std::string& evidence) {
   profile::Timer profile(profile::kEngineWaitIdle);
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId()) {
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id()) {
     evidence = "{\"idle\":false,\"reason\":\"native-idle-owner\"}";
     return false;
   }
@@ -1355,13 +1490,13 @@ bool Backend::Wait(bool close, std::string& evidence) {
 // Frame lot of D3DDevice_Swap. Closes the open batch without waiting and has
 // the completion service set the host event when the last submission
 // completes, so every operation submitted so far is done when it fires.
-bool Backend::CloseFrame(void* event, uint64_t& target, std::string& evidence) {
+bool Backend::CloseFrame(FrameEvent event, uint64_t& target, std::string& evidence) {
   target = 0;
   auto fail = [&](const char* reason, VkResult result = VK_ERROR_UNKNOWN) {
     evidence = fmt::format("{{\"closed\":false,\"reason\":\"{}\",\"vk_result\":{}}}", reason, int32_t(result));
     return false;
   };
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || !event || state_->operation_poisoned ||
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || !event || state_->operation_poisoned ||
       state_->unproved_execution) return fail("native-frame-owner-or-state");
   const char* batch_reason = nullptr;
   VkResult result = VK_SUCCESS;
@@ -1369,7 +1504,7 @@ bool Backend::CloseFrame(void* event, uint64_t& target, std::string& evidence) {
   state_->pipeline_set.EndFrame();
   target = state_->next_sequence - 1;  // The last submission.
   const uint64_t completed = state_->completion->Completed();
-  if (!state_->completion->SetEventOnCompletion(target, static_cast<HANDLE>(event)))
+  if (!state_->completion->SetEventOnCompletion(target, std::move(event)))
     return fail("native-frame-event");
   evidence = fmt::format("{{\"closed\":true,\"target\":{},\"completed\":{},\"batches_closed\":{}}}", target,
                          completed, state_->batches_closed);
@@ -1384,7 +1519,9 @@ std::string Backend::ResourceCounts() {
                      "\"sampled_released\":{},\"sampled_retired\":{},\"views_allocated\":{},\"views_free\":{},"
                      "\"stage_slots\":{},\"swapchain\":{},\"buffers\":{},\"retired_buffers\":{},"
                      "\"buffers_created\":{},\"buffers_released\":{},\"buffers_retired\":{},\"buffer_uploads\":{},"
-                     "\"readbacks\":{},\"batches_in_flight\":{},\"depth_resolves\":{}}}",
+                     "\"readbacks\":{},\"batches_in_flight\":{},\"depth_resolves\":{},\"ui_textures\":{},"
+                     "\"retired_ui_textures\":{},\"ui_texture_uploads\":{},\"ui_frames_drawn\":{},"
+                     "\"ui_draws_skipped\":{}}}",
                      textures, state_->textures.size(), state_->sampled.size(), state_->surfaces.size(),
                      state_->retired_surfaces.size(), state_->retired_textures.size(), state_->textures_released,
                      state_->textures_retired, state_->retired_sampled.size(), state_->sampled_released,
@@ -1393,22 +1530,28 @@ std::string Backend::ResourceCounts() {
                      state_->swapchain != VK_NULL_HANDLE,
                      state_->buffers.size(), state_->retired_buffers.size(), state_->buffers_created,
                      state_->buffers_released, state_->buffers_retired, state_->buffer_uploads,
-                     state_->readbacks.size(), state_->batches_in_flight.size(), state_->depth_resolves);
+                     state_->readbacks.size(), state_->batches_in_flight.size(), state_->depth_resolves,
+                     state_->ui_textures.size() - state_->ui_textures.count(0), state_->retired_ui_textures.size(),
+                     state_->ui_texture_uploads, state_->ui_frames_drawn, state_->ui_draws_skipped);
 }
 
 std::string Backend::PipelineSummary() {
   const auto& c = state_->draw_counters;
-  return state_->pipeline_set.Summary() + fmt::format(
+  auto summary = state_->pipeline_set.Summary() + fmt::format(
       ",\"vulkan_draws\":{},\"draw_descriptor_pools\":{},\"draw_descriptor_groups\":{},\"draw_image_views\":{},"
       "\"draw_samplers\":{},\"draw_framebuffers\":{},\"draw_constant_bytes\":{},\"draw_render_passes\":{},"
       "\"draw_pipeline_binds\":{},\"draw_descriptor_binds\":{},\"draw_set_allocations\":{}",
       c.draws.load(), c.pools.load(), c.groups.load(), c.views.load(), c.samplers.load(),
       c.framebuffers.load(), c.constant_bytes.load(), c.passes.load(), c.pipeline_binds.load(), c.descriptor_binds.load(),
       c.set_allocations.load());
+#if defined(NATIVE_RENDERER_ENGINE_FAULT_TEST)
+  summary += fmt::format(",\"draw_descriptor_elements\":{}", c.descriptor_elements.load());
+#endif
+  return summary;
 }
 
 bool Backend::LiveResources(ResourceKeys& keys, std::string& evidence) {
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId()) {
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id()) {
     evidence = "{\"released\":false,\"reason\":\"native-release-remaining-owner\"}";
     return false;
   }
@@ -1424,7 +1567,7 @@ bool Backend::LiveResources(ResourceKeys& keys, std::string& evidence) {
 }
 
 bool Backend::ReleaseTexture(uint32_t key, std::string& evidence) {
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId()) {
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id()) {
     evidence = "{\"released\":false,\"reason\":\"native-texture-release-owner\"}";
     return false;
   }
@@ -1454,7 +1597,7 @@ bool Backend::ReleaseTexture(uint32_t key, std::string& evidence) {
 }
 
 bool Backend::ReleaseSampled(uint32_t address, std::string& evidence) {
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId()) {
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id()) {
     evidence = "{\"released\":false,\"reason\":\"native-sampled-release-owner\"}";
     return false;
   }
@@ -1488,7 +1631,7 @@ bool Backend::ResolveSurface(const ResolveRequest& request, uint64_t& fence, std
     evidence = fmt::format("{{\"resolved\":false,\"reason\":\"{}\",\"vk_result\":{}}}", reason, int32_t(result));
     return false;
   };
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned ||
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || state_->operation_poisoned ||
       state_->unproved_execution) return fail("native-resolve-owner-or-state");
   auto source_it = state_->surfaces.find(request.source_key);
   if (source_it == state_->surfaces.end()) return fail("native-resolve-source-unknown");
@@ -1504,11 +1647,18 @@ bool Backend::ResolveSurface(const ResolveRequest& request, uint64_t& fence, std
   auto& dest = state_->textures[request.dest_key];
   if (!dest.texture || dest.width != host.dest_width || dest.height != host.dest_height || dest.depth != depth ||
       (sampled && !dest.render_target)) {
-    // Recreated once no submitted or recorded work can still use it.
-    if (dest.texture && state_->InFlight(dest.last_use)) return fail("native-resolve-destination-in-flight");
-    const uint32_t view = dest.view;  // The draw rewrites the descriptor for the new image.
-    dest = {};
-    dest.view = view;
+    // Submitted or recorded work may still use the old image: it waits for
+    // that sequence (Reclaim, after the batch's views), and the draw takes
+    // views of the new one. Otherwise the draw rewrites the descriptor.
+    if (dest.texture && state_->InFlight(dest.last_use)) {
+      state_->retired_textures.push_back(std::move(dest));
+      ++state_->textures_retired;
+      dest = {};
+    } else {
+      const uint32_t view = dest.view;
+      dest = {};
+      dest.view = view;
+    }
     // A depth destination, or the one of a color sample, is the render target of its pass.
     dest.texture = state_->device->createTexture(plume::RenderTextureDesc::Texture2D(
         host.dest_width, host.dest_height, 1,
@@ -1589,7 +1739,7 @@ bool Backend::UploadSampled(const DrawTexture& t, std::string& evidence) {
                            int32_t(result));
     return false;
   };
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned ||
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || state_->operation_poisoned ||
       state_->unproved_execution) return fail("native-upload-owner-or-state");
   const uint32_t subresources = t.levels * (t.cube ? 6 : 1);
   if (t.resolved || !t.width || !t.height || !t.levels || t.levels > 13 || t.width > 8192 || t.height > 8192 ||
@@ -1682,7 +1832,7 @@ bool Backend::UploadBuffer(const BufferUpload& u, std::string& evidence) {
                            int32_t(result));
     return false;
   };
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned ||
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || state_->operation_poisoned ||
       state_->unproved_execution) return fail("native-upload-owner-or-state");
   if (!u.key || !u.bytes || u.ranges.empty() || u.bytes > (uint32_t(64) << 20))
     return fail("native-upload-buffer-description");
@@ -1761,7 +1911,7 @@ bool Backend::UploadBuffer(const BufferUpload& u, std::string& evidence) {
 }
 
 bool Backend::ReleaseBuffer(uint64_t key, std::string& evidence) {
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId()) {
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id()) {
     evidence = "{\"released\":false,\"reason\":\"native-buffer-release-owner\"}";
     return false;
   }
@@ -1794,7 +1944,7 @@ bool Backend::ReadTexture(uint32_t key, std::vector<uint8_t>& rgba, uint32_t& wi
                            int32_t(result));
     return false;
   };
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned ||
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || state_->operation_poisoned ||
       state_->unproved_execution) return fail("native-read-owner-or-state");
   const char* reason = nullptr;
   VkResult result = VK_SUCCESS;
@@ -1832,7 +1982,7 @@ bool Backend::ReadSampled(uint32_t key, uint32_t level, std::vector<uint8_t>& ro
                            key, level, int32_t(result));
     return false;
   };
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned ||
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || state_->operation_poisoned ||
       state_->unproved_execution) return fail("native-read-owner-or-state");
   const char* reason = nullptr;
   VkResult result = VK_SUCCESS;
@@ -1871,7 +2021,7 @@ bool Backend::ReadSurface(uint32_t key, uint64_t after_fence, std::vector<uint8_
                            reason, key, after_fence, int32_t(result));
     return false;
   };
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned ||
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || state_->operation_poisoned ||
       state_->unproved_execution) return fail("native-read-surface-owner-or-state");
   const char* reason = nullptr;
   VkResult result = VK_SUCCESS;
@@ -1916,7 +2066,7 @@ uint32_t Backend::AllocateView() {
 
 #if defined(NATIVE_RENDERER_ENGINE_FAULT_TEST)
 bool Backend::SeedSampledForTest(uint32_t address, bool in_flight, std::string& evidence) {
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->sampled.count(address)) return false;
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id() || state_->sampled.count(address)) return false;
   VkResult result = VK_SUCCESS;
   const char* reason = nullptr;
   if (in_flight && !state_->OpenBatch(reason, result)) return false;
@@ -1948,7 +2098,7 @@ bool Backend::ReadBufferForTest(uint64_t key, std::vector<uint8_t>& bytes, std::
                            int32_t(result));
     return false;
   };
-  if (!state_->ready || state_->owner_thread != GetCurrentThreadId()) return fail("native-read-owner-or-state");
+  if (!state_->ready || state_->owner_thread != rex::thread::current_thread_system_id()) return fail("native-read-owner-or-state");
   const char* reason = nullptr;
   VkResult result = VK_SUCCESS;
   if (!state_->CloseBatch(reason, result)) return fail(reason, result);

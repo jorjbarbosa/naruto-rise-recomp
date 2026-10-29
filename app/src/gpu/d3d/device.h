@@ -13,11 +13,11 @@
 #include "gpu/diagnostics/profile.h"
 #include "gpu/diagnostics/diagnostics.h"
 #include "gpu/common/guest_memory.h"
+#include <bit>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <dxgiformat.h>
 #include <array>
 #include <chrono>
 #include <atomic>
@@ -33,9 +33,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <windows.h>
-#include <wrl/client.h>
-#include <dxcapi.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <rex/cvar.h>
@@ -255,8 +252,9 @@ class DeviceOwner final {
   // only writes into the 820008F8 object when its first word is nonzero.
   bool Memory(PPCContext& ctx) {
     uint32_t root = 0, cell = 1;
-    // r3 is the zero argument here, not the device; r31 still holds it.
-    if (!Owns() || step_ != Step::Defaults || ctx.lr != 0x8213EE0C || ctx.r31.u32 != device_ ||
+    // r3 is the zero argument here, not the device: the step and LR pin the
+    // caller (its r31 is a local of 8213ECE8, not in the context).
+    if (!Owns() || step_ != Step::Defaults || ctx.lr != 0x8213EE0C ||
         ctx.r3.u32 || !(ctx.r4.u32 & 0x80000000u) ||
         !ReadVirtual(memory_, 0x820008F8, &root, 4)) return Reject("DDB0-context");
     root = Swap(root);
@@ -318,18 +316,24 @@ class DeviceOwner final {
     return Owns() && step_ == Step::Dirty && ctx.lr == 0x8213EEC8;
   }
 
-  // Row 20 and natural return to 820E6B00.
+  // Row 20 and natural return to 820E6B00. The elided __restgprlr_29 leaves
+  // ctx.lr at the last inner bl, so the return site is not checked by LR.
   bool Returned(PPCContext& ctx) {
     uint32_t hsio = 1, sentinel = 0;
-    if (!Owns() || step_ != Step::Dirty || ctx.r3.u32 != 1 || ctx.lr != 0x820E6BB0 ||
+    // No LR check: 8213ECE8 ends in a branch to __restgprlr, elided under
+    // non_volatile_as_local, so LR is left at its last inner call (the entry
+    // already checked 820E6BB0).
+    if (!Owns() || step_ != Step::Dirty || ctx.r3.u32 != 1 ||
         !GuestWord(0x82C0F19C, hsio) || hsio) return Reject("ECE8-return");
     for (uint32_t i = 0; i < 41; ++i)
       if (!Word(21680 + 4 * i, sentinel) || sentinel != UINT32_MAX) return Reject("ECE8-sentinels");
-    owner_ = ctx.r30.u32;
+    // 820E6B00 keeps the owner in r30 (a local there) and passed owner+324 as
+    // the entry r4 (its r28).
+    owner_ = params_ - 324;
     step_ = Step::Returned;
     host::Record("native-d3d-device-return", fmt::format(
-        "\"device\":{},\"status\":1,\"lr\":{},\"owner\":{},\"hsio_failed\":0,\"sentinels21680\":41",
-        device_, ctx.lr, owner_));
+        "\"device\":{},\"status\":1,\"return_to\":{},\"owner\":{},\"hsio_failed\":0,\"sentinels21680\":41",
+        device_, 0x820E6BB0u, owner_));
     return true;
   }
   // BEFORE 8212ADA0/LR 820E6D18: the wrapper published the device at owner+16.
@@ -408,6 +412,9 @@ class DeviceOwner final {
     return true;
   }
   uint32_t device() const { return device_; }
+  // The device while 8213ECE8 runs ahead of its arena: VdInitializeEngines
+  // (LR 8213ED3C) is called there with the device only in the caller's r31.
+  uint32_t EnteredDevice() const { return step_ == Step::Entered && Owns() ? device_ : 0; }
   uint32_t scratch() const { return scratch_; }
   // D3DDevice_BlockOnFence with the console protocol: fence f is
   // pending while (10908 - f) < (10908 - completed). For the open batch
@@ -423,8 +430,7 @@ class DeviceOwner final {
   // failure, stop); a wait without publication for kGateTimeout fails too.
   enum class FenceResult { Done, Skipped, Waited, Failed };
   template <typename Drain, typename Failed>
-  FenceResult BlockOnFence(uint32_t fence, Drain&& drain, Failed&& failed, std::string& fields,
-                           std::chrono::milliseconds preparation_budget = kGateTimeout) {
+  FenceResult BlockOnFence(uint32_t fence, Drain&& drain, Failed&& failed, std::string& fields) {
     std::unique_lock lock(fence_mutex_);
     uint32_t counter = 0, completed = 0, suspended = 0;
     if (!live_.load(std::memory_order_acquire) || !writeback_ || !Word(10908, counter) ||
@@ -458,7 +464,7 @@ class DeviceOwner final {
     }
     // This includes FIFO translation and CPU pipeline compilation before
     // submission. The backend separately bounds actual GPU completion.
-    auto deadline = std::chrono::steady_clock::now() + preparation_budget;
+    auto deadline = std::chrono::steady_clock::now() + kGateTimeout;
     for (;;) {
       if (!Word(10908, counter) || !GuestWord(writeback_, completed)) return FenceResult::Failed;
       if (drained) {
@@ -474,7 +480,7 @@ class DeviceOwner final {
       if (released_ || failed()) return FenceResult::Failed;
       const uint64_t published = frame_publications_;
       fence_cv_.wait_for(lock, std::chrono::milliseconds(5));
-      if (frame_publications_ != published) deadline = std::chrono::steady_clock::now() + preparation_budget;
+      if (frame_publications_ != published) deadline = std::chrono::steady_clock::now() + kGateTimeout;
       else if (std::chrono::steady_clock::now() > deadline) return FenceResult::Failed;
     }
     record("waited");
@@ -576,8 +582,11 @@ class DeviceOwner final {
   static constexpr uint32_t kWritebackBytes = 96;
   static constexpr uint32_t kScratchBytes = 32;
   static constexpr size_t kGatesMax = 8;  // Pending frame ends (the Swap keeps at most two).
-  static constexpr auto kGateTimeout = std::chrono::seconds(2);
-  static uint32_t Swap(uint32_t v) { return _byteswap_ulong(v); }
+  // One budget for both APIs: a cold driver cache can spend tens of seconds
+  // compiling the first frames' pipelines, slower on older compilers. A lost
+  // device fails its own wait in the backend, not this one.
+  static constexpr auto kGateTimeout = std::chrono::seconds(60);
+  static uint32_t Swap(uint32_t v) { return std::byteswap(v); }
   // Fence order relative to the counter 10908, as the console compares them.
   static bool NotAfter(uint32_t counter, uint32_t a, uint32_t b) { return counter - a >= counter - b; }
   static bool Done(uint32_t counter, uint32_t fence, uint32_t completed) { return NotAfter(counter, fence, completed); }
@@ -586,8 +595,10 @@ class DeviceOwner final {
     auto* ts = rex::runtime::ThreadState::Get();
     return memory_ && ts && ts->thread_id() == thread_ && ts->memory() == memory_;
   }
+  // Every checked call is "mr r3,r31; bl": LR and r3 pin the frame (r31 is a
+  // local of 8213ECE8, not in the context).
   bool At(const PPCContext& ctx, Step expected, uint32_t lr) const {
-    return Owns() && step_ == expected && ctx.lr == lr && ctx.r3.u32 == device_ && ctx.r31.u32 == device_;
+    return Owns() && step_ == expected && ctx.lr == lr && ctx.r3.u32 == device_;
   }
   bool GuestWord(uint32_t address, uint32_t& value) const {
     std::array<uint8_t, 4> bytes{};
@@ -604,7 +615,7 @@ class DeviceOwner final {
   // A plain store (CopyToGuest, guest_memory.h).
   bool WriteVerify(uint32_t address, const uint8_t* bytes, size_t size) {
     return address && uint64_t(address) + size <= UINT32_MAX &&
-        CopyToGuest(memory_->TranslateVirtual(address), bytes, size);
+        CopyToGuest(memory_, address, bytes, size);
   }
   // Same SDK lock as the original 82143590 store; no contention is admitted.
   bool OrFlagsUnderLock(PPCContext& ctx, uint8_t* base, uint8_t expected, uint8_t replacement) {

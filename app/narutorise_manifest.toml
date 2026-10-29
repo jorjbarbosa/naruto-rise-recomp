@@ -5,16 +5,37 @@ name = "narutorise"
 sdk_version = "0.10.0"
 game_root = "../game_root"
 
+# Every binary keeps CTR, XER, the reservation, the CR fields and the
+# non-volatile registers (r14-r31, f14-f31, v14-v31, v64-v127) as locals of each
+# recompiled function instead of context fields: they live within a function,
+# and a host hook reads only the argument registers, r1, r13 and LR of its guest
+# caller. The save/restore helpers are elided under non_volatile_as_local; a
+# function reached outside the ABI (SEH funclet, seeded branch target) gets the
+# caller's r14-r31 through the context (share_registers). The non-argument
+# registers (r0, r2, r11, r12, f0, v32-v63) stay in the context: an SEH funclet
+# receives its parent's frame in r12 and the codegen hands a funclet only
+# r14-r31. LR (the hooks identify callers by it; skip_lr stays off) and MSR
+# stay in the context.
 [entrypoint]
 file_path = "../game_root/default.xex"
 out_directory_path = "generated/default"
 includes = ["analysis-seeds.toml"]
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+cr_as_local = true
+non_volatile_as_local = true
 
 [[modules]]
 guest_path = "ai2c.dll"
 file_path = "../game_root/ai2c.dll"
 out_directory_path = "generated/ai2c"
 includes = ["ai2c-seeds.toml"]
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+cr_as_local = true
+non_volatile_as_local = true
 
 # Character DLCs supply alternative engine revisions. The game selects one
 # version per session; each needs its own recompiled module. Local input names
@@ -25,15 +46,30 @@ guest_path = "ai2c@1.dll"
 file_path = "../game_root/ai2c1.dll"
 out_directory_path = "generated/ai2c1"
 includes = ["ai2c1-seeds.toml"]
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+cr_as_local = true
+non_volatile_as_local = true
 
 [[modules]]
 guest_path = "ai2c@2.dll"
 file_path = "../game_root/ai2c2.dll"
 out_directory_path = "generated/ai2c2"
 includes = ["ai2c2-seeds.toml"]
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+cr_as_local = true
+non_volatile_as_local = true
 
 [[modules]]
 guest_path = "ai2c@3.dll"
 file_path = "../game_root/ai2c3.dll"
 out_directory_path = "generated/ai2c3"
 includes = ["ai2c3-seeds.toml"]
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+cr_as_local = true
+non_volatile_as_local = true

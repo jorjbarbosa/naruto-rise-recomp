@@ -1,0 +1,8 @@
+<rml><head><title>FPS</title><link type="text/rcss" href="theme.rcss"/>
+<style>
+body { position: absolute; left: 0; top: 13.333dp; width: 126dp; height: 29.333dp; }
+body.menu-open { top: 66.667dp; }
+#panel { position: absolute; display: block; width: 126dp; height: 29.333dp; box-sizing: border-box; background-color: #0e1220d9; border-left: 3.333dp #f2701f; }
+#rate { position: absolute; display: block; left: 8dp; top: 4.667dp; font-family: "Roboto Condensed"; font-size: 17.333dp; font-weight: bold; line-height: 20dp; color: #ffffff; }
+#time { position: absolute; display: block; left: 65.333dp; top: 6dp; font-family: "Roboto Condensed"; font-size: 14.667dp; font-weight: 500; line-height: 17.333dp; color: #c9cfdb; }
+</style></head><body><div id="panel"><div id="rate">-- FPS</div><div id="time">-- ms</div></div></body></rml>

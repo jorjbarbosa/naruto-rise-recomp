@@ -1,13 +1,14 @@
 // The pipeline set of the draw layer (pipeline_set.h).
 #include "gpu/backend/pipeline_set.h"
+#include "gpu/common/shader_activity.h"
 
-#include <windows.h>
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <string_view>
 #include <fmt/format.h>
 #include "gpu/common/title_loading.h"
+#include <rex/thread.h>
 #include "gpu/diagnostics/profile.h"
 
 namespace gpu {
@@ -34,7 +35,12 @@ PipelineSet::PipelineSet() : warm_sync_(warmSyncOption()) {}
 
 PipelineSet::~PipelineSet() { Stop(); }
 
-void PipelineSet::Configure(Creator creator) { creator_ = std::move(creator); }
+void PipelineSet::Configure(Creator creator) {
+  creator_ = [creator = std::move(creator)](const PipelineDesc& desc, Pipeline& pipeline) {
+    ShaderCompilation activity;
+    return creator(desc, pipeline);
+  };
+}
 
 NativeResult PipelineSet::Precompile(uint64_t key, const PipelineDesc& desc, bool& present) {
   present = false;
@@ -84,17 +90,29 @@ bool PipelineSet::Post(uint64_t key, PipelineDesc desc, bool only_if_absent, boo
   return true;
 }
 
-// Two thirds of the hardware threads, at least two, as the recomps.
-void PipelineSet::StartThreads(bool lowest) {
-  const unsigned threads = std::max(2u, std::thread::hardware_concurrency() * 2 / 3);
-  const int base = lowest ? THREAD_PRIORITY_LOWEST : THREAD_PRIORITY_NORMAL;
-  for (unsigned i = 0; i < threads; ++i) threads_.emplace_back([this, base] { Work(base); });
+std::unique_ptr<rex::thread::Thread> StartPipelineThread(std::function<void()> work) {
+  rex::thread::Thread::CreationParameters params;
+  params.stack_size = 4 * 1024 * 1024;
+  return rex::thread::Thread::Create(params, std::move(work));
+}
+void JoinPipelineThread(rex::thread::Thread& thread) { rex::thread::Wait(&thread, false); }
+unsigned PipelineThreadsPerPool() {
+  const unsigned hardware = std::max(1u, std::thread::hardware_concurrency());
+  return std::max(1u, (hardware > 2 ? hardware - 2 : 1) / 2);
 }
 
-void PipelineSet::Work(int base_priority) {
-  SetThreadDescription(GetCurrentThread(), L"Native Pipeline Async");
-  int priority = base_priority;
-  SetThreadPriority(GetCurrentThread(), priority);
+void PipelineSet::StartThreads(bool lowest) {
+  const unsigned threads = PipelineThreadsPerPool();
+  const auto base = lowest ? platform::ThreadPriority::kLowest : platform::ThreadPriority::kNormal;
+  // A refused thread is left out: a queued key no thread took is created by its take.
+  for (unsigned i = 0; i < threads; ++i)
+    if (auto thread = StartPipelineThread([this, base] { Work(base); })) threads_.push_back(std::move(thread));
+}
+
+void PipelineSet::Work(platform::ThreadPriority base_priority) {
+  rex::thread::set_current_thread_name("Native Pipeline Async");
+  auto priority = base_priority;
+  platform::SetThreadPriority(priority);
   for (;;) {
     std::pair<uint64_t, PipelineDesc> job;
     {
@@ -105,12 +123,12 @@ void PipelineSet::Work(int base_priority) {
       queue_.pop_front();
       entries_[job.first].queued = false;
     }
-    // The title's loading screen waits for what compiles: the highest
-    // priority then, the base otherwise (as the UnleashedRecomp's threads).
-    const int wanted = TitleLoading() ? THREAD_PRIORITY_HIGHEST : base_priority;
+    // The title's loading screen waits for what compiles: above normal then,
+    // the base otherwise. Never above the threads that publish the frames.
+    const auto wanted = TitleLoading() ? platform::ThreadPriority::kAboveNormal : base_priority;
     if (wanted != priority) {
       priority = wanted;
-      SetThreadPriority(GetCurrentThread(), priority);
+      platform::SetThreadPriority(priority);
     }
     const PipelineDesc& d = job.second;
     Pipeline created;
@@ -200,6 +218,7 @@ PipelineSet::Taken PipelineSet::TakeSkip(uint64_t key, uint64_t triple) {
 }
 
 const char* PipelineSet::NoteCreated(const Taken& take, uint64_t triple, uint32_t create_us) {
+  NoteShaderCompiled();
   {
     std::lock_guard lock(mutex_);
     warm_triples_.insert(triple);
@@ -239,7 +258,7 @@ void PipelineSet::Stop() {
   }
   wake_.notify_all();
   done_.notify_all();
-  for (auto& thread : threads_) thread.join();
+  for (auto& thread : threads_) JoinPipelineThread(*thread);
   threads_.clear();
 }
 

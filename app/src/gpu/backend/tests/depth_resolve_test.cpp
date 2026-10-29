@@ -31,7 +31,7 @@ constexpr uint32_t kSize = 64, kLeft = 16, kTop = 8, kRight = 48, kBottom = 40;
 int main(int argc, char** argv) {
   if (argc != 2 || std::filesystem::exists(argv[1])) return 2;
   // The debug layer is off by default (engine.cpp); the host test asks for it.
-  if (!std::getenv("REX_NATIVE_D3D12_DEBUG")) _putenv_s("REX_NATIVE_D3D12_DEBUG", "1");
+  if (!std::getenv("REX_NATIVE_D3D12_DEBUG")) SetTestEnvironment("REX_NATIVE_D3D12_DEBUG", "1");
   std::ofstream output(argv[1]);
   if (!output) return 3;
   bool passed = true;

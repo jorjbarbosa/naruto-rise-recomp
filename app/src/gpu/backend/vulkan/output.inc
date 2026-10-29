@@ -63,20 +63,27 @@ bool Backend::State::OutputEffects(OutputImage& source, BackImage& back, uint32_
 }
 
 bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, uint32_t& width,
-                       uint32_t& height, std::string& evidence) {
+                       uint32_t& height, std::string& evidence, bool& presented) {
+  presented = false;
   auto& s = *state_; bgra.clear(); width = height = 0;
-  if (!s.ready || s.owner_thread != GetCurrentThreadId() || !s.window || slot >= s.stages.size())
+  if (!s.ready || s.owner_thread != rex::thread::current_thread_system_id() || !s.Attached() || slot >= s.stages.size())
     return GraphicsError(evidence, "native-present-owner-or-slot");
   auto& stage = s.stages[slot];
   if (!stage.staged || stage.presented) return GraphicsError(evidence, "native-present-slot-not-staged");
-  RECT rect{};
-  if (!IsWindow(s.window) || !GetClientRect(s.window, &rect) || IsIconic(s.window) || rect.right <= 0 || rect.bottom <= 0) {
-    stage.presented = true; evidence = "{\"presented\":false,\"skipped\":\"window-empty\"}"; return true;
-  }
+  // A frame with nowhere to go is skipped, never the session.
+  auto skipped = [&](const char* why) {
+    stage.presented = true;
+    evidence = fmt::format("{{\"presented\":false,\"skipped\":\"{}\"}}", why);
+    return true;
+  };
+  uint32_t width_now = 0, height_now = 0;
+  if (!platform::ClientSize(s.window, width_now, height_now)) return skipped("window-empty");
   const char* reason = nullptr; VkResult result = VK_SUCCESS;
   if (!s.CloseBatch(reason, result)) return GraphicsError(evidence, reason, result);
-  if (!s.swapchain || s.recreate_swapchain || uint32_t(rect.right) != s.swap_extent.width || uint32_t(rect.bottom) != s.swap_extent.height)
-    if (!s.CreateSwapchain(rect.right, rect.bottom, evidence)) return false;
+  if (s.surface_lost && !s.RecreateSurface(width_now, height_now, evidence)) return false;
+  if (!s.swapchain || s.recreate_swapchain || width_now != s.swap_extent.width || height_now != s.swap_extent.height)
+    if (!s.CreateSwapchain(width_now, height_now, evidence)) return false;
+  if (!s.swapchain) return skipped("window-empty");
   // Bound the presentation queue to one pending frame independently of render completion.
   for (auto& back : s.back_images) if (back.pending) {
     if (!s.WaitPresent(back.presented, evidence)) return false;
@@ -90,22 +97,35 @@ bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, u
   if ((result = vkResetFences(s.vulkan->vk, 1, &s.acquire_fence)) != VK_SUCCESS)
     return GraphicsError(evidence, "native-vulkan-acquire-reset", result);
   uint32_t index = 0;
-  const auto deadline = std::chrono::steady_clock::now() + kWaitBudget;
+  // An image normally comes within a refresh or two (one present pending).
+  constexpr auto kAcquireBudget = std::chrono::seconds(1);
+  auto deadline = std::chrono::steady_clock::now() + kAcquireBudget;
   std::vector<int32_t> acquire_results;
-  do {
-    if (!IsWindow(s.window) || IsIconic(s.window)) {
-      stage.presented = true; evidence = "{\"presented\":false,\"skipped\":\"window-closed-or-minimized\"}"; return true;
-    }
+  bool renewed = false, surface_renewed = false;
+  for (;;) {
+    if (!platform::ClientSize(s.window, width_now, height_now)) return skipped("window-closed-or-minimized");
     result = vkAcquireNextImageKHR(s.vulkan->vk, s.swapchain, 20'000'000, VK_NULL_HANDLE, s.acquire_fence, &index);
     acquire_results.push_back(int32_t(result));
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
-      GetClientRect(s.window, &rect);
-      if (rect.right <= 0 || rect.bottom <= 0) {
-        stage.presented = true; evidence = "{\"presented\":false,\"skipped\":\"window-empty\"}"; return true;
-      }
-      if (!s.CreateSwapchain(rect.right, rect.bottom, evidence)) return false;
+      if (!platform::ClientSize(s.window, width_now, height_now)) return skipped("window-empty");
+      if (!s.CreateSwapchain(width_now, height_now, evidence)) return false;
+    } else if (result == VK_ERROR_SURFACE_LOST_KHR && !surface_renewed) {
+      surface_renewed = true;
+      if (!s.RecreateSurface(width_now, height_now, evidence)) return false;
     } else if (result != VK_TIMEOUT && result != VK_NOT_READY) break;
-  } while (std::chrono::steady_clock::now() < deadline && !s.failures->Failed());
+    if (!s.swapchain) return skipped("window-empty");
+    if (s.failures->Failed()) break;
+    if (std::chrono::steady_clock::now() < deadline) continue;
+    if (result != VK_TIMEOUT && result != VK_NOT_READY) break;  // Out of date up to the deadline.
+    // No image within the budget: a compositor that stopped releasing them (a
+    // hidden window, a monitor turned off). One new swapchain, as for an out of
+    // date one; still none and this frame is skipped.
+    if (renewed) return skipped("acquire-timeout");
+    renewed = true;
+    if (!s.CreateSwapchain(width_now, height_now, evidence)) return false;
+    if (!s.swapchain) return skipped("window-empty");
+    deadline = std::chrono::steady_clock::now() + kAcquireBudget;
+  }
   if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
     s.Observe(result); return GraphicsError(evidence, "native-vulkan-acquire", result);
   }
@@ -115,6 +135,8 @@ bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, u
   s.acquire_pending = false;
   auto& back = s.back_images.at(index);
   if (!s.OpenBatch(reason, result)) return GraphicsError(evidence, reason, result);
+  const bool ui = s.UiFrameVisible();
+  if (ui && !s.EnsureUiLayer(evidence)) return false;
   State::UploadPage* page{}; VkDeviceSize ramp_offset{};
   if (!s.Upload(4096, page, ramp_offset, result)) return GraphicsError(evidence, "native-present-ramp-upload", result);
   auto* ramp = reinterpret_cast<uint32_t*>(page->buffer->mapped + ramp_offset);
@@ -137,6 +159,8 @@ bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, u
     if (!s.OutputPass(stage, back.image, back.state, VK_FORMAT_B8G8R8A8_UNORM, s.swap_extent.width, s.swap_extent.height,
                       "present_ps", 0, c, page->buffer->buffer, ramp_offset, evidence)) return false;
   }
+  // The UI layer over the image and its bars.
+  if (ui && !s.DrawUi(back, evidence)) return false;
   std::shared_ptr<VmaBuffer> readback;
   const VkDeviceSize bytes = VkDeviceSize(s.swap_extent.width) * s.swap_extent.height * 4;
   if (capture) {
@@ -157,23 +181,28 @@ bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, u
   stage.last_use = s.batch.sequence; const uint64_t sequence = s.batch.sequence;
   s.submit_signal = back.rendered;
   if (!s.CloseBatch(reason, result)) return GraphicsError(evidence, reason, result);
-  if ((result = vkResetFences(s.vulkan->vk, 1, &back.presented)) != VK_SUCCESS)
+  if (s.present_fences && (result = vkResetFences(s.vulkan->vk, 1, &back.presented)) != VK_SUCCESS)
     return GraphicsError(evidence, "native-present-fence-reset", result);
   VkSwapchainPresentFenceInfoEXT completion{VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_EXT};
   completion.swapchainCount = 1; completion.pFences = &back.presented;
-  VkPresentInfoKHR info{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, &completion};
+  VkPresentInfoKHR info{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, s.present_fences ? &completion : nullptr};
   info.waitSemaphoreCount = 1; info.pWaitSemaphores = &back.rendered;
   info.swapchainCount = 1; info.pSwapchains = &s.swapchain; info.pImageIndices = &index;
   auto* queue = static_cast<plume::VulkanCommandQueue*>(s.queue.get())->queue;
-  const bool authorized = s.failures->Authorize([&] {
+  // The batch this present waits on passed the failure channel at its
+  // submission. The present shows no guest state, so the channel is checked
+  // but not held: a FIFO present that blocks would hold every frame
+  // publication waiting for the channel (the D3D12 present does the same).
+  if (s.failures->Failed()) return GraphicsError(evidence, "native-present-refused-after-failure");
+  {
     std::lock_guard lock(*queue->mutex);
     result = vkQueuePresentKHR(queue->vk, &info);
-  });
-  if (!authorized) return GraphicsError(evidence, "native-present-refused-after-failure");
-  back.pending = true;
+  }
+  back.pending = s.present_fences;
   stage.presented = true; ++s.presents;
   const VkResult present_result = result;
   if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) s.recreate_swapchain = true;
+  else if (result == VK_ERROR_SURFACE_LOST_KHR) s.surface_lost = true;  // A new surface at the next frame.
   else if (result != VK_SUCCESS) {
     s.Observe(result); return GraphicsError(evidence, "native-vulkan-present", result);
   }
@@ -184,9 +213,11 @@ bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, u
     width = s.swap_extent.width; height = s.swap_extent.height;
     bgra.assign(readback->mapped, readback->mapped + bytes);
   }
-  evidence = fmt::format("{{\"presented\":true,\"backend\":\"vulkan\",\"present_result\":{},\"acquire_results\":[{}],"
-      "\"generation\":{},\"image\":{},\"size\":[{},{}],\"fence\":{},\"present_mode\":{},\"effective_frame_latency\":1}}",
-      int32_t(present_result), fmt::join(acquire_results, ","), s.swap_generation, index, s.swap_extent.width,
-      s.swap_extent.height, sequence, int(s.swap_mode));
+  presented = present_result == VK_SUCCESS || present_result == VK_SUBOPTIMAL_KHR;
+  evidence = fmt::format("{{\"presented\":{},\"backend\":\"vulkan\",\"present_result\":{},\"acquire_results\":[{}],"
+      "\"generation\":{},\"image\":{},\"size\":[{},{}],\"fence\":{},\"present_mode\":{},\"effective_frame_latency\":1,"
+      "\"ui\":{}}}",
+      presented, int32_t(present_result), fmt::join(acquire_results, ","), s.swap_generation, index, s.swap_extent.width,
+      s.swap_extent.height, sequence, int(s.swap_mode), ui);
   return true;
 }

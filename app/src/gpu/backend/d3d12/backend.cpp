@@ -2,6 +2,7 @@
 // queue, the fence and the swapchain; the resources, commands and passes are
 // D3D12's own.
 #include "gpu/backend/backend.h"
+#include "gpu/backend/reconfigure.h"
 #include "gpu/backend/output_plan.h"
 #include "gpu/backend/d3d12/formats.h"
 #include "gpu/backend/lifecycle.h"
@@ -23,6 +24,7 @@
 #include <cmath>
 #include <algorithm>
 #include <cstring>
+#include <span>
 #include <deque>
 #include <map>
 #include <unordered_map>
@@ -38,11 +40,13 @@
 #include "gpu/backend/depth_resolve.h"  // kDepthResolveVs, ...MsPs, ...SinglePs (DXIL).
 #include "gpu/backend/sample_resolve.h"  // kSampleResolvePs (DXIL).
 #include "gpu/backend/sdk_shaders.h"   // CAS, FSR1, bilinear and FXAA of the SDK (DXBC).
+#include "gpu/backend/ui_pass.h"  // kUiVs, kUiPs (DXIL).
 
 namespace plume { std::unique_ptr<RenderInterface> CreateD3D12Interface(); }
 
 namespace gpu::d3d12 {
 namespace {
+constexpr size_t kDrawStreamsMax = 8;  // Vertex buffer slots (the title binds up to 4).
 // REX_NATIVE_D3D12_DEBUG=1 turns the D3D12 debug layer on; without it
 // no info queue exists and no diagnostic can be stored or read. Unset or 0
 // leaves it off, the product default: its validation costs about a third of
@@ -150,14 +154,19 @@ class Backend final : public gpu::Backend {
   bool ClearSurfaces(const ClearRequest& request, uint64_t& fence, std::string& evidence) override;
   bool WaitIdle(std::string& evidence) override;
   bool WaitSubmitted(std::string& evidence) override;
-  bool CloseFrame(void* event, uint64_t& target, std::string& evidence) override;
-  bool AttachWindow(void* window, std::string& evidence, const PresentMode& mode) override;
+  bool CloseFrame(FrameEvent event, uint64_t& target, std::string& evidence) override;
+  bool AttachWindow(const platform::NativeWindow& window, std::string& evidence, const PresentMode& mode) override;
   bool DetachWindow(std::string& evidence) override;
   bool SetGammaRamp(const std::array<uint16_t, 768>& words, std::string& evidence) override;
   bool SetVsync(bool enabled, std::string& evidence) override;
+  bool Reconfigure(const RenderMode&, const PresentMode&, std::string& evidence) override;
   bool StageFront(uint32_t key, uint32_t& slot, std::string& evidence) override;
   bool Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, uint32_t& width, uint32_t& height,
-               std::string& evidence) override;
+               std::string& evidence, bool& presented) override;
+  bool UploadUiTexture(uint32_t key, uint32_t width, uint32_t height, const std::vector<uint8_t>& rgba,
+                       std::string& evidence) override;
+  bool ReleaseUiTexture(uint32_t key, std::string& evidence) override;
+  bool SetUiFrame(UiFrame frame, std::string& evidence) override;
   std::string ResourceCounts() override;
   bool ReleaseTexture(uint32_t key, std::string& evidence) override;
   bool ReleaseSampled(uint32_t address, std::string& evidence) override;
@@ -212,6 +221,7 @@ struct Backend::State {
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> view;  // RTV or DSV
     D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON;
     uint64_t last_use_fence = 0;  // Highest fence of submitted work using it.
+    SurfaceDesc guest;
   };
   struct Submission {  // Retained until its fence completes.
     uint64_t fence = 0;
@@ -238,15 +248,44 @@ struct Backend::State {
     std::vector<Microsoft::WRL::ComPtr<ID3D12Resource>> retained;
     std::vector<uint32_t> views;  // SRV slots back to free_views at the fence.
     uint64_t operations = 0;
-    bool draw_bindings = false;  // Root signature, heaps and tables set once per batch.
+    // False after Reset or a presentation/resolve pass changes graphics state.
+    // Clears, copies and resource barriers leave the bindings intact.
+    bool draw_bindings = false;
+    struct DrawBindings {
+      ID3D12PipelineState* pipeline = nullptr;
+      ID3D12Resource* color = nullptr;
+      ID3D12Resource* depth = nullptr;
+      D3D12_CPU_DESCRIPTOR_HANDLE rtv{}, dsv{};
+      D3D12_VIEWPORT viewport{};
+      D3D12_RECT scissor{};
+      std::array<D3D12_GPU_VIRTUAL_ADDRESS, 3> constants{};
+      std::array<D3D12_VERTEX_BUFFER_VIEW, kDrawStreamsMax> streams{};
+      UINT stream_count = 0;
+      D3D12_INDEX_BUFFER_VIEW indices{};
+      D3D12_PRIMITIVE_TOPOLOGY topology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
+      std::array<float, 4> blend{};
+      UINT stencil_ref = 0;
+      bool stencil_valid = false;
+    } bound;
   };
   Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> batch_list;
   bool batch_open = false;
   Batch batch;
   // The constant CBVs of the previous draw of the open batch, reused
-  // while the request's version holds (its upload page lives until the fence).
+  // while the request's version holds (its upload page lives until the fence),
+  // and the shared block's, reused while its bytes are the same.
   uint64_t cbv_batch_fence = 0, last_vs_version = 0, last_ps_version = 0;
-  D3D12_GPU_VIRTUAL_ADDRESS last_vs_cbv = 0, last_ps_cbv = 0;
+  D3D12_GPU_VIRTUAL_ADDRESS last_vs_cbv = 0, last_ps_cbv = 0, last_shared_cbv = 0;
+  std::array<uint8_t, 512> last_shared{};
+  // The previous draw of the open batch, for the fusion counters of the
+  // profile (diagnostics only): its batch and operation number (fence 0 when
+  // it recorded no draw), its bindings, shared block and base vertex.
+  struct FusionProbe {
+    uint64_t fence = 0, operation = 0;
+    Batch::DrawBindings bound;
+    std::array<uint8_t, 512> shared{};
+    INT base_vertex = 0;
+  } fusion_probe;
   std::deque<Batch> batches_in_flight;
   std::vector<Microsoft::WRL::ComPtr<ID3D12CommandAllocator>> free_allocators;
   std::vector<UploadPage> free_pages;
@@ -292,6 +331,10 @@ struct Backend::State {
   PipelineSet pipeline_set;
   // Draw root signature (XenosRecomp layout) and shader-visible heaps, once.
   bool EnsureDrawLayer(const char*& reason, HRESULT& hr);
+  // A free SRV slot of the draw heap; false when all are taken.
+  bool AllocateDrawView(uint32_t& slot);
+  // The holders of the draw heap, for the evidence of an exhausted heap.
+  std::string DrawViewCounts() const;
   // The constant blocks of the draw layer, on the owner thread: the requests
   // bring the whole block or the registers written since the previous request.
   std::array<uint8_t, 4096> vs_block{}, ps_block{};
@@ -328,6 +371,11 @@ struct Backend::State {
       b.resource.Reset();
       FreeBufferBlocks(b);
       ++buffers_released;
+      return true;
+    });
+    std::erase_if(retired_ui_textures, [&](UiTexture& t) {
+      if (completed == UINT64_MAX || completed < t.last_use_fence) return false;
+      free_ui_views.push_back(t.view);
       return true;
     });
   }
@@ -417,17 +465,31 @@ struct Backend::State {
     ++buffer_heaps_created;
     return true;
   }
+  // The state of a resource the draws' shaders read. NVIDIA's also names
+  // COPY_SOURCE: the shader resource states alone were seen to miss cache
+  // flushes and layout transitions there (Dawn's
+  // d3d12_expand_shader_resource_state_transitions_to_copy_source).
+  D3D12_RESOURCE_STATES shader_read =
+      D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
   // Fixed descriptor slots: a slot is rewritten only when no submitted work
   // can still read it. Slot 0 holds the null view and the point sampler.
   uint32_t next_view = 1;
   std::vector<uint32_t> free_views;
+  // A sampler's slot by its description; with the heap full, a new one takes
+  // the slot of a sampler whose last use completed (sampler_slot_use).
   std::unordered_map<uint64_t, uint32_t> sampler_slots;
+  std::vector<uint64_t> sampler_slot_keys, sampler_slot_use;  // By slot.
   uint64_t operations = 0;
   std::unordered_map<uint32_t, Surface> surfaces;
   std::vector<Surface> retired_surfaces;  // Released, waiting for their fence.
   // Guest pixels and sample counts to those of the own surfaces and resolve
   // destinations (RenderMode::Host); a surface keeps its description in the latter.
   RenderMode render_mode;
+  // Pipeline warmup is free-threaded; the rest of render_mode is owner-only.
+  std::atomic<uint32_t> pipeline_msaa{0};
+  uint32_t PipelineSamples(uint32_t guest) const {
+    const uint32_t count = pipeline_msaa.load(); return guest > 1 && count ? count : guest;
+  }
   // Presentation: own swapchain on the window, the final pass and two
   // stage slots holding the front buffer copied at the Swap until its flip.
   static constexpr uint32_t kMaxSwapBuffers = 3, kStageSlots = 2;
@@ -465,15 +527,12 @@ struct Backend::State {
   }
   // Depth resolve pass (single-sample and MSAA source), and the color resolve
   // of one sample (sample_resolve) with the same root signature and slots.
-  // Its SRVs live in a ring of shader-visible slots, each reused once the
-  // fence of its last pass completed; the destination RTV is read when the
-  // pass is recorded.
-  static constexpr uint32_t kDepthResolveSlots = 64;
+  // Its SRV takes a slot of the draw heap, back at the batch's fence as a
+  // draw's are (the batch keeps one shader-visible heap); the destination RTV
+  // is read when the pass is recorded.
   Microsoft::WRL::ComPtr<ID3D12RootSignature> depth_resolve_root;
   Microsoft::WRL::ComPtr<ID3D12PipelineState> depth_resolve_single, depth_resolve_ms, sample_resolve;
-  Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> depth_resolve_views, depth_resolve_rtv;
-  std::array<uint64_t, kDepthResolveSlots> depth_resolve_slot_fence{};
-  uint32_t depth_resolve_next = 0;
+  Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> depth_resolve_rtv;
   uint64_t depth_resolves = 0, sample_resolves = 0;
   struct Stage {
     Microsoft::WRL::ComPtr<ID3D12Resource> resource;
@@ -493,6 +552,39 @@ struct Backend::State {
   uint64_t staged_frames = 0, presents = 0, presents_skipped_empty = 0, resizes = 0, gamma_updates = 0;
   uint64_t latency_waits = 0, latency_timeouts = 0, captures = 0;
   bool BackBufferViews(HRESULT& hr);  // RTVs of the current back buffers.
+  // The UI layer of the Present (UiFrame): RGBA8 textures by key, each with
+  // an SRV slot in ui_views (key 0 the white texture), the frame of SetUiFrame
+  // and the root signature and pipeline of ui_pass.hlsl. A replaced or
+  // released texture and its slot wait for the fence of their last use.
+  struct UiTexture {
+    Microsoft::WRL::ComPtr<ID3D12Resource> resource;
+    uint32_t width = 0, height = 0;
+    uint32_t view = UINT32_MAX;  // Its slot in ui_views; UINT32_MAX = none.
+    D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COPY_DEST;
+    uint64_t last_use_fence = 0;
+  };
+  static constexpr uint32_t kUiViews = 256;
+  std::unordered_map<uint32_t, UiTexture> ui_textures;
+  std::vector<UiTexture> retired_ui_textures;
+  std::vector<uint32_t> free_ui_views;
+  uint32_t next_ui_view = 0;
+  UiFrame ui_frame;
+  Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> ui_views;
+  Microsoft::WRL::ComPtr<ID3D12RootSignature> ui_root;
+  Microsoft::WRL::ComPtr<ID3D12PipelineState> ui_pipeline;
+  // Draws whose texture was released after their frame was set are skipped.
+  uint64_t ui_texture_uploads = 0, ui_frames_drawn = 0, ui_draws_skipped = 0;
+  bool UiFrameVisible() const {
+    return ui_frame.width > 0 && ui_frame.height > 0 && !ui_frame.draws.empty() && !ui_frame.indices.empty();
+  }
+  // Root signature, pipeline, heap and the white texture, once; in the open batch.
+  bool EnsureUiLayer(const char*& reason, HRESULT& hr);
+  // Creates (or recreates at a new size) and fills the texture of key in the open batch.
+  bool WriteUiTexture(uint32_t key, uint32_t width, uint32_t height, const uint8_t* rgba, const char*& reason,
+                      HRESULT& hr);
+  // The frame's draws into the back buffer of rtv, in the open batch.
+  bool DrawUi(ID3D12GraphicsCommandList* commands, D3D12_CPU_DESCRIPTOR_HANDLE rtv, uint32_t width, uint32_t height,
+              const char*& reason, HRESULT& hr);
 };
 namespace {
 constexpr size_t kUploadPageBytes = size_t(8) << 20;  // Pooled page; larger requests get their own.
@@ -655,10 +747,10 @@ Backend::Backend(std::shared_ptr<FailureChannel> failures) : state_(std::make_un
   state_->failures = std::move(failures);
 }
 Backend::~Backend() {
-  std::string ignored;
+  std::string evidence;
   // A caller must abort if draining failed. Never implicitly destroy resources
   // referenced by work whose completion has not been proved.
-  if (!Shutdown(ignored)) std::_Exit(88);
+  if (!Shutdown(evidence)) ExitUnreleased("native-d3d12-backend-destructor", evidence);
 }
 
 bool Backend::Initialize(std::string& evidence, const RenderMode& mode) {
@@ -729,6 +821,7 @@ bool Backend::Initialize(std::string& evidence, const RenderMode& mode) {
     return true;
   };
   state_->render_mode.msaa_samples = SupportedSamples(mode.msaa_samples, msaa_supported);
+  state_->pipeline_msaa.store(state_->render_mode.msaa_samples);
   state_->queue = state_->device->createCommandQueue(plume::RenderCommandListType::DIRECT);
   state_->fence = state_->device->createCommandFence();
   if (!state_->queue || !state_->fence) return fail("Plume-queue-fence");
@@ -756,6 +849,7 @@ bool Backend::Initialize(std::string& evidence, const RenderMode& mode) {
   state_->pending_signal = 0;
   DXGI_ADAPTER_DESC1 adapter{};
   result = device->adapter->GetDesc1(&adapter);
+  if (SUCCEEDED(result) && adapter.VendorId == 0x10DE) state_->shader_read |= D3D12_RESOURCE_STATE_COPY_SOURCE;
   if (FAILED(result)) return fail("native-adapter-description", result);
   if (state_->info && state_->info->GetNumStoredMessagesAllowedByRetrievalFilter() != 0)
     return fail("native-debug-messages");
@@ -872,11 +966,13 @@ bool Backend::Shutdown(std::string& evidence) {
   state_->vs_block.fill(0);
   state_->ps_block.fill(0);
   state_->cbv_batch_fence = state_->last_vs_version = state_->last_ps_version = 0;
-  state_->last_vs_cbv = state_->last_ps_cbv = 0;
+  state_->last_vs_cbv = state_->last_ps_cbv = state_->last_shared_cbv = 0;
   state_->sampled.clear();
   state_->buffers.clear();
   state_->buffer_heaps.clear();
   state_->sampler_slots.clear();
+  state_->sampler_slot_keys.clear();
+  state_->sampler_slot_use.clear();
   state_->free_views.clear();
   state_->next_view = 1;
   state_->draw_samplers.Reset();
@@ -896,7 +992,14 @@ bool Backend::Shutdown(std::string& evidence) {
   state_->present_views.Reset();
   state_->present_pipeline.Reset();
   state_->present_root.Reset();
-  state_->depth_resolve_views.Reset();  // Their last use completed above.
+  state_->ui_textures.clear();  // Their last use completed above.
+  state_->retired_ui_textures.clear();
+  state_->free_ui_views.clear();
+  state_->next_ui_view = 0;
+  state_->ui_frame = {};
+  state_->ui_views.Reset();
+  state_->ui_pipeline.Reset();
+  state_->ui_root.Reset();
   state_->depth_resolve_rtv.Reset();
   state_->sample_resolve.Reset();
   state_->depth_resolve_ms.Reset();
@@ -1014,11 +1117,87 @@ bool Backend::CreateSurface(const SurfaceDesc& guest, std::string& evidence) {
   } else {
     device->d3d->CreateRenderTargetView(native->d3d, nullptr, view->GetCPUDescriptorHandleForHeapStart());
   }
-  State::Surface surface{desc, std::move(texture), std::move(view), native->resourceStates, 0};
+  State::Surface surface{desc, std::move(texture), std::move(view), native->resourceStates, 0, guest};
   state_->surfaces.emplace(desc.key, std::move(surface));
   evidence = fmt::format("{{\"created\":true,\"key\":{},\"width\":{},\"height\":{},\"guest_format\":{},"
       "\"host_format\":\"{}\",\"samples\":{},\"live_surfaces\":{}}}", desc.key, desc.width, desc.height,
       desc.guest_format, depth ? "D32_FLOAT_S8_UINT" : "R8G8B8A8_UNORM", desc.samples, state_->surfaces.size());
+  return true;
+}
+
+bool Backend::Reconfigure(const RenderMode& requested, const PresentMode& present, std::string& evidence) {
+  RenderMode render = requested;
+  auto& s = *state_;
+  auto fail = [&](const char* reason) {
+    evidence = fmt::format("{{\"applied\":false,\"reason\":\"{}\"}}", reason); return false;
+  };
+  if (!s.ready || s.owner_thread != GetCurrentThreadId() || s.operation_poisoned || s.unproved_execution)
+    return fail("native-reconfigure-owner-or-state");
+  if (!ValidLiveModes(s.render_mode, render, present)) return fail("native-reconfigure-mode");
+  auto* device = static_cast<plume::D3D12Device*>(s.device.get());
+  render.msaa_samples = SupportedSamples(requested.msaa_samples, [&](uint32_t samples) {
+    for (auto format : {DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_D32_FLOAT_S8X24_UINT}) {
+      D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS levels{format, samples};
+      if (FAILED(device->d3d->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &levels, sizeof(levels))) ||
+          !levels.NumQualityLevels) return false;
+    }
+    return true;
+  });
+  const bool targets = render.scale.x != s.render_mode.scale.x || render.scale.y != s.render_mode.scale.y ||
+                       render.msaa_samples != s.render_mode.msaa_samples;
+  for (const auto& [key, surface] : s.surfaces) {
+    const auto desc = render.Host(surface.guest);
+    if (!desc.width || !desc.height || desc.width > 8192 || desc.height > 8192)
+      return fail("native-reconfigure-surface-size");
+  }
+  if (!WaitIdle(evidence)) return false;
+  const auto old_render = s.render_mode;
+  const auto old_present = s.mode;
+  decltype(s.surfaces) old_surfaces;
+  if (targets) {
+    old_surfaces.swap(s.surfaces);
+    s.render_mode = render;
+    for (const auto& [key, surface] : old_surfaces) if (!CreateSurface(surface.guest, evidence)) {
+      s.surfaces.clear(); s.surfaces.swap(old_surfaces); s.render_mode = old_render;
+      return false;
+    }
+  }
+  const bool swap = s.swapchain && (present.buffers != old_present.buffers ||
+      present.max_frame_latency != old_present.max_frame_latency || present.allow_tearing != old_present.allow_tearing);
+  bool applied = true;
+  if (swap) {
+    const auto window = platform::WindowHandles(s.window);
+    s.present_rtv.Reset(); s.swapchain.reset();
+    applied = AttachWindow(window, evidence, present);
+    if (!applied) {
+      const auto error = evidence;
+      std::string rollback;
+      if (!AttachWindow(window, rollback, old_present)) {
+        // A failed restore cannot leave the game submitting to a dead display.
+        s.operation_poisoned = true;
+      }
+      evidence = error;
+    }
+  } else {
+    s.mode = present; s.allow_tearing = present.allow_tearing;
+    s.swap_buffers = present.buffers; s.max_frame_latency = present.max_frame_latency;
+    s.brightness = std::fabs(present.brightness - 0.5f) > 0.001f;
+    const double exponent = 1.0 / std::clamp(1.0 + (double(present.brightness) - 0.5) * 1.2, 0.1, 4.0);
+    for (uint32_t i = 0; i < 1024; ++i)
+      s.brightness_ramp[i] = uint16_t(std::lround(1023.0 * std::pow(i / 1023.0, exponent)));
+    applied = SetVsync(present.vsync, evidence);
+  }
+  if (!applied) {
+    if (targets) { s.surfaces.clear(); s.surfaces.swap(old_surfaces); s.render_mode = old_render; }
+    return false;
+  }
+  s.render_mode = render;
+  s.pipeline_msaa.store(render.msaa_samples);
+  evidence = fmt::format("{{\"applied\":true,\"targets_rebuilt\":{},\"surfaces\":{},\"resolved_textures_retained\":{},"
+      "\"scale\":[{},{}],\"msaa_samples\":{},\"vsync\":{},\"brightness\":{},\"buffers\":{},\"latency\":{},"
+      "\"effect\":{},\"post_effect\":{}}}", targets, s.surfaces.size(), s.textures.size(), render.scale.x,
+      render.scale.y, render.msaa_samples, present.vsync, present.brightness, present.buffers, present.max_frame_latency,
+      uint32_t(present.effect), uint32_t(present.post_effect));
   return true;
 }
 
@@ -1195,7 +1374,7 @@ bool Backend::Wait(bool close, std::string& evidence) {
 // Frame lot of D3DDevice_Swap. Closes the open batch without waiting and
 // has the host event set when the highest Signal on the queue completes, so
 // every operation submitted so far is done when it fires.
-bool Backend::CloseFrame(void* event, uint64_t& target, std::string& evidence) {
+bool Backend::CloseFrame(FrameEvent event, uint64_t& target, std::string& evidence) {
   target = 0;
   auto fail = [&](const char* reason, HRESULT hr = E_FAIL) {
     evidence = fmt::format("{{\"closed\":false,\"reason\":\"{}\",\"hresult\":{}}}", reason, static_cast<uint32_t>(hr));
@@ -1212,8 +1391,8 @@ bool Backend::CloseFrame(void* event, uint64_t& target, std::string& evidence) {
   const uint64_t completed = fence->d3d->GetCompletedValue();
   if (completed == UINT64_MAX) return fail("native-frame-device-removed");
   if (completed >= target) {
-    if (!SetEvent(static_cast<HANDLE>(event))) return fail("native-frame-event", HRESULT_FROM_WIN32(GetLastError()));
-  } else if (FAILED(hr = fence->d3d->SetEventOnCompletion(target, static_cast<HANDLE>(event)))) {
+    event->Set();
+  } else if (FAILED(hr = fence->d3d->SetEventOnCompletion(target, static_cast<HANDLE>(event->native_handle())))) {
     return fail("native-frame-event-on-completion", hr);
   }
   evidence = fmt::format("{{\"closed\":true,\"target\":{},\"completed\":{},\"batches_closed\":{}}}", target,
@@ -1535,7 +1714,249 @@ bool Backend::State::OutputEffects(ID3D12GraphicsCommandList* commands, uint32_t
   return true;
 }
 
-bool Backend::AttachWindow(void* window, std::string& evidence, const PresentMode& mode) {
+// The UI layer (ui_pass.hlsl): t0 in a table of ui_views, the inverse
+// coordinate space as root constants (b0) and the linear clamp sampler
+// static; straight alpha blending into the back buffer. Each piece once, so a
+// failed attempt resumes where it stopped.
+bool Backend::State::EnsureUiLayer(const char*& reason, HRESULT& hr) {
+  if (ui_pipeline) return true;
+  auto* d3d = static_cast<plume::D3D12Device*>(device.get())->d3d;
+  hr = S_OK;
+  if (!ui_root) {
+    D3D12_DESCRIPTOR_RANGE range{};
+    range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    range.NumDescriptors = 1;
+    D3D12_ROOT_PARAMETER params[2]{};
+    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    params[0].DescriptorTable.NumDescriptorRanges = 1;
+    params[0].DescriptorTable.pDescriptorRanges = &range;
+    params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;  // b0: the inverse space.
+    params[1].Constants.Num32BitValues = 2;
+    params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+    D3D12_STATIC_SAMPLER_DESC sampler{};
+    sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sampler.MaxLOD = D3D12_FLOAT32_MAX;
+    sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    D3D12_ROOT_SIGNATURE_DESC desc{};
+    desc.NumParameters = 2;
+    desc.pParameters = params;
+    desc.NumStaticSamplers = 1;
+    desc.pStaticSamplers = &sampler;
+    desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+    Microsoft::WRL::ComPtr<ID3DBlob> blob, error;
+    if (FAILED(hr = D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &error)) ||
+        FAILED(hr = d3d->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(),
+                                             IID_PPV_ARGS(&ui_root)))) {
+      reason = "native-ui-root";
+      return false;
+    }
+  }
+  if (!ui_views) {
+    const D3D12_DESCRIPTOR_HEAP_DESC heap{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kUiViews,
+                                          D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
+    if (FAILED(hr = d3d->CreateDescriptorHeap(&heap, IID_PPV_ARGS(&ui_views)))) {
+      reason = "native-ui-heap";
+      return false;
+    }
+  }
+  if (!ui_textures.contains(0)) {
+    const uint8_t white[4] = {0xFF, 0xFF, 0xFF, 0xFF};
+    if (!WriteUiTexture(0, 1, 1, white, reason, hr)) return false;
+  }
+  const D3D12_INPUT_ELEMENT_DESC elements[] = {
+      {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(UiVertex, x), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+      {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(UiVertex, u), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+      {"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, offsetof(UiVertex, color), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
+       0}};
+  D3D12_GRAPHICS_PIPELINE_STATE_DESC pipeline{};
+  pipeline.pRootSignature = ui_root.Get();
+  pipeline.VS = {kUiVs, sizeof(kUiVs)};
+  pipeline.PS = {kUiPs, sizeof(kUiPs)};
+  auto& blend = pipeline.BlendState.RenderTarget[0];
+  blend.BlendEnable = TRUE;
+  blend.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+  blend.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+  blend.BlendOp = D3D12_BLEND_OP_ADD;
+  blend.SrcBlendAlpha = D3D12_BLEND_ONE;
+  blend.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+  blend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+  blend.LogicOp = D3D12_LOGIC_OP_NOOP;
+  blend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+  pipeline.SampleMask = UINT_MAX;
+  pipeline.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+  pipeline.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+  pipeline.RasterizerState.DepthClipEnable = TRUE;
+  pipeline.InputLayout = {elements, UINT(std::size(elements))};
+  pipeline.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+  pipeline.NumRenderTargets = 1;
+  pipeline.RTVFormats[0] = DXGI_FORMAT_B8G8R8A8_UNORM;
+  pipeline.SampleDesc.Count = 1;
+  if (FAILED(hr = d3d->CreateGraphicsPipelineState(&pipeline, IID_PPV_ARGS(&ui_pipeline)))) {
+    reason = "native-ui-pipeline";
+    return false;
+  }
+  return true;
+}
+
+// A texture at a new size is a new resource: the old one is retired with its
+// view while submitted work can still read it, else its view slot is reused.
+// At the same size the copy goes into the texture, after the draws recorded
+// before it (the barrier orders them).
+bool Backend::State::WriteUiTexture(uint32_t key, uint32_t width, uint32_t height, const uint8_t* rgba,
+                                    const char*& reason, HRESULT& hr) {
+  auto* d3d = static_cast<plume::D3D12Device*>(device.get())->d3d;
+  D3D12_RESOURCE_DESC desc{};
+  desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+  desc.Width = width;
+  desc.Height = height;
+  desc.DepthOrArraySize = desc.MipLevels = 1;
+  desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+  desc.SampleDesc.Count = 1;
+  D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+  UINT64 bytes = 0;
+  d3d->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, nullptr, nullptr, &bytes);
+  UploadPage* page = nullptr;
+  size_t page_offset = 0;
+  if (!Upload(size_t(bytes), page, page_offset, hr)) {
+    reason = "native-ui-texture-upload";
+    return false;
+  }
+  for (uint32_t row = 0; row < height; ++row)
+    std::memcpy(page->cpu + page_offset + footprint.Offset + size_t(row) * footprint.Footprint.RowPitch,
+                rgba + size_t(row) * width * 4, size_t(width) * 4);
+  auto& t = ui_textures[key];
+  if (t.resource && (t.width != width || t.height != height)) {
+    const uint64_t completed_now = static_cast<plume::D3D12CommandFence*>(fence.get())->d3d->GetCompletedValue();
+    if (t.last_use_fence && (completed_now == UINT64_MAX || completed_now < t.last_use_fence)) {
+      retired_ui_textures.push_back(std::move(t));
+      t = {};
+    } else {
+      t.resource.Reset();
+    }
+  }
+  const bool created = !t.resource;
+  if (created) {
+    if (t.view == UINT32_MAX) {
+      if (!free_ui_views.empty()) {
+        t.view = free_ui_views.back();
+        free_ui_views.pop_back();
+      } else if (next_ui_view < kUiViews) {
+        t.view = next_ui_view++;
+      } else {
+        ui_textures.erase(key);
+        reason = "native-ui-views-exhausted";
+        return false;
+      }
+    }
+    D3D12_HEAP_PROPERTIES heap{};
+    heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+    heap.CreationNodeMask = heap.VisibleNodeMask = 1;
+    if (FAILED(hr = d3d->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST,
+                                                 nullptr, IID_PPV_ARGS(&t.resource)))) {
+      free_ui_views.push_back(t.view);
+      ui_textures.erase(key);
+      reason = "native-ui-texture-create";
+      return false;
+    }
+    t.width = width;
+    t.height = height;
+    t.state = D3D12_RESOURCE_STATE_COPY_DEST;
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.Texture2D.MipLevels = 1;
+    auto cpu = ui_views->GetCPUDescriptorHandleForHeapStart();
+    cpu.ptr += SIZE_T(d3d->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)) * t.view;
+    d3d->CreateShaderResourceView(t.resource.Get(), &srv, cpu);
+  }
+  ID3D12GraphicsCommandList* const commands = batch_list.Get();
+  auto transition = [&](D3D12_RESOURCE_STATES after) {
+    if (t.state == after) return;
+    D3D12_RESOURCE_BARRIER b{};
+    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    b.Transition.pResource = t.resource.Get();
+    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    b.Transition.StateBefore = t.state;
+    b.Transition.StateAfter = after;
+    commands->ResourceBarrier(1, &b);
+    t.state = after;
+  };
+  transition(D3D12_RESOURCE_STATE_COPY_DEST);
+  D3D12_TEXTURE_COPY_LOCATION to{}, from{};
+  to.pResource = t.resource.Get();
+  to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+  from.pResource = page->buffer.Get();
+  from.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+  from.PlacedFootprint = footprint;
+  from.PlacedFootprint.Offset += page_offset;
+  commands->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
+  transition(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+  t.last_use_fence = batch.fence;
+  ++ui_texture_uploads;
+  return true;
+}
+
+// The vertices and indices go into the batch's upload memory; each draw
+// binds its texture and its scissor rect in pixels (UiScissorPixels).
+bool Backend::State::DrawUi(ID3D12GraphicsCommandList* commands, D3D12_CPU_DESCRIPTOR_HANDLE rtv, uint32_t width,
+                            uint32_t height, const char*& reason, HRESULT& hr) {
+  const UiFrame& f = ui_frame;
+  const size_t vertex_bytes = f.vertices.size() * sizeof(UiVertex);
+  const size_t index_bytes = f.indices.size() * sizeof(uint16_t);
+  UploadPage* page = nullptr;
+  size_t offset = 0;
+  if (!Upload(vertex_bytes + index_bytes, page, offset, hr)) {
+    reason = "native-ui-frame-upload";
+    return false;
+  }
+  std::memcpy(page->cpu + offset, f.vertices.data(), vertex_bytes);
+  std::memcpy(page->cpu + offset + vertex_bytes, f.indices.data(), index_bytes);
+  const D3D12_VERTEX_BUFFER_VIEW vertices{page->gpu + offset, UINT(vertex_bytes), UINT(sizeof(UiVertex))};
+  const D3D12_INDEX_BUFFER_VIEW indices{page->gpu + offset + vertex_bytes, UINT(index_bytes), DXGI_FORMAT_R16_UINT};
+  auto* d3d = static_cast<plume::D3D12Device*>(device.get())->d3d;
+  const UINT increment = d3d->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+  commands->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+  const D3D12_VIEWPORT viewport{0.0f, 0.0f, float(width), float(height), 0.0f, 1.0f};
+  commands->RSSetViewports(1, &viewport);
+  ID3D12DescriptorHeap* heaps[] = {ui_views.Get()};
+  commands->SetDescriptorHeaps(1, heaps);
+  commands->SetGraphicsRootSignature(ui_root.Get());
+  commands->SetPipelineState(ui_pipeline.Get());
+  const float inverse_space[2] = {1.0f / f.width, 1.0f / f.height};
+  commands->SetGraphicsRoot32BitConstants(1, 2, inverse_space, 0);
+  commands->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+  commands->IASetVertexBuffers(0, 1, &vertices);
+  commands->IASetIndexBuffer(&indices);
+  uint32_t bound = UINT32_MAX;
+  for (const UiDraw& d : f.draws) {
+    if (!d.index_count) continue;
+    auto it = ui_textures.find(d.texture);
+    if (it == ui_textures.end()) {
+      ++ui_draws_skipped;
+      continue;
+    }
+    std::array<uint32_t, 4> rect{};
+    if (!UiScissorPixels(d, f, width, height, rect)) continue;
+    const D3D12_RECT scissor{LONG(rect[0]), LONG(rect[1]), LONG(rect[2]), LONG(rect[3])};
+    commands->RSSetScissorRects(1, &scissor);
+    if (it->second.view != bound) {
+      auto gpu = ui_views->GetGPUDescriptorHandleForHeapStart();
+      gpu.ptr += UINT64(increment) * it->second.view;
+      commands->SetGraphicsRootDescriptorTable(0, gpu);
+      bound = it->second.view;
+    }
+    commands->DrawIndexedInstanced(d.index_count, 1, d.index_offset, INT(d.vertex_offset), 0);
+    it->second.last_use_fence = batch.fence;
+  }
+  ++ui_frames_drawn;
+  return true;
+}
+
+bool Backend::AttachWindow(const platform::NativeWindow& target, std::string& evidence, const PresentMode& mode) {
+  void* window = target.kind == platform::NativeWindow::Kind::kWin32 ? target.window : nullptr;
   auto fail = [&](const char* reason, HRESULT hr = E_FAIL) {
     evidence = fmt::format("{{\"attached\":false,\"reason\":\"{}\",\"hresult\":{}}}", reason, static_cast<uint32_t>(hr));
     return false;
@@ -1803,7 +2224,8 @@ bool Backend::StageFront(uint32_t key, uint32_t& slot, std::string& evidence) {
 }
 
 bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, uint32_t& width,
-                                   uint32_t& height, std::string& evidence) {
+                                   uint32_t& height, std::string& evidence, bool& presented) {
+  presented = false;
   bgra.clear();
   width = height = 0;
   auto fail = [&](const char* reason, HRESULT hr = E_FAIL) {
@@ -1898,6 +2320,8 @@ bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, u
   auto* back = static_cast<plume::D3D12Texture*>(state_->swapchain->getTexture(index));
   const char* batch_reason = nullptr;
   if (!state_->OpenBatch(batch_reason, hr)) return fail(batch_reason, hr);
+  const bool ui = state_->UiFrameVisible();
+  if (ui && !state_->EnsureUiLayer(batch_reason, hr)) return fail(batch_reason, hr);
   ID3D12GraphicsCommandList* const commands = state_->batch_list.Get();
   auto barrier = [&](ID3D12Resource* resource, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
     if (before == after) return;
@@ -1929,6 +2353,8 @@ bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, u
   barrier(back->d3d, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
   auto rtv = state_->present_rtv->GetCPUDescriptorHandleForHeapStart();
   rtv.ptr += SIZE_T(device->d3d->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV)) * index;
+  // Invalidate before recording, including an effects/UI path that may fail.
+  state_->batch.draw_bindings = false;
   commands->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
   if (effects) {
     if (!state_->OutputEffects(commands, slot, rtv, w, h, vx, vy, plan, page->gpu + offset, hr))
@@ -1956,8 +2382,11 @@ bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, u
     commands->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     commands->DrawInstanced(3, 1, 0, 0);
   }
-  // The draw layer binds its own heaps, root signature and tables again.
-  state_->batch.draw_bindings = false;
+  // The UI layer over the image and its bars.
+  if (ui) {
+    if (!state_->DrawUi(commands, rtv, w, h, batch_reason, hr)) return fail(batch_reason, hr);
+    passes += "+ui";
+  }
   Microsoft::WRL::ComPtr<ID3D12Resource> readback;
   D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
   UINT64 total = 0;
@@ -2005,6 +2434,7 @@ bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, u
       (chain.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) != 0;
   if (FAILED(hr = native->d3d->Present(state_->vsync ? 1 : 0, tearing ? DXGI_PRESENT_ALLOW_TEARING : 0)))
     return fail("native-present-swapchain", hr);
+  const bool visible = hr == S_OK;
   QueryPerformanceCounter(&t2);
   // The Present is queue work that still uses the back buffer after the
   // batch's Signal. A Signal after it lets WaitIdle (resize, capture, detach,
@@ -2044,13 +2474,72 @@ bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, u
   const auto us = [&](const LARGE_INTEGER& a, const LARGE_INTEGER& b) {
     return (b.QuadPart - a.QuadPart) * 1000000 / frequency.QuadPart;
   };
-  evidence = fmt::format("{{\"presented\":true,\"slot\":{},\"key\":{},\"buffer\":{},\"size\":[{},{}],"
+  presented = visible;
+  evidence = fmt::format("{{\"presented\":{},\"slot\":{},\"key\":{},\"buffer\":{},\"size\":[{},{}],"
                          "\"image\":[{},{},{},{}],\"vsync\":{},\"tearing\":{},\"resized\":{},\"fence\":{},"
                          "\"latency_wait_us\":{},\"present_us\":{},\"gamma_from_title\":{},\"gamma_updates\":{},"
                          "\"presents\":{},\"captured\":{},\"passes\":\"{}\"}}",
-                         slot, stage.key, index, w, h, vx, vy, vw, vh, state_->vsync, tearing, resized, present_fence,
+                         presented, slot, stage.key, index, w, h, vx, vy, vw, vh, state_->vsync, tearing, resized, present_fence,
                          us(t0, t1), us(t1, t2), state_->gamma_from_title, state_->gamma_updates, state_->presents,
                          capture, passes);
+  return true;
+}
+
+bool Backend::UploadUiTexture(uint32_t key, uint32_t width, uint32_t height, const std::vector<uint8_t>& rgba,
+                              std::string& evidence) {
+  auto fail = [&](const char* reason, HRESULT hr = E_FAIL) {
+    evidence = fmt::format("{{\"uploaded\":false,\"reason\":\"{}\",\"key\":{},\"hresult\":{}}}", reason, key,
+                           static_cast<uint32_t>(hr));
+    return false;
+  };
+  if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned ||
+      state_->unproved_execution) return fail("native-ui-owner-or-state");
+  HRESULT hr = S_OK;
+  const char* reason = nullptr;
+  if (!state_->OpenBatch(reason, hr) || !state_->EnsureUiLayer(reason, hr) ||
+      !state_->WriteUiTexture(key, width, height, rgba.data(), reason, hr))
+    return fail(reason, hr);
+  const uint64_t batch_operations = ++state_->batch.operations;
+  ++state_->operations;
+  if (batch_operations >= kBatchOperationsMax && !state_->CloseBatch(reason, hr)) return fail(reason, hr);
+  evidence = fmt::format("{{\"uploaded\":true,\"key\":{},\"size\":[{},{}],\"fence\":{}}}", key, width, height,
+                         state_->ui_textures[key].last_use_fence);
+  return true;
+}
+
+bool Backend::ReleaseUiTexture(uint32_t key, std::string& evidence) {
+  if (!state_->ready || state_->owner_thread != GetCurrentThreadId()) {
+    evidence = "{\"released\":false,\"reason\":\"native-ui-release-owner\"}";
+    return false;
+  }
+  // Key 0 (the white texture) belongs to the layer.
+  auto it = key ? state_->ui_textures.find(key) : state_->ui_textures.end();
+  if (it == state_->ui_textures.end()) {
+    evidence = fmt::format("{{\"released\":true,\"key\":{},\"ui_texture\":false}}", key);
+    return true;
+  }
+  const uint64_t completed = static_cast<plume::D3D12CommandFence*>(state_->fence.get())->d3d->GetCompletedValue();
+  const uint64_t last_use = it->second.last_use_fence;
+  const bool in_flight = last_use && (completed == UINT64_MAX || completed < last_use);
+  if (in_flight)
+    state_->retired_ui_textures.push_back(std::move(it->second));
+  else
+    state_->free_ui_views.push_back(it->second.view);
+  state_->ui_textures.erase(it);
+  evidence = fmt::format("{{\"released\":true,\"key\":{},\"ui_texture\":true,\"deferred\":{},\"last_use_fence\":{}}}",
+                         key, in_flight, last_use);
+  return true;
+}
+
+bool Backend::SetUiFrame(UiFrame frame, std::string& evidence) {
+  if (!state_->ready || state_->owner_thread != GetCurrentThreadId()) {
+    evidence = "{\"set\":false,\"reason\":\"native-ui-frame-owner\"}";
+    return false;
+  }
+  state_->ui_frame = std::move(frame);
+  evidence = fmt::format("{{\"set\":true,\"vertices\":{},\"indices\":{},\"draws\":{}}}",
+                         state_->ui_frame.vertices.size(), state_->ui_frame.indices.size(),
+                         state_->ui_frame.draws.size());
   return true;
 }
 
@@ -2064,7 +2553,8 @@ std::string Backend::ResourceCounts() {
                      "\"stage_slots\":{},\"swapchain\":{},\"depth_resolves\":{},\"sample_resolves\":{},\"buffers\":{},"
                      "\"retired_buffers\":{},"
                      "\"buffers_created\":{},\"buffers_released\":{},\"buffers_retired\":{},\"buffer_uploads\":{},"
-                     "\"buffer_heaps\":{},\"buffer_blocks_used\":{}}}",
+                     "\"buffer_heaps\":{},\"buffer_blocks_used\":{},\"ui_textures\":{},\"retired_ui_textures\":{},"
+                     "\"ui_views_free\":{},\"ui_texture_uploads\":{},\"ui_frames_drawn\":{},\"ui_draws_skipped\":{}}}",
                      textures, state_->textures.size(), state_->sampled.size(),
                      state_->surfaces.size(), state_->retired_surfaces.size(), state_->retired_textures.size(),
                      state_->textures_released, state_->textures_retired, state_->retired_sampled.size(),
@@ -2073,7 +2563,9 @@ std::string Backend::ResourceCounts() {
                      state_->buffers.size(),
                      state_->retired_buffers.size(), state_->buffers_created, state_->buffers_released,
                      state_->buffers_retired, state_->buffer_uploads, state_->buffer_heaps.size(),
-                     state_->buffer_blocks_used);
+                     state_->buffer_blocks_used, state_->ui_textures.size() - state_->ui_textures.count(0),
+                     state_->retired_ui_textures.size(), state_->free_ui_views.size(), state_->ui_texture_uploads,
+                     state_->ui_frames_drawn, state_->ui_draws_skipped);
 }
 
 bool Backend::LiveResources(ResourceKeys& keys, std::string& evidence) {
@@ -2158,8 +2650,9 @@ bool Backend::ResolveSurface(const ResolveRequest& request, uint64_t& fenceValue
                                           std::string& evidence) {
   profile::Timer profile(profile::kEngineResolve);
   fenceValue = 0;
-  auto fail = [&](const char* reason, HRESULT hr = E_FAIL) {
-    evidence = fmt::format("{{\"resolved\":false,\"reason\":\"{}\",\"hresult\":{}}}", reason, static_cast<uint32_t>(hr));
+  auto fail = [&](const char* reason, HRESULT hr = E_FAIL, const std::string& fields = {}) {
+    evidence = fmt::format("{{\"resolved\":false,\"reason\":\"{}\",\"hresult\":{}{}{}}}", reason,
+                           static_cast<uint32_t>(hr), fields.empty() ? "" : ",", fields);
     return false;
   };
   if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned ||
@@ -2181,18 +2674,31 @@ bool Backend::ResolveSurface(const ResolveRequest& request, uint64_t& fenceValue
   auto* device = static_cast<plume::D3D12Device*>(state_->device.get());
   if (!dest.texture || dest.width != dest_width || dest.height != dest_height || dest.depth != depth ||
       (sampled && !dest.render_target)) {
-    // Recreated once no submitted or recorded work can still use it;
-    // the open batch has not been submitted, so its fence is above every completed value.
+    // Submitted or recorded work may still use the old texture (the open batch
+    // has not been submitted, so its fence is above every completed value):
+    // it waits for that fence with its view (ReleaseRetiredTextures), and the
+    // draw gives the new one a view of its own. Otherwise the draw rewrites
+    // the SRV of the slot for the new resource.
     const uint64_t completed = static_cast<plume::D3D12CommandFence*>(state_->fence.get())->d3d->GetCompletedValue();
-    if (dest.texture && dest.last_use_fence && (completed == UINT64_MAX || completed < dest.last_use_fence))
-      return fail("native-resolve-destination-in-flight");
-    const uint32_t view = dest.view;  // The draw rewrites the SRV for the new resource.
-    dest = {};
-    dest.view = view;
+    if (dest.texture && dest.last_use_fence && (completed == UINT64_MAX || completed < dest.last_use_fence)) {
+      state_->retired_textures.push_back(std::move(dest));
+      ++state_->textures_retired;
+      dest = {};
+    } else {
+      const uint32_t view = dest.view;
+      dest = {};
+      dest.view = view;
+    }
     // A depth destination, or the one of a color sample, is the render target of its pass.
-    dest.texture = state_->device->createTexture(plume::RenderTextureDesc::Texture2D(
+    auto texture_desc = plume::RenderTextureDesc::Texture2D(
         dest_width, dest_height, 1, depth ? plume::RenderFormat::R32_FLOAT : plume::RenderFormat::R8G8B8A8_UNORM,
-        depth || sampled ? plume::RenderTextureFlag::RENDER_TARGET : plume::RenderTextureFlag::NONE));
+        depth || sampled ? plume::RenderTextureFlag::RENDER_TARGET : plume::RenderTextureFlag::NONE);
+    // Committed, as Plume makes its targets: sub-allocated copy destinations
+    // and render targets were seen corrupted on some drivers (AMD before
+    // 32.0.13031.8021, Intel Gen9.5 and Gen11; Dawn's
+    // disable_sub_allocation_for_2d_texture_with_copy_dst_or_render_attachment).
+    texture_desc.committed = true;
+    dest.texture = state_->device->createTexture(texture_desc);
     if (!dest.texture) return fail("native-resolve-destination-create");
     dest.width = dest_width; dest.height = dest_height; dest.depth = depth; dest.render_target = depth || sampled;
     dest.state = static_cast<plume::D3D12Texture*>(dest.texture.get())->resourceStates;
@@ -2266,19 +2772,15 @@ bool Backend::ResolveSurface(const ResolveRequest& request, uint64_t& fenceValue
       pipeline.PS = {kSampleResolvePs, sizeof(kSampleResolvePs)};
       if (FAILED(hr = device->d3d->CreateGraphicsPipelineState(&pipeline, IID_PPV_ARGS(&state_->sample_resolve))))
         return fail("native-sample-resolve-pipeline", hr);
-      D3D12_DESCRIPTOR_HEAP_DESC views{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, State::kDepthResolveSlots,
-                                       D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
       D3D12_DESCRIPTOR_HEAP_DESC rtv{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 1, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
-      if (FAILED(hr = device->d3d->CreateDescriptorHeap(&views, IID_PPV_ARGS(&state_->depth_resolve_views))) ||
-          FAILED(hr = device->d3d->CreateDescriptorHeap(&rtv, IID_PPV_ARGS(&state_->depth_resolve_rtv))))
+      if (FAILED(hr = device->d3d->CreateDescriptorHeap(&rtv, IID_PPV_ARGS(&state_->depth_resolve_rtv))))
         return fail("native-depth-resolve-heaps", hr);
     }
-    const uint32_t slot = state_->depth_resolve_next % State::kDepthResolveSlots;
-    const uint64_t completed = static_cast<plume::D3D12CommandFence*>(state_->fence.get())->d3d->GetCompletedValue();
-    const uint64_t slot_fence = state_->depth_resolve_slot_fence[slot];
-    if (slot_fence && (completed == UINT64_MAX || completed < slot_fence))
-      return fail("native-depth-resolve-views-in-flight");
-    ++state_->depth_resolve_next;
+    const char* layer_reason = nullptr;
+    if (!state_->EnsureDrawLayer(layer_reason, hr)) return fail(layer_reason, hr);
+    uint32_t slot = 0;
+    if (!state_->AllocateDrawView(slot)) return fail("native-draw-views-exhausted", E_FAIL, state_->DrawViewCounts());
+    state_->batch.views.push_back(slot);  // Free again once this batch completed.
     D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
     // The depth plane of D32_FLOAT_S8X24, or the color surface.
     srv.Format = depth ? DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS : DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -2290,7 +2792,7 @@ bool Backend::ResolveSurface(const ResolveRequest& request, uint64_t& fenceValue
       srv.Texture2D.MipLevels = 1;
     }
     const UINT view_step = device->d3d->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-    auto view_cpu = state_->depth_resolve_views->GetCPUDescriptorHandleForHeapStart();
+    auto view_cpu = state_->draw_views->GetCPUDescriptorHandleForHeapStart();
     view_cpu.ptr += SIZE_T(view_step) * slot;
     device->d3d->CreateShaderResourceView(src, &srv, view_cpu);
     const auto rtv = state_->depth_resolve_rtv->GetCPUDescriptorHandleForHeapStart();
@@ -2300,18 +2802,20 @@ bool Backend::ResolveSurface(const ResolveRequest& request, uint64_t& fenceValue
     // A new destination is a render target never initialized: the pass writes
     // every texel, so it is discarded first.
     if (!dest.last_use_fence) commands->DiscardResource(dst, nullptr);
+    // The draw layer restores all graphics state after the resolve pass.
+    state_->batch.draw_bindings = false;
     commands->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
     const D3D12_VIEWPORT viewport{0.0f, 0.0f, float(dest.width), float(dest.height), 0.0f, 1.0f};
     const D3D12_RECT scissor{0, 0, LONG(dest.width), LONG(dest.height)};
     commands->RSSetViewports(1, &viewport);
     commands->RSSetScissorRects(1, &scissor);
-    ID3D12DescriptorHeap* heaps[] = {state_->depth_resolve_views.Get()};
-    commands->SetDescriptorHeaps(1, heaps);
+    ID3D12DescriptorHeap* heaps[] = {state_->draw_views.Get(), state_->draw_samplers.Get()};
+    commands->SetDescriptorHeaps(2, heaps);
     commands->SetGraphicsRootSignature(state_->depth_resolve_root.Get());
     commands->SetPipelineState(sampled ? state_->sample_resolve.Get() :
                                source.desc.samples > 1 ? state_->depth_resolve_ms.Get() :
                                state_->depth_resolve_single.Get());
-    auto view_gpu = state_->depth_resolve_views->GetGPUDescriptorHandleForHeapStart();
+    auto view_gpu = state_->draw_views->GetGPUDescriptorHandleForHeapStart();
     view_gpu.ptr += UINT64(view_step) * slot;
     commands->SetGraphicsRootDescriptorTable(0, view_gpu);
     // A guest sample the host count lacks (msaa_samples 2 on a 4X target)
@@ -2321,9 +2825,6 @@ bool Backend::ResolveSurface(const ResolveRequest& request, uint64_t& fenceValue
     commands->SetGraphicsRoot32BitConstants(1, 2, pass, 0);
     commands->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     commands->DrawInstanced(3, 1, 0, 0);
-    // The draw layer binds its own heaps, root signature, targets and tables again.
-    state_->batch.draw_bindings = false;
-    state_->depth_resolve_slot_fence[slot] = state_->batch.fence;
     if (sampled) ++state_->sample_resolves;
     else ++state_->depth_resolves;
     method = sampled ? "sample-pass" : source.desc.samples > 1 ?
@@ -2397,14 +2898,11 @@ D3D12_BLEND_OP xenosBlendOp(uint32_t f, bool& ok) {
   }
 }
 constexpr UINT kDrawViews = 4096, kDrawSamplers = 2048;
-constexpr size_t kDrawStreamsMax = 8;  // Vertex buffer slots of one draw (the title binds up to 4).
-constexpr D3D12_RESOURCE_STATES kShaderResource =
-    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 // A request's constants onto the engine's block: the whole block
 // (4096 bytes) replaces it; otherwise the delta records (uint16 first
 // register, uint16 count, count x 16 bytes) are applied in order. False: a
 // malformed request.
-bool ApplyConstants(const std::vector<uint8_t>& whole, const std::vector<uint8_t>& delta,
+bool ApplyConstants(std::span<const uint8_t> whole, std::span<const uint8_t> delta,
                     std::array<uint8_t, 4096>& block) {
   if (whole.size() == 4096) {
     std::memcpy(block.data(), whole.data(), 4096);
@@ -2526,6 +3024,19 @@ bool DxilShaders(const ShaderRef& vs, const ShaderRef& ps, bool depth_only) {
 
 // The draw root signature and heaps, created by the first draw or by
 // PreparePipelines before the pool threads use the root signature.
+bool Backend::State::AllocateDrawView(uint32_t& slot) {
+  if (!free_views.empty()) { slot = free_views.back(); free_views.pop_back(); return true; }
+  if (next_view >= kDrawViews) return false;
+  slot = next_view++;
+  return true;
+}
+
+std::string Backend::State::DrawViewCounts() const {
+  return fmt::format("\"views\":{{\"capacity\":{},\"allocated\":{},\"free\":{},\"sampled\":{},\"retired_sampled\":{},"
+                     "\"sampled_released\":{},\"in_batch\":{}}}", kDrawViews, next_view - 1, free_views.size(),
+                     sampled.size(), retired_sampled.size(), sampled_released, batch.views.size());
+}
+
 bool Backend::State::EnsureDrawLayer(const char*& reason, HRESULT& hr) {
   if (draw_root) return true;
   auto* device = static_cast<plume::D3D12Device*>(this->device.get());
@@ -2589,8 +3100,9 @@ bool Backend::State::EnsureDrawLayer(const char*& reason, HRESULT& hr) {
 bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::string& evidence) {
   profile::Timer profile(profile::kEngineDraw);
   fenceValue = 0;
-  auto fail = [&](const char* reason, HRESULT hr = E_FAIL) {
-    evidence = fmt::format("{{\"drawn\":false,\"reason\":\"{}\",\"hresult\":{}}}", reason, static_cast<uint32_t>(hr));
+  auto fail = [&](const char* reason, HRESULT hr = E_FAIL, const std::string& fields = {}) {
+    evidence = fmt::format("{{\"drawn\":false,\"reason\":\"{}\",\"hresult\":{}{}{}}}", reason,
+                           static_cast<uint32_t>(hr), fields.empty() ? "" : ",", fields);
     return false;
   };
   if (!state_->ready || state_->owner_thread != GetCurrentThreadId() || state_->operation_poisoned ||
@@ -2705,13 +3217,7 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
   // version is copied into the same resource after a transition barrier.
   const UINT view_step = device->d3d->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
   const UINT sampler_step = device->d3d->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
-  auto allocate_view = [&](uint32_t& slot) {
-    if (slot) return true;
-    if (!state_->free_views.empty()) { slot = state_->free_views.back(); state_->free_views.pop_back(); return true; }
-    if (state_->next_view >= kDrawViews) return false;
-    slot = state_->next_view++;
-    return true;
-  };
+  auto allocate_view = [&](uint32_t& slot) { return slot || state_->AllocateDrawView(slot); };
   // The draw records into the open batch. A copy or a view slot that
   // recorded or submitted work can still read is never rewritten: the open
   // batch retains it until its fence and the new copy takes a new slot.
@@ -2760,7 +3266,7 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
         state_->batch.views.push_back(texture.view);
         texture.view = 0;
       }
-      if (!allocate_view(texture.view)) return fail("native-draw-views-exhausted");
+      if (!allocate_view(texture.view)) return fail("native-draw-views-exhausted", E_FAIL, state_->DrawViewCounts());
       write_view = texture.view_of != use.resource;
       texture.view_of = use.resource;
       view = texture.view;
@@ -2807,7 +3313,7 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
         s.last_use_fence = 0;
         s.view_of = nullptr;
       }
-      if (!allocate_view(s.view)) return fail("native-draw-views-exhausted");
+      if (!allocate_view(s.view)) return fail("native-draw-views-exhausted", E_FAIL, state_->DrawViewCounts());
       use.resource = s.resource.Get();
       use.state = &s.state;
       use.last_use = &s.last_use_fence;
@@ -2855,14 +3361,30 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
     sampler.MaxLOD = t.max_lod;
     for (unsigned i = 0; i < 4; ++i) sampler.BorderColor[i] = t.border_color[i];
     const uint64_t sampler_key = Fnv64(reinterpret_cast<const uint8_t*>(&sampler), sizeof(sampler), 0xCBF29CE484222325ull);
-    auto [slot_it, inserted] = state_->sampler_slots.try_emplace(sampler_key, uint32_t(state_->sampler_slots.size() + 1));
+    auto slot_it = state_->sampler_slots.find(sampler_key);
+    const bool inserted = slot_it == state_->sampler_slots.end();
     if (inserted) {
-      if (slot_it->second >= kDrawSamplers) { state_->sampler_slots.erase(slot_it); return fail("native-draw-samplers-exhausted"); }
+      if (state_->sampler_slot_use.empty()) {
+        state_->sampler_slot_keys.assign(kDrawSamplers, 0);
+        state_->sampler_slot_use.assign(kDrawSamplers, 0);
+      }
+      uint32_t slot = uint32_t(state_->sampler_slots.size() + 1);
+      if (slot >= kDrawSamplers) {
+        // Full: the slot of a sampler no recorded or submitted work can read.
+        slot = 0;
+        for (uint32_t i = 1; i < kDrawSamplers && !slot; ++i)
+          if (!in_use(state_->sampler_slot_use[i])) slot = i;
+        if (!slot) return fail("native-draw-samplers-exhausted");
+        state_->sampler_slots.erase(state_->sampler_slot_keys[slot]);
+      }
+      slot_it = state_->sampler_slots.emplace(sampler_key, slot).first;
+      state_->sampler_slot_keys[slot] = sampler_key;
       auto handle = state_->draw_samplers->GetCPUDescriptorHandleForHeapStart();
-      handle.ptr += SIZE_T(slot_it->second) * sampler_step;
+      handle.ptr += SIZE_T(slot) * sampler_step;
       device->d3d->CreateSampler(&sampler, handle);
     }
     const uint32_t sampler_slot = slot_it->second;
+    state_->sampler_slot_use[sampler_slot] = state_->batch.fence;
     // Registers 0 to 15 at c0..c3 (view) and c12..c15 (sampler); the
     // vertex texture registers 16 to 19 at c18 and c19 (bytes 288 and 304),
     // as build-sdb-shader-cache.py declares them.
@@ -2893,7 +3415,8 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
   if (!index_buffer) total = align(total + index_bytes);
   // The request's constants onto the blocks kept here (whole block or
   // the registers written since the previous request), then the usual reuse
-  // of the CBV while the version holds within the batch.
+  // of the CBV while the version holds within the batch, and of the shared
+  // block's while its bytes do.
   if (!ApplyConstants(r.vs_constants, r.vs_constants_delta, state_->vs_block) ||
       !ApplyConstants(r.ps_constants, r.ps_constants_delta, state_->ps_block))
     return fail("native-draw-constants");
@@ -2903,9 +3426,11 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
                         state_->last_vs_version == r.vs_constants_version && state_->last_vs_cbv;
   const bool ps_reuse = r.ps_constants_version && state_->cbv_batch_fence == state_->batch.fence &&
                         state_->last_ps_version == r.ps_constants_version && state_->last_ps_cbv;
+  const bool shared_reuse = state_->cbv_batch_fence == state_->batch.fence && state_->last_shared_cbv &&
+                            state_->last_shared == shared;
   const size_t vs_offset = total; if (!vs_reuse) total += 4096;
   const size_t ps_offset = total; if (!ps_reuse) total += 4096;
-  const size_t shared_offset = total; total += 512;
+  const size_t shared_offset = total; if (!shared_reuse) total += 512;
   for (auto& use : texture_uses) {
     if (!use.upload) continue;
     total = (total + D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1) & ~size_t(D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1);
@@ -2924,7 +3449,7 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
   if (!index_buffer) std::memcpy(mapped + index_offset, r.indices.data(), index_bytes);
   if (!vs_reuse) std::memcpy(mapped + vs_offset, state_->vs_block.data(), 4096);
   if (!ps_reuse) std::memcpy(mapped + ps_offset, state_->ps_block.data(), 4096);
-  std::memcpy(mapped + shared_offset, shared.data(), 512);
+  if (!shared_reuse) std::memcpy(mapped + shared_offset, shared.data(), 512);
   for (const auto& use : texture_uses) {
     if (!use.upload) continue;
     for (size_t level = 0; level < use.footprints.size(); ++level) {
@@ -2939,7 +3464,18 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
   profile::Timer record_time(profile::kEngineRecord);
   const D3D12_GPU_VIRTUAL_ADDRESS gpu = page->gpu + page_offset;
   auto& list = state_->batch_list;
-  if (!skip_draw) list->SetPipelineState(PipelineState(pipeline));
+  auto& bound = state_->batch.bound;
+  const bool bindings_valid = state_->batch.draw_bindings;
+  if (!bindings_valid) {
+    bound.pipeline = nullptr;
+    bound.stencil_valid = false;
+  }
+  // A skipped asynchronous draw does not bind a PSO. Keep the actually bound
+  // one (or unknown after invalidation), so the next real draw restores it.
+  if (!skip_draw && bound.pipeline != PipelineState(pipeline)) {
+    list->SetPipelineState(PipelineState(pipeline));
+    bound.pipeline = PipelineState(pipeline);
+  }
   auto transition = [&](State::Surface& surface, D3D12_RESOURCE_STATES after) {
     if (surface.state == after) return;
     D3D12_RESOURCE_BARRIER b{};
@@ -2977,24 +3513,39 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
         list->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
       }
     }
-    barrier(use.resource, *use.state, kShaderResource);
+    barrier(use.resource, *use.state, state_->shader_read);
   }
   if (color) transition(*color, D3D12_RESOURCE_STATE_RENDER_TARGET);
   if (depth) transition(*depth, D3D12_RESOURCE_STATE_DEPTH_WRITE);
   const auto rtv = color ? color->view->GetCPUDescriptorHandleForHeapStart() : D3D12_CPU_DESCRIPTOR_HANDLE{};
   const auto dsv = depth ? depth->view->GetCPUDescriptorHandleForHeapStart() : D3D12_CPU_DESCRIPTOR_HANDLE{};
-  list->OMSetRenderTargets(color ? 1 : 0, color ? &rtv : nullptr, FALSE, depth ? &dsv : nullptr);
-  // The viewport and the scissor come in guest pixels.
+  auto* color_resource = color ? static_cast<plume::D3D12Texture*>(color->texture.get())->d3d : nullptr;
+  auto* depth_resource = depth ? static_cast<plume::D3D12Texture*>(depth->texture.get())->d3d : nullptr;
+  if (!bindings_valid || bound.color != color_resource || bound.depth != depth_resource ||
+      bound.rtv.ptr != rtv.ptr || bound.dsv.ptr != dsv.ptr) {
+    list->OMSetRenderTargets(color ? 1 : 0, color ? &rtv : nullptr, FALSE, depth ? &dsv : nullptr);
+    bound.color = color_resource;
+    bound.depth = depth_resource;
+    bound.rtv = rtv;
+    bound.dsv = dsv;
+  }
+  // The viewport and the scissor come in guest pixels (regions.h).
   const auto& k = state_->render_mode.scale;
-  const D3D12_VIEWPORT viewport{r.viewport[0] * k.x, r.viewport[1] * k.y, r.viewport[2] * k.x, r.viewport[3] * k.y,
-                                r.viewport[4], r.viewport[5]};
-  list->RSSetViewports(1, &viewport);
+  const HostViewport host = ViewportInHost(k, r.viewport);
+  const D3D12_VIEWPORT viewport{host.x, host.y, host.width, host.height, r.viewport[4], r.viewport[5]};
+  if (!bindings_valid || std::memcmp(&bound.viewport, &viewport, sizeof(viewport))) {
+    list->RSSetViewports(1, &viewport);
+    bound.viewport = viewport;
+  }
   D3D12_RECT scissor{std::max<LONG>(k.X(r.scissor[0]), 0), std::max<LONG>(k.Y(r.scissor[1]), 0),
                      std::min<LONG>(k.X(r.scissor[2]), target.desc.width),
                      std::min<LONG>(k.Y(r.scissor[3]), target.desc.height)};
   if (scissor.right <= scissor.left || scissor.bottom <= scissor.top) scissor = {0, 0, 0, 0};
-  list->RSSetScissorRects(1, &scissor);
-  if (!state_->batch.draw_bindings) {  // Clears and copies in between leave them bound.
+  if (!bindings_valid || std::memcmp(&bound.scissor, &scissor, sizeof(scissor))) {
+    list->RSSetScissorRects(1, &scissor);
+    bound.scissor = scissor;
+  }
+  if (!bindings_valid) {
     list->SetGraphicsRootSignature(state_->draw_root.Get());
     ID3D12DescriptorHeap* heaps[] = {state_->draw_views.Get(), state_->draw_samplers.Get()};
     list->SetDescriptorHeaps(2, heaps);
@@ -3004,12 +3555,21 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
   }
   const D3D12_GPU_VIRTUAL_ADDRESS vs_cbv = vs_reuse ? state_->last_vs_cbv : gpu + vs_offset;
   const D3D12_GPU_VIRTUAL_ADDRESS ps_cbv = ps_reuse ? state_->last_ps_cbv : gpu + ps_offset;
-  list->SetGraphicsRootConstantBufferView(4, vs_cbv);
-  list->SetGraphicsRootConstantBufferView(5, ps_cbv);
-  list->SetGraphicsRootConstantBufferView(6, gpu + shared_offset);
+  const D3D12_GPU_VIRTUAL_ADDRESS shared_cbv = shared_reuse ? state_->last_shared_cbv : gpu + shared_offset;
+  const std::array<D3D12_GPU_VIRTUAL_ADDRESS, 3> constants{vs_cbv, ps_cbv, shared_cbv};
+  for (UINT i = 0; i < constants.size(); ++i) {
+    if (!bindings_valid || bound.constants[i] != constants[i]) {
+      list->SetGraphicsRootConstantBufferView(4 + i, constants[i]);
+      bound.constants[i] = constants[i];
+    }
+  }
   state_->cbv_batch_fence = state_->batch.fence;
   state_->last_vs_cbv = vs_cbv;
   state_->last_ps_cbv = ps_cbv;
+  if (!shared_reuse) {
+    state_->last_shared_cbv = shared_cbv;
+    state_->last_shared = shared;
+  }
   state_->last_vs_version = r.vs_constants_version;
   state_->last_ps_version = r.ps_constants_version;
   std::array<D3D12_VERTEX_BUFFER_VIEW, kDrawStreamsMax> streams{};
@@ -3021,15 +3581,35 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
       streams[i] = {gpu + stream_offsets[i], UINT(r.streams[i].data.size()), r.streams[i].stride};
     }
   }
-  list->IASetVertexBuffers(0, UINT(r.streams.size()), streams.data());
+  const UINT stream_count = UINT(r.streams.size());
+  if (!bindings_valid || bound.stream_count != stream_count ||
+      std::memcmp(bound.streams.data(), streams.data(), stream_count * sizeof(streams[0]))) {
+    list->IASetVertexBuffers(0, stream_count, streams.data());
+    bound.streams = streams;
+    bound.stream_count = stream_count;
+  }
   if (index_buffer) barrier(index_buffer->resource.Get(), index_buffer->state, kBufferRead);
   const D3D12_INDEX_BUFFER_VIEW indices{
       index_buffer ? index_buffer->resource->GetGPUVirtualAddress() + r.index_offset : gpu + index_offset,
       UINT(index_bytes), r.index32 ? DXGI_FORMAT_R32_UINT : DXGI_FORMAT_R16_UINT};
-  list->IASetIndexBuffer(&indices);
-  list->IASetPrimitiveTopology(PrimitiveTopology(r.topology));
-  list->OMSetBlendFactor(r.blend_factor.data());
-  if (r.stencil_enable) list->OMSetStencilRef(r.stencil_ref);
+  if (!bindings_valid || std::memcmp(&bound.indices, &indices, sizeof(indices))) {
+    list->IASetIndexBuffer(&indices);
+    bound.indices = indices;
+  }
+  const auto topology = PrimitiveTopology(r.topology);
+  if (!bindings_valid || bound.topology != topology) {
+    list->IASetPrimitiveTopology(topology);
+    bound.topology = topology;
+  }
+  if (!bindings_valid || std::memcmp(bound.blend.data(), r.blend_factor.data(), sizeof(bound.blend))) {
+    list->OMSetBlendFactor(r.blend_factor.data());
+    bound.blend = r.blend_factor;
+  }
+  if (r.stencil_enable && (!bound.stencil_valid || bound.stencil_ref != r.stencil_ref)) {
+    list->OMSetStencilRef(r.stencil_ref);
+    bound.stencil_ref = r.stencil_ref;
+    bound.stencil_valid = true;
+  }
   if (!skip_draw) list->DrawIndexedInstanced(r.index_count, 1, 0, r.base_vertex, 0);
   record_time.Stop();
   // Complete when the batch fence completes; no Signal of its own.
@@ -3043,6 +3623,33 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fenceValue, std::strin
   const uint64_t batch_operations = ++state_->batch.operations;
   ++state_->operations;
   ++state_->draws;
+  // A triangle list right after a draw of the batch that bound the same
+  // state could have been part of it (profile::kDrawsSameState and below).
+  if (Diagnostics()) {
+    auto& p = state_->fusion_probe;
+    const bool uploads = std::any_of(texture_uses.begin(), texture_uses.end(), [](const auto& u) { return u.upload; });
+    const bool same_state = !skip_draw && !uploads && bindings_valid && p.fence == batch_fence &&
+        p.operation + 1 == batch_operations && topology == D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST &&
+        p.bound.topology == topology && p.bound.pipeline == bound.pipeline && p.bound.color == bound.color &&
+        p.bound.depth == bound.depth && p.bound.rtv.ptr == bound.rtv.ptr && p.bound.dsv.ptr == bound.dsv.ptr &&
+        !std::memcmp(&p.bound.viewport, &bound.viewport, sizeof(bound.viewport)) &&
+        !std::memcmp(&p.bound.scissor, &bound.scissor, sizeof(bound.scissor)) &&
+        p.bound.constants[0] == bound.constants[0] && p.bound.constants[1] == bound.constants[1] &&
+        p.shared == shared && p.bound.blend == bound.blend && p.bound.stencil_ref == bound.stencil_ref;
+    const bool same_streams = same_state && p.bound.stream_count == bound.stream_count &&
+        !std::memcmp(p.bound.streams.data(), bound.streams.data(), bound.stream_count * sizeof(bound.streams[0]));
+    const bool fusable = same_streams && p.base_vertex == r.base_vertex &&
+        p.bound.indices.Format == bound.indices.Format &&
+        p.bound.indices.BufferLocation + p.bound.indices.SizeInBytes == bound.indices.BufferLocation;
+    profile::Count(profile::kDrawsSameState, same_state);
+    profile::Count(profile::kDrawsSameStreams, same_streams);
+    profile::Count(profile::kDrawsFusable, fusable);
+    p.fence = skip_draw ? 0 : batch_fence;
+    p.operation = batch_operations;
+    p.bound = bound;
+    p.shared = shared;
+    p.base_vertex = r.base_vertex;
+  }
   if (batch_operations >= kBatchOperationsMax && !state_->CloseBatch(batch_reason, hr)) return fail(batch_reason, hr);
   if (!r.want_evidence) {  // A batched draw formats nothing.
     evidence.clear();
@@ -3119,7 +3726,7 @@ bool Backend::PrecompilePipeline(const PipelineDesc& d, bool& present, std::stri
   // The list holds the samples of the boots it came from; a multisampled
   // target has the sample count of the render mode, as in the key of the draw.
   std::array<uint32_t, 21> state = d.state;
-  state[8] = state_->render_mode.Samples(state[8]);
+  state[8] = state_->PipelineSamples(state[8]);
   const uint64_t key = PipelineKey(d.vs.key, d.ps.key, d.layout_id, state);
   PipelineDesc listed = d;
   listed.state = state;
@@ -3171,7 +3778,7 @@ bool Backend::PostPipeline(const PipelineDesc& d) {
   const bool depth_only = d.state[17];
   if (!DxilShaders(d.vs, d.ps, depth_only) || !d.elements || d.elements->empty()) return false;
   PipelineDesc listed = d;
-  listed.state[8] = state_->render_mode.Samples(listed.state[8]);
+  listed.state[8] = state_->PipelineSamples(listed.state[8]);
   const uint64_t key = PipelineKey(listed.vs.key, listed.ps.key, listed.layout_id, listed.state);
   return state_->pipeline_set.Post(key, std::move(listed), true, false);
 }
@@ -3279,7 +3886,7 @@ bool Backend::UploadSampled(const DrawTexture& t, std::string& evidence) {
     from.PlacedFootprint.Offset += page_offset;
     list->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
   }
-  barrier(kShaderResource);
+  barrier(state_->shader_read);
   s.version = t.version;
   s.last_use_fence = state_->batch.fence;
   const uint64_t batch_operations = ++state_->batch.operations;

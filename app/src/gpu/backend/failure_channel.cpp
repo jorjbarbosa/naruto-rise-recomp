@@ -1,5 +1,6 @@
 // The failure channel of an engine session (failure_channel.h).
 #include "gpu/backend/failure_channel.h"
+#include "diagnostics/incident.h"
 
 #include <fmt/format.h>
 
@@ -20,6 +21,7 @@ bool FailureChannel::Retain(Failure failure) {
     }
     first_ = std::move(failure);
     if (first_.evidence.empty()) first_.evidence = "null";
+    narutorise::incident::FirstFailure(first_.source, first_.evidence);
     failed_.store(true, std::memory_order_release);
     wakers = wakers_;
   }

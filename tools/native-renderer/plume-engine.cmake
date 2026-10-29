@@ -39,10 +39,65 @@ foreach(dep IN ZIP_LISTS dep_names dep_dirs dep_commits)
         message(FATAL_ERROR "${dep_0} source must be clean at ${dep_2}")
     endif()
 endforeach()
-# Compiled from the upstream sources, unchanged.
+# Each backend source takes a local patch of plume-patches/, applied to a copy
+# in the build folder. Source, patch and result are checked by the SHA-256 of
+# their text with LF line endings, so the compiled source has one identity
+# whatever the line endings of the checkout and of the copy.
+function(native_renderer_text_sha256 path out)
+    file(READ "${path}" text)
+    string(REPLACE "\r\n" "\n" text "${text}")
+    string(SHA256 sha "${text}")
+    set(${out} "${sha}" PARENT_SCOPE)
+endfunction()
+# Copies `file` of the checkout to `dir` with `patch` applied, unless the copy
+# already has the accepted result.
+function(native_renderer_patched_copy file patch source_sha256 patch_sha256 patched_sha256 dir)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${NATIVE_RENDERER_PLUME_SOURCE}/${file}" "${patch}")
+    set(patched_now "")
+    if(EXISTS "${dir}/${file}")
+        native_renderer_text_sha256("${dir}/${file}" patched_now)
+    endif()
+    if(patched_now STREQUAL patched_sha256)
+        return()
+    endif()
+    native_renderer_text_sha256("${NATIVE_RENDERER_PLUME_SOURCE}/${file}" source_now)
+    native_renderer_text_sha256("${patch}" patch_now)
+    if(NOT source_now STREQUAL source_sha256 OR NOT patch_now STREQUAL patch_sha256)
+        message(FATAL_ERROR "${file} or its patch differs from the accepted identity")
+    endif()
+    # Both copies are written the same way, so their line endings agree.
+    file(REMOVE_RECURSE "${dir}")
+    foreach(copy IN ITEMS "${NATIVE_RENDERER_PLUME_SOURCE}/${file}|${file}" "${patch}|patch.diff")
+        string(REPLACE "|" ";" copy "${copy}")
+        list(GET copy 0 copy_from)
+        list(GET copy 1 copy_to)
+        file(READ "${copy_from}" copy_text)
+        string(REPLACE "\r\n" "\n" copy_text "${copy_text}")
+        file(WRITE "${dir}/${copy_to}" "${copy_text}")
+    endforeach()
+    # The build folder can sit inside a Git work tree: the ceiling keeps git apply
+    # from finding it, so the patch applies to the copy as a plain patch.
+    execute_process(COMMAND "${CMAKE_COMMAND}" -E env "GIT_CEILING_DIRECTORIES=${CMAKE_BINARY_DIR}"
+                            "${GIT_EXECUTABLE}" -c core.autocrlf=false apply --whitespace=nowarn patch.diff
+                    WORKING_DIRECTORY "${dir}" RESULT_VARIABLE applied)
+    native_renderer_text_sha256("${dir}/${file}" patched_now)
+    if(NOT applied EQUAL 0 OR NOT patched_now STREQUAL patched_sha256)
+        message(FATAL_ERROR "The Plume patch of ${file} did not give the accepted source")
+    endif()
+endfunction()
+# D3D12: the adapter loop skips an adapter whose shader model query fails
+# without using its released device, and the swap chain releases what a failed
+# creation made and closes its frame latency handle.
 if(NARUTORISE_NATIVE_D3D12)
+    set(plume_d3d12_dir "${CMAKE_BINARY_DIR}/plume-d3d12")
+    native_renderer_patched_copy(plume_d3d12.cpp
+        "${CMAKE_CURRENT_LIST_DIR}/plume-patches/d3d12-release-and-adapter.patch"
+        7738a95c6b9f6760a5dc1bde7da2b2e3ae6754033ed6242482b1c9d2d10ebc74
+        283f32b936b4cc3012514bad80059f2e84b875da43edbd15fea42a152499e158
+        0346a50612df6807794cd7447ba0ac7baa339d4097bdb9543467dcedc14d1c9c
+        "${plume_d3d12_dir}")
     add_library(native_renderer_plume STATIC
-        "${NATIVE_RENDERER_PLUME_SOURCE}/plume_d3d12.cpp"
+        "${plume_d3d12_dir}/plume_d3d12.cpp"
         "${NATIVE_RENDERER_PLUME_SOURCE}/contrib/D3D12MemoryAllocator/src/D3D12MemAlloc.cpp")
     target_include_directories(native_renderer_plume PUBLIC "${NATIVE_RENDERER_PLUME_SOURCE}"
         "${NATIVE_RENDERER_PLUME_SOURCE}/contrib/D3D12MemoryAllocator/include")
@@ -52,63 +107,25 @@ if(NARUTORISE_NATIVE_D3D12)
 endif()
 # volk and the Vulkan Memory Allocator are implemented inside plume_vulkan.cpp;
 # volk loads the system loader (vulkan-1.dll) at run time, so nothing is linked.
-# The Vulkan source takes the local patch of plume-patches/ (the device enables
-# timeline semaphores when it supports them), applied to a copy in the build
-# folder. Source, patch and result are checked by the SHA-256 of their text
-# with LF line endings, so the compiled source has one identity whatever the
-# line endings of the checkout and of the copy.
-function(native_renderer_text_sha256 path out)
-    file(READ "${path}" text)
-    string(REPLACE "\r\n" "\n" text "${text}")
-    string(SHA256 sha "${text}")
-    set(${out} "${sha}" PARENT_SCOPE)
-endfunction()
+# The Vulkan patch: the device enables timeline semaphores when it supports them.
 if(NARUTORISE_NATIVE_VULKAN)
-    set(plume_vulkan_source_sha256 c81dc9aeb7544cabd12835bcc924a03184ba91263867016f41cb9f0b4804f849)
-    set(plume_vulkan_patch "${CMAKE_CURRENT_LIST_DIR}/plume-patches/vulkan-timeline-semaphore.patch")
-    set(plume_vulkan_patch_sha256 e0267d3a4f4b752f8a0d428a1f71efae03d312c0d3354cdd80d94e838c86afa4)
-    set(plume_vulkan_patched_sha256 3e237565735ba0d06bc0d95f53579a000767e1bb8b33692c27d7a72f439f3edc)
     set(plume_vulkan_dir "${CMAKE_BINARY_DIR}/plume-vulkan")
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-                 "${NATIVE_RENDERER_PLUME_SOURCE}/plume_vulkan.cpp" "${plume_vulkan_patch}")
-    set(plume_vulkan_patched_now "")
-    if(EXISTS "${plume_vulkan_dir}/plume_vulkan.cpp")
-        native_renderer_text_sha256("${plume_vulkan_dir}/plume_vulkan.cpp" plume_vulkan_patched_now)
-    endif()
-    if(NOT plume_vulkan_patched_now STREQUAL plume_vulkan_patched_sha256)
-        native_renderer_text_sha256("${NATIVE_RENDERER_PLUME_SOURCE}/plume_vulkan.cpp" plume_vulkan_source_now)
-        native_renderer_text_sha256("${plume_vulkan_patch}" plume_vulkan_patch_now)
-        if(NOT plume_vulkan_source_now STREQUAL plume_vulkan_source_sha256 OR
-           NOT plume_vulkan_patch_now STREQUAL plume_vulkan_patch_sha256)
-            message(FATAL_ERROR "plume_vulkan.cpp or its patch differs from the accepted identity")
-        endif()
-        # Both copies are written the same way, so their line endings agree.
-        file(REMOVE_RECURSE "${plume_vulkan_dir}")
-        foreach(copy IN ITEMS "${NATIVE_RENDERER_PLUME_SOURCE}/plume_vulkan.cpp|plume_vulkan.cpp"
-                              "${plume_vulkan_patch}|patch.diff")
-            string(REPLACE "|" ";" copy "${copy}")
-            list(GET copy 0 copy_from)
-            list(GET copy 1 copy_to)
-            file(READ "${copy_from}" copy_text)
-            string(REPLACE "\r\n" "\n" copy_text "${copy_text}")
-            file(WRITE "${plume_vulkan_dir}/${copy_to}" "${copy_text}")
-        endforeach()
-        # The build folder can sit inside a Git work tree: the ceiling keeps git apply
-        # from finding it, so the patch applies to the copy as a plain patch.
-        execute_process(COMMAND "${CMAKE_COMMAND}" -E env "GIT_CEILING_DIRECTORIES=${CMAKE_BINARY_DIR}"
-                                "${GIT_EXECUTABLE}" -c core.autocrlf=false apply --whitespace=nowarn patch.diff
-                        WORKING_DIRECTORY "${plume_vulkan_dir}" RESULT_VARIABLE plume_vulkan_applied)
-        native_renderer_text_sha256("${plume_vulkan_dir}/plume_vulkan.cpp" plume_vulkan_patched_now)
-        if(NOT plume_vulkan_applied EQUAL 0 OR NOT plume_vulkan_patched_now STREQUAL plume_vulkan_patched_sha256)
-            message(FATAL_ERROR "The Plume Vulkan patch did not give the accepted source")
-        endif()
-    endif()
+    native_renderer_patched_copy(plume_vulkan.cpp
+        "${CMAKE_CURRENT_LIST_DIR}/plume-patches/vulkan-timeline-semaphore.patch"
+        c81dc9aeb7544cabd12835bcc924a03184ba91263867016f41cb9f0b4804f849
+        e0267d3a4f4b752f8a0d428a1f71efae03d312c0d3354cdd80d94e838c86afa4
+        3e237565735ba0d06bc0d95f53579a000767e1bb8b33692c27d7a72f439f3edc
+        "${plume_vulkan_dir}")
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                  "${CMAKE_CURRENT_LIST_DIR}/../../app/cmake/extend-plume-vulkan.py")
+    set(plume_vulkan_wayland)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(plume_vulkan_wayland wayland)
+    endif()
     execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/../../app/cmake/extend-plume-vulkan.py"
                             "${plume_vulkan_dir}/plume_vulkan.cpp" "${CMAKE_BINARY_DIR}/plume-native-vulkan.cpp"
-                            COMMAND_ERROR_IS_FATAL ANY)
+                            ${plume_vulkan_wayland} COMMAND_ERROR_IS_FATAL ANY)
     add_library(native_renderer_plume_vulkan STATIC "${CMAKE_BINARY_DIR}/plume-native-vulkan.cpp")
     target_include_directories(native_renderer_plume_vulkan PUBLIC "${NATIVE_RENDERER_PLUME_SOURCE}"
         "${NATIVE_RENDERER_PLUME_SOURCE}/contrib/volk"
@@ -116,4 +133,9 @@ if(NARUTORISE_NATIVE_VULKAN)
         "${NATIVE_RENDERER_PLUME_SOURCE}/contrib/VulkanMemoryAllocator/include")
     target_compile_features(native_renderer_plume_vulkan PUBLIC cxx_std_17)
     target_compile_definitions(native_renderer_plume_vulkan PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+    # On Linux, Plume's own swap chain queries the window through Xlib.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        find_package(X11 REQUIRED)
+        target_link_libraries(native_renderer_plume_vulkan PUBLIC X11::X11)
+    endif()
 endif()

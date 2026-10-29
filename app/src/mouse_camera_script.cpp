@@ -103,7 +103,7 @@ void TurnCamera(uint8_t* base, uint32_t instance, uint32_t offset) {
   }
   if (dx == 0.0f && dy == 0.0f && g_pending.yaw == 0.0f && g_pending.pitch == 0.0f) return;
 
-  float scale = kRadiansPerPixel * static_cast<float>(rex::cvar::Query<double>("mnk_sensitivity"));
+  float scale = kRadiansPerPixel * static_cast<float>(rex::input::mnk::MouseCameraSensitivity());
   if (REX_LOAD_U32(instance + 1752) != 0) scale *= 0.25f;  // the script's slow mode
   // As the stick: x > 0 is right, y > 0 is up (the mouse moving up).
   float x = dx;

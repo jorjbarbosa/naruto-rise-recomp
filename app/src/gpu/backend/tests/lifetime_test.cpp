@@ -1,7 +1,8 @@
 // Host test of the own resource lifetime, on a real D3D12 device.
-// Never enters a guest function or the SDK GPU. A resolve destination is
-// refused recreation while its last use is in flight and recreated once idle;
-// released in flight it is retired and freed by the fence. A sampled copy
+// Never enters a guest function or the SDK GPU. A resolve destination
+// recreated while its last use is in flight retires the old texture until the
+// fence, and is recreated in place once idle; released in flight it is retired
+// and freed by the fence. A sampled copy
 // (seeded as a draw leaves it) released in flight is retired with its SRV slot,
 // released idle frees the slot at once, and both are gone after WaitIdle;
 // ReleaseRemaining leaves no sampled copy. Usage:
@@ -28,7 +29,7 @@ long long Count(const std::string& counts, const char* name) {
 int main(int argc, char** argv) {
   if (argc != 2 || std::filesystem::exists(argv[1])) return 2;
   // The debug layer is off by default (engine.cpp); the host test asks for it.
-  if (!std::getenv("REX_NATIVE_D3D12_DEBUG")) _putenv_s("REX_NATIVE_D3D12_DEBUG", "1");
+  if (!std::getenv("REX_NATIVE_D3D12_DEBUG")) SetTestEnvironment("REX_NATIVE_D3D12_DEBUG", "1");
   std::ofstream output(argv[1]);
   if (!output) return 3;
   bool passed = true;
@@ -53,7 +54,8 @@ int main(int argc, char** argv) {
   uint64_t fence = 0;
   line("clear", engine.ClearSurfaces(clear, fence, evidence), evidence);
 
-  // Resolve destination: refused recreation in flight, recreated once idle.
+  // Resolve destination: recreated in flight with the old texture retired
+  // until its fence, recreated in place once idle.
   ResolveRequest resolve;
   resolve.source_key = source.key;
   resolve.dest_key = 0x5000;
@@ -61,11 +63,16 @@ int main(int argc, char** argv) {
   resolve.dest_format = 6;
   line("resolve-created", engine.ResolveSurface(resolve, fence, evidence) && Has(evidence, "\"resolved\":true"), evidence);
   resolve.dest_width = resolve.dest_height = 32;
-  const bool refused = !engine.ResolveSurface(resolve, fence, evidence);
-  line("resolve-recreate-refused-in-flight", refused && Has(evidence, "native-resolve-destination-in-flight"), evidence);
+  line("resolve-recreated-in-flight", engine.ResolveSurface(resolve, fence, evidence) &&
+       Has(evidence, "\"resolved\":true") && Has(evidence, "\"dest_size\":[32,32]") &&
+       Count(engine.ResourceCounts(), "retired_textures") == 1, evidence);
   line("wait-idle-1", engine.WaitIdle(evidence), evidence);
+  line("recreate-retired-freed-by-fence", Count(engine.ResourceCounts(), "retired_textures") == 0,
+       engine.ResourceCounts());
+  resolve.dest_width = resolve.dest_height = 64;
   line("resolve-recreated-when-idle", engine.ResolveSurface(resolve, fence, evidence) &&
-       Has(evidence, "\"resolved\":true") && Has(evidence, "\"dest_size\":[32,32]"), evidence);
+       Has(evidence, "\"resolved\":true") && Has(evidence, "\"dest_size\":[64,64]") &&
+       Count(engine.ResourceCounts(), "retired_textures") == 0, evidence);
   line("resolve-destination-retired-in-flight", engine.ReleaseTexture(resolve.dest_key, evidence) &&
        Has(evidence, "\"own_texture\":true") && Has(evidence, "\"deferred\":true") &&
        Count(engine.ResourceCounts(), "retired_textures") == 1, evidence);

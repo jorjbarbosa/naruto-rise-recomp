@@ -6,6 +6,9 @@
 #include "gpu/backend/engine.h"
 #include "gpu/backend/backend.h"
 #include "gpu/backend/failure_channel.h"
+#include "diagnostics/incident.h"
+
+#include <cmath>
 
 #include <fmt/format.h>
 #include <fmt/ranges.h>
@@ -37,6 +40,8 @@ bool Engine::Refused(std::string& evidence) const {
 }
 
 bool Engine::Initialize(std::string& evidence, const RenderMode& mode) {
+  narutorise::incident::Event("device-create", "begin", ApiName(mode.api));
+  narutorise::incident::SetMetadata("backend_active", ApiName(mode.api));
   if (!backend_) {
     api_ = mode.api;
 #if !defined(NARUTORISE_NATIVE_D3D12_DISABLED)
@@ -48,10 +53,14 @@ bool Engine::Initialize(std::string& evidence, const RenderMode& mode) {
     if (!backend_) {
       evidence = fmt::format("{{\"operation\":\"native-backend-unavailable\",\"api\":\"{}\","
                              "\"readiness_criteria_met\":false}}", ApiName(mode.api));
+      narutorise::incident::FirstFailure("device-create", evidence);
       return false;
     }
   }
-  return backend_->Initialize(evidence, mode);
+  const bool ok = backend_->Initialize(evidence, mode);
+  narutorise::incident::Event("device-create", ok ? "end" : "failed", evidence);
+  if (!ok) narutorise::incident::FirstFailure("device-create", evidence);
+  return ok;
 }
 std::string Engine::DeviceName() const { return backend_ ? backend_->DeviceName() : std::string(); }
 bool Engine::Shutdown(std::string& evidence) {
@@ -97,13 +106,23 @@ bool Engine::WaitIdle(std::string& evidence) {
   evidence.insert(evidence.size() - 1, ",\"submitted_work_idle\":" + idle);
   return false;
 }
-bool Engine::CloseFrame(void* event, uint64_t& target, std::string& evidence) {
+bool Engine::CloseFrame(FrameEvent event, uint64_t& target, std::string& evidence) {
   if (Refused(evidence)) return false;
-  return backend_ ? backend_->CloseFrame(event, target, evidence) : NoBackend(evidence);
+  const bool first = incident_first_submit_;
+  if (first) narutorise::incident::Event("first-frame-submit", "begin");
+  const bool ok = backend_ ? backend_->CloseFrame(std::move(event), target, evidence) : NoBackend(evidence);
+  if (first) narutorise::incident::Event("first-frame-submit", ok ? "end" : "failed", evidence);
+  incident_first_submit_ = false;
+  if (!ok) narutorise::incident::FirstFailure("frame-submit", evidence);
+  return ok;
 }
-bool Engine::AttachWindow(void* window, std::string& evidence, const PresentMode& mode) {
+bool Engine::AttachWindow(const platform::NativeWindow& window, std::string& evidence, const PresentMode& mode) {
   if (Refused(evidence)) return false;
   return backend_ ? backend_->AttachWindow(window, evidence, mode) : NoBackend(evidence);
+}
+bool Engine::Reconfigure(const RenderMode& render, const PresentMode& present, std::string& evidence) {
+  if (Refused(evidence)) return false;
+  return backend_ ? backend_->Reconfigure(render, present, evidence) : NoBackend(evidence);
 }
 bool Engine::DetachWindow(std::string& evidence) {
   return backend_ ? backend_->DetachWindow(evidence) : NoBackend(evidence);
@@ -120,9 +139,54 @@ bool Engine::StageFront(uint32_t key, uint32_t& slot, std::string& evidence) {
   return backend_ ? backend_->StageFront(key, slot, evidence) : NoBackend(evidence);
 }
 bool Engine::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, uint32_t& width, uint32_t& height,
-                     std::string& evidence) {
+                     std::string& evidence, bool* presented) {
+  if (presented) *presented = false;
   if (Refused(evidence)) return false;
-  return backend_ ? backend_->Present(slot, capture, bgra, width, height, evidence) : NoBackend(evidence);
+  bool shown = false;
+  if (incident_first_present_) narutorise::incident::Event("first-native-present", "begin");
+  const bool ok = backend_ ? backend_->Present(slot, capture, bgra, width, height, evidence, shown) : NoBackend(evidence);
+  narutorise::incident::Progress(narutorise::incident::Role::kGpu);
+  if (incident_first_present_ && (!ok || shown)) {
+    narutorise::incident::Event("first-native-present", ok ? "end" : "failed", evidence);
+    incident_first_present_ = false;
+  }
+  if (!ok) narutorise::incident::FirstFailure("native-present", evidence);
+  if (presented) *presented = ok && shown;
+  return ok;
+}
+// The descriptions of the UI layer are checked here, once for both backends.
+bool Engine::UploadUiTexture(uint32_t key, uint32_t width, uint32_t height, const std::vector<uint8_t>& rgba,
+                             std::string& evidence) {
+  if (Refused(evidence)) return false;
+  if (!key || !width || !height || width > 8192 || height > 8192 || rgba.size() != size_t(width) * height * 4) {
+    evidence = fmt::format("{{\"uploaded\":false,\"reason\":\"native-ui-texture-description\",\"key\":{},"
+                           "\"size\":[{},{}],\"bytes\":{}}}", key, width, height, rgba.size());
+    return false;
+  }
+  return backend_ ? backend_->UploadUiTexture(key, width, height, rgba, evidence) : NoBackend(evidence);
+}
+bool Engine::ReleaseUiTexture(uint32_t key, std::string& evidence) {
+  return backend_ ? backend_->ReleaseUiTexture(key, evidence) : NoBackend(evidence);
+}
+bool Engine::SetUiFrame(UiFrame frame, std::string& evidence) {
+  const auto refuse = [&](const char* reason, size_t draw) {
+    evidence = fmt::format("{{\"set\":false,\"reason\":\"{}\",\"draw\":{}}}", reason, draw);
+    return false;
+  };
+  if (!std::isfinite(frame.width) || !std::isfinite(frame.height) || frame.width < 0 || frame.height < 0)
+    return refuse("native-ui-frame-space", 0);
+  for (size_t i = 0; i < frame.draws.size(); ++i) {
+    const UiDraw& d = frame.draws[i];
+    if (d.scissor && !(std::isfinite(d.scissor_left) && std::isfinite(d.scissor_top) &&
+                       std::isfinite(d.scissor_right) && std::isfinite(d.scissor_bottom)))
+      return refuse("native-ui-frame-scissor", i);
+    if (d.index_offset > frame.indices.size() || d.index_count > frame.indices.size() - d.index_offset)
+      return refuse("native-ui-frame-indices", i);
+    for (uint32_t k = 0; k < d.index_count; ++k)
+      if (uint64_t(d.vertex_offset) + frame.indices[d.index_offset + k] >= frame.vertices.size())
+        return refuse("native-ui-frame-vertices", i);
+  }
+  return backend_ ? backend_->SetUiFrame(std::move(frame), evidence) : NoBackend(evidence);
 }
 std::string Engine::ResourceCounts() { return backend_ ? backend_->ResourceCounts() : std::string("{}"); }
 bool Engine::ReleaseTexture(uint32_t key, std::string& evidence) {

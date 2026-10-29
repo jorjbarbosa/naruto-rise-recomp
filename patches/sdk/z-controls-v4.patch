@@ -1,0 +1,177 @@
+diff --git a/include/rex/input/device.h b/include/rex/input/device.h
+--- a/include/rex/input/device.h
++++ b/include/rex/input/device.h
+@@ -21,6 +21,8 @@
+ /// that outlives its device resolves to nothing rather than aliasing whichever
+ /// device took the freed slot.
+ enum class DeviceId : uint64_t { kInvalid = 0 };
++// One token exported by the runtime, shared across the app/DLL boundary.
++const std::string& DeviceSessionToken();
+ 
+ struct DeviceInfo {
+   DeviceId id = DeviceId::kInvalid;
+@@ -28,6 +30,10 @@
+   std::string name;
+   std::string guid;
+   bool synthetic = false;  // keyboard/mouse emulation or the NOP stand-in
++  // Backend-qualified identity shared with configuration UIs. An empty key
++  // is an internal/fallback device, not selectable physical hardware.
++  std::string key;
++  bool transient = false;
+ };
+ 
+ }  // namespace rex::input
+diff --git a/include/rex/input/sdl/device_identity.h b/include/rex/input/sdl/device_identity.h
+new file mode 100644
+--- /dev/null
++++ b/include/rex/input/sdl/device_identity.h
+@@ -0,0 +1,19 @@
++#pragma once
++#include <SDL3/SDL.h>
++#include <rex/input/device.h>
++#include <string>
++namespace rex::input::sdl {
++inline std::string DeviceKey(SDL_Gamepad* pad) {
++  char guid[33]{};
++  SDL_GUIDToString(SDL_GetJoystickGUID(SDL_GetGamepadJoystick(pad)), guid, sizeof(guid));
++  const char* serial = SDL_GetGamepadSerial(pad);
++  const char* path = SDL_GetGamepadPath(pad);
++  if (serial && *serial)
++    return std::string("sdl:serial:") + guid + ":" + serial +
++           (path && *path ? std::string(":path:") + path : "");
++  if (path && *path)
++    return std::string("sdl:path:") + guid + ":" + path;
++  // Never let an ID reused by a later process impersonate saved hardware.
++  return "sdl:session:" + DeviceSessionToken() + ":" + std::to_string(SDL_GetGamepadID(pad));
++}
++}  // namespace rex::input::sdl
+diff --git a/src/input/device_assignment.cpp b/src/input/device_assignment.cpp
+--- a/src/input/device_assignment.cpp
++++ b/src/input/device_assignment.cpp
+@@ -10,8 +10,13 @@
+  */
+ 
+ #include <rex/input/device_assignment.h>
++#include <chrono>
+ 
+ namespace rex::input {
++const std::string& DeviceSessionToken() {
++  static const std::string token = std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
++  return token;
++}
+ 
+ void SlotAssignment::OnDevicesChanged(const std::vector<DeviceInfo>& devices) {
+   for (auto& user : users_) {
+diff --git a/src/input/input_system.cpp b/src/input/input_system.cpp
+--- a/src/input/input_system.cpp
++++ b/src/input/input_system.cpp
+@@ -99,6 +99,8 @@
+     auto existing = std::find_if(devices_.begin(), devices_.end(),
+                                  [&](const DeviceInfo& d) { return d.id == seen[i].id; });
+     if (existing != devices_.end()) {
++      changed |= existing->key != seen[i].key || existing->name != seen[i].name ||
++                 existing->guid != seen[i].guid || existing->transient != seen[i].transient;
+       seen[i].ordinal = existing->ordinal;
+       continue;
+     }
+diff --git a/src/input/sdl/sdl_input_driver.cpp b/src/input/sdl/sdl_input_driver.cpp
+--- a/src/input/sdl/sdl_input_driver.cpp
++++ b/src/input/sdl/sdl_input_driver.cpp
+@@ -17,6 +17,7 @@
+ #include <rex/cvar.h>
+ #include <rex/input/flags.h>
+ #include <rex/input/sdl/sdl_input_driver.h>
++#include <rex/input/sdl/device_identity.h>
+ #include <rex/logging.h>
+ #include <rex/ui/virtual_key.h>
+ 
+@@ -161,6 +162,8 @@
+     SDL_GUIDToString(SDL_GetJoystickGUID(SDL_GetGamepadJoystick(controller.sdl)), guid_text,
+                      static_cast<int>(sizeof(guid_text)));
+     info.guid = guid_text;
++    info.key = DeviceKey(controller.sdl);
++    info.transient = info.key.starts_with("sdl:session:");
+     info.synthetic = false;
+     out.push_back(info);
+   }
+@@ -657,15 +660,30 @@
+   c.type = 0x01;      // XINPUT_DEVTYPE_GAMEPAD
+   c.sub_type = 0x01;  // XINPUT_DEVSUBTYPE_GAMEPAD
+   c.flags = cap_flags;
+-  c.gamepad.buttons = 0xF3FF | (REXCVAR_GET(guide_button) ? X_INPUT_GAMEPAD_GUIDE : 0x0);
+-  c.gamepad.left_trigger = 0xFF;
+-  c.gamepad.right_trigger = 0xFF;
+-  c.gamepad.thumb_lx = static_cast<int16_t>(0xFFFFu);
+-  c.gamepad.thumb_ly = static_cast<int16_t>(0xFFFFu);
+-  c.gamepad.thumb_rx = static_cast<int16_t>(0xFFFFu);
+-  c.gamepad.thumb_ry = static_cast<int16_t>(0xFFFFu);
+-  c.vibration.left_motor_speed = 0xFFFFu;
+-  c.vibration.right_motor_speed = 0xFFFFu;
++  constexpr SDL_GamepadButton physical_buttons[] = {
++      SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_DOWN, SDL_GAMEPAD_BUTTON_DPAD_LEFT,
++      SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_GAMEPAD_BUTTON_START, SDL_GAMEPAD_BUTTON_BACK,
++      SDL_GAMEPAD_BUTTON_LEFT_STICK, SDL_GAMEPAD_BUTTON_RIGHT_STICK,
++      SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER,
++      SDL_GAMEPAD_BUTTON_GUIDE, SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_EAST,
++      SDL_GAMEPAD_BUTTON_WEST, SDL_GAMEPAD_BUTTON_NORTH};
++  constexpr uint16_t bits[] = {1, 2, 4, 8, 0x10, 0x20, 0x40, 0x80, 0x100, 0x200,
++                               0x400, 0x1000, 0x2000, 0x4000, 0x8000};
++  uint16_t supported = 0;
++  for (size_t i = 0; i < std::size(bits); ++i)
++    if (SDL_GamepadHasButton(state.sdl, physical_buttons[i]) &&
++        (bits[i] != X_INPUT_GAMEPAD_GUIDE || REXCVAR_GET(guide_button))) supported |= bits[i];
++  c.gamepad.buttons = supported;
++  c.gamepad.left_trigger = SDL_GamepadHasAxis(state.sdl, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) ? 0xFF : 0;
++  c.gamepad.right_trigger = SDL_GamepadHasAxis(state.sdl, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) ? 0xFF : 0;
++  c.gamepad.thumb_lx = SDL_GamepadHasAxis(state.sdl, SDL_GAMEPAD_AXIS_LEFTX) ? int16_t(0xFFFFu) : 0;
++  c.gamepad.thumb_ly = SDL_GamepadHasAxis(state.sdl, SDL_GAMEPAD_AXIS_LEFTY) ? int16_t(0xFFFFu) : 0;
++  c.gamepad.thumb_rx = SDL_GamepadHasAxis(state.sdl, SDL_GAMEPAD_AXIS_RIGHTX) ? int16_t(0xFFFFu) : 0;
++  c.gamepad.thumb_ry = SDL_GamepadHasAxis(state.sdl, SDL_GAMEPAD_AXIS_RIGHTY) ? int16_t(0xFFFFu) : 0;
++  const bool rumble = SDL_GetBooleanProperty(SDL_GetGamepadProperties(state.sdl), SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, false);
++  if (rumble) c.flags = uint16_t(c.flags) | X_INPUT_CAPS_FFB_SUPPORTED;
++  c.vibration.left_motor_speed = rumble ? 0xFFFFu : 0;
++  c.vibration.right_motor_speed = rumble ? 0xFFFFu : 0;
+ }
+ 
+ void SDLInputDriver::QueueControllerUpdate() {
+diff --git a/src/input/xinput/xinput_input_driver.cpp b/src/input/xinput/xinput_input_driver.cpp
+--- a/src/input/xinput/xinput_input_driver.cpp
++++ b/src/input/xinput/xinput_input_driver.cpp
+@@ -145,6 +145,7 @@
+     DeviceInfo info;
+     info.id = DeviceForSlot(slot);
+     info.name = "XInput Controller";
++    info.key = "xinput:slot:" + std::to_string(slot);
+     info.synthetic = false;
+     out.push_back(info);
+   }
+diff --git a/src/ui/keybinds.cpp b/src/ui/keybinds.cpp
+--- a/src/ui/keybinds.cpp
++++ b/src/ui/keybinds.cpp
+@@ -132,6 +132,7 @@
+     {"NumpadMinus", VirtualKey::kSubtract},
+     {"NumpadStar", VirtualKey::kMultiply},
+     {"NumpadSlash", VirtualKey::kDivide},
++    {"NumpadPeriod", VirtualKey::kDecimal},
+     {"PrintScreen", VirtualKey::kSnapshot},
+     {"Pause", VirtualKey::kPause},
+     {"CapsLock", VirtualKey::kCapital},
+@@ -141,6 +142,8 @@
+     {"LMB", VirtualKey::kLButton},
+     {"RMB", VirtualKey::kRButton},
+     {"MMB", VirtualKey::kMButton},
++    {"X1MB", VirtualKey::kXButton1},
++    {"X2MB", VirtualKey::kXButton2},
+ };
+ 
+ VirtualKey ParseVirtualKey(std::string_view name) {
+@@ -149,6 +152,9 @@
+ }
+ 
+ std::string VirtualKeyToString(VirtualKey vk) {
++  // Return and NumpadEnter share a VirtualKey. Use the canonical saved name
++  // rather than depending on unordered_map iteration order.
++  if (vk == VirtualKey::kReturn) return "Return";
+   for (const auto& [name, key] : kKeyNames) {
+     if (key == vk) {
+       return name;

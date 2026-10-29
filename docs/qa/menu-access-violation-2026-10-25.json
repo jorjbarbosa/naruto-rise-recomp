@@ -1,0 +1,32 @@
+{
+  "registered_at": "2026-10-25T15:28:25.079634-04:00",
+  "branch": "feat/no-launcher",
+  "head": "4355dd2364cf0322113b25a158dac134841e25f8",
+  "executable_sha256": "a35b6d8b91afa102607ae554360f0e2ad883d9a33162a0457589d72e10304b8d",
+  "exit_code_signed": -1073741819,
+  "exit_code_hex": "0xC0000005",
+  "status": "STATUS_ACCESS_VIOLATION",
+  "source_test_sha256": "3d0eb4806337e66b7a4fe31fe901935c1105841c46fe4559aba412f37cb15b27",
+  "last_recorded_test": "notification-release-action",
+  "assertions_recorded": 855,
+  "failed_assertions_recorded": [
+    "setup-hidden",
+    "dlc-pending-shows-package-name",
+    "dlc-installed-keeps-name-without-pending-duplicate"
+  ],
+  "verdict_emitted": false,
+  "cause": "not determined; no fault address, access type or stack trace captured",
+  "context": "Product boots passed on D3D12 and Vulkan. Previous menu suites passed; the most recent integrated menu suite crashed before emitting its verdict.",
+  "debugger_attempt": {
+    "tool": "lldb",
+    "exit_code_hex": "0xC0000135",
+    "status": "STATUS_DLL_NOT_FOUND",
+    "stack_trace_obtained": false
+  },
+  "test": "native_engine_menu_test",
+  "api": "d3d12",
+  "investigation_status": "deferred at user request",
+  "local_artifacts": "out/live-settings/implementation/access-violation/",
+  "implementation_commit": "44462fd508a4c528dc947c1c9acc34b681cbce65",
+  "note": "Captured before the cleanup commits; the cause remains undetermined and investigation is deferred."
+}

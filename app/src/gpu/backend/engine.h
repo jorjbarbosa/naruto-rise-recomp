@@ -42,19 +42,21 @@ class Engine final {
   bool ClearSurfaces(const ClearRequest& request, uint64_t& fence, std::string& evidence);
   // Waits for every submitted operation (BlockOnFence for own work).
   bool WaitIdle(std::string& evidence);
-  // Closes the open batch without waiting; the host event (a HANDLE)
+  // Closes the open batch without waiting; the host event (FrameEvent)
   // is set once every operation submitted so far has completed (target is the
   // fence it waits for). The frame lot of D3DDevice_Swap.
-  bool CloseFrame(void* event, uint64_t& target, std::string& evidence);
+  bool CloseFrame(FrameEvent event, uint64_t& target, std::string& evidence);
   // Presentation: own Plume swapchain (B8G8R8A8_UNORM; buffers and frame
-  // latency from the mode) on the window (an HWND), created on the engine queue.
-  bool AttachWindow(void* window, std::string& evidence, const PresentMode& mode = PresentMode{});
+  // latency from the mode) on the window (its native handles), created on the
+  // engine queue.
+  bool AttachWindow(const platform::NativeWindow& window, std::string& evidence, const PresentMode& mode = PresentMode{});
   // Waits for every submitted operation, then releases the swapchain.
   bool DetachWindow(std::string& evidence);
   // The title's gamma ramp: D3DGAMMARAMP words (red, green, blue x 256; the
   // 10-bit value << 6). Used by every later Present until replaced.
   bool SetGammaRamp(const std::array<uint16_t, 768>& words, std::string& evidence);
   bool SetVsync(bool enabled, std::string& evidence);
+  bool Reconfigure(const RenderMode&, const PresentMode&, std::string& evidence);
   // Copies the RGBA8 image of key (an own texture with defined content, or a
   // single-sample color surface) into a stage slot, in the open batch. A front
   // buffer with undefined content is refused. The slot must have been
@@ -65,8 +67,19 @@ class Engine final {
   // The swapchain follows the window size. A minimized (empty) window skips
   // the frame. With capture, the back buffer is read back after the pass
   // (BGRA rows, its size in width and height) and the call waits for it.
+  // Optional result: true only on successful presentation, not an empty-window
+  // skip, occlusion or out-of-date swapchain. Always false after failure.
   bool Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, uint32_t& width, uint32_t& height,
-               std::string& evidence);
+               std::string& evidence, bool* presented = nullptr);
+  // The UI layer of the Present (UiFrame, contracts.h). UploadUiTexture
+  // creates or replaces the RGBA8 texture of a key (not 0) in the open batch;
+  // ReleaseUiTexture releases it once no submitted work can use it (an unknown
+  // key is fine). SetUiFrame keeps the frame every later Present draws over
+  // the image, until the next one; an empty frame draws nothing.
+  bool UploadUiTexture(uint32_t key, uint32_t width, uint32_t height, const std::vector<uint8_t>& rgba,
+                       std::string& evidence);
+  bool ReleaseUiTexture(uint32_t key, std::string& evidence);
+  bool SetUiFrame(UiFrame frame, std::string& evidence);
   // Live own resources (textures of guest headers, surfaces, stage slots).
   std::string ResourceCounts();
   // Releases the own texture of a guest header (a resolve
@@ -168,5 +181,6 @@ class Engine final {
   const std::shared_ptr<FailureChannel> failures_;
   std::unique_ptr<Backend> backend_;
   GraphicsApi api_ = GraphicsApi::kD3D12;
+  bool incident_first_submit_ = true, incident_first_present_ = true;
 };
 }  // namespace gpu

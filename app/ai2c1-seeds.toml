@@ -3,4 +3,7 @@
 # code layout; seeds from the base engine or other DLC revisions do not apply.
 [functions]
 "0x883A0CF8" = {} # module entry point (DLL_PROCESS_ATTACH)
-"0x883A087C" = {} # unresolved branch at 0x883A08CC in strict analysis
+# share_registers: a branch target may read its parent's r14-r31 (locals under
+# non_volatile_as_local); marked, it gets them through the context (guard only:
+# this one touches none).
+"0x883A087C" = { share_registers = true } # unresolved branch at 0x883A08CC in strict analysis

@@ -1,0 +1,2 @@
+<rml><head><title>Controls</title><link type="text/rcss" href="theme.rcss"/><link type="text/rcss" href="controls.rcss"/></head>
+<body><div id="controls-veil"/><div id="controls-window"><div id="controls-header"><button id="controls-back" command="close"/><div id="players"/><button id="controls-close" command="close"><span class="cross-one"/><span class="cross-two"/></button></div><div id="controls-divider"/><div id="controls-sidebar"/><div id="controls-detail"/><div id="controls-port"/><div id="controls-status"/><div id="controls-footer"/></div></body></rml>

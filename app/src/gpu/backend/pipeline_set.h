@@ -9,13 +9,14 @@
 // Policy, as the UnleashedRecomp: a draw never skips. The owner posts the
 // absent pipelines of a batch before drawing it (Engine::PrefetchPipelines);
 // the draw takes its pipeline ready, waits for the thread creating it, or
-// creates it itself. The asynchronous threads run at normal priority, and at
-// the highest while the title shows its loading screen (common/title_loading.h).
+// creates it itself. The asynchronous threads run at normal priority, and above
+// it while the title shows its loading screen (common/title_loading.h).
 // The skip take (REX_NATIVE_PSO_ASYNC=1, diagnostics) is the policy before
 // 2026-10-17, kept for A/B: the draw of a pipeline not ready is recorded
 // without itself, and the threads run at the lowest priority.
 #pragma once
 
+#include "gpu/common/platform.h"
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -31,8 +32,21 @@
 #include <vector>
 #include "gpu/backend/pipeline_keys.h"
 #include "gpu/backend/contracts.h"
+#include <rex/thread.h>
 
 namespace gpu {
+
+// The threads that create pipelines: the pool of the embedded list
+// (Dispatcher::StartPool) and the asynchronous threads of the set. A driver's
+// shader compiler recurses deeply inside pipeline creation, so they get the
+// stack of the SDK's own pipeline threads instead of the 1 MiB process
+// default. Null when the system refused the thread.
+std::unique_ptr<rex::thread::Thread> StartPipelineThread(std::function<void()> work);
+void JoinPipelineThread(rex::thread::Thread& thread);
+// The threads of each of those two pools. Both compile on a loading screen;
+// together they leave two hardware threads to the title, the owner and the
+// translator.
+unsigned PipelineThreadsPerPool();
 
 class PipelineSet {
  public:
@@ -117,7 +131,7 @@ class PipelineSet {
   Taken TakeSkip(uint64_t key, uint64_t triple);
   void Finish(uint64_t key, uint64_t triple, bool created, Pipeline pipeline);
   void StartThreads(bool lowest);  // Under mutex_.
-  void Work(int base_priority);
+  void Work(platform::ThreadPriority base_priority);
 
   Creator creator_;
   std::mutex mutex_;
@@ -125,7 +139,7 @@ class PipelineSet {
   std::condition_variable wake_;  // The queue or stop_ changed.
   std::unordered_map<uint64_t, Entry> entries_;
   std::deque<std::pair<uint64_t, PipelineDesc>> queue_;
-  std::vector<std::thread> threads_;
+  std::vector<std::unique_ptr<rex::thread::Thread>> threads_;
   bool stop_ = false;
   std::unordered_set<uint64_t> warm_triples_;
   // The skip take's warm creation (owner): the frame's spending, the estimate

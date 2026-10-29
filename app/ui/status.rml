@@ -1,0 +1,2 @@
+<rml><head><title>Notifications</title><link type="text/rcss" href="theme.rcss"/><link type="text/rcss" href="status.rcss"/></head>
+<body><div id="hint"><span id="hint-text"/></div><div id="notice"><span id="notice-title"/><span id="notice-text"/><button id="notice-action"/></div><div id="shaders"><span id="shader-text">@shaders</span><div id="shader-track"><div id="shader-progress"/></div></div></body></rml>

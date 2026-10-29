@@ -26,9 +26,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <windows.h>
-#include <wrl/client.h>
-#include <dxcapi.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <rex/cvar.h>
@@ -417,10 +414,24 @@ std::shared_ptr<const VertexLayout> FindOrBuildVertexLayout(PPCContext& saved, u
   for (unsigned i = 0; i < 4; ++i) key.strides[i] = Get32(base, dev + 12520 + 4 * i);
   const bool no_patch = !key.decl || (Get32(base, vs.container) & 0x40);
   const bool cacheable = entry && (no_patch || key.decl_id) && !quad;
+  // Each thread keeps its last layouts by key in front of the map: the map
+  // never drops one and the key carries the VS generation, so a kept layout
+  // stays the map's (no lock, no hash of the whole key on a hit).
+  struct Kept {
+    VertexLayoutKey key;
+    std::shared_ptr<const VertexLayout> layout;
+  };
+  thread_local std::array<Kept, 64> kept;
+  Kept& slot = kept[((key.vs_object ^ key.decl * 31u ^ key.strides[0]) * 0x9E3779B1u) >> 26];
   if (cacheable) {
+    if (slot.layout && slot.key == key) { ++layouts_reused; return slot.layout; }
     std::lock_guard lock(vertex_layouts_mutex);
     auto it = vertex_layouts.find(key);
-    if (it != vertex_layouts.end()) { ++layouts_reused; return it->second; }
+    if (it != vertex_layouts.end()) {
+      ++layouts_reused;
+      slot = {key, it->second};
+      return it->second;
+    }
   }
   auto layout = std::make_shared<VertexLayout>();
   // The identification of an object without its entry runs before the parse.
@@ -442,6 +453,7 @@ std::shared_ptr<const VertexLayout> FindOrBuildVertexLayout(PPCContext& saved, u
     std::lock_guard lock(vertex_layouts_mutex);
     vertex_layouts[key] = layout;
     ++layouts_built;
+    slot = {key, layout};
   } else {
     ++layouts_uncached;
   }

@@ -7,7 +7,10 @@
 # native replacement or a runtime correctness claim.
 [functions]
 "0x883ADD48" = {} # module entry point (XEX loader call)
-"0x883AD8CC" = {} # branch target at 0x883AD91C (reported by strict analysis)
+# share_registers: a branch target may read its parent's r14-r31 (locals under
+# non_volatile_as_local); marked, it gets them through the context (guard only:
+# this one touches none). The 12-byte stubs below touch no r14-r31 either.
+"0x883AD8CC" = { share_registers = true } # branch target at 0x883AD91C (reported by strict analysis)
 "0x883A7C34" = {}
 "0x883A7C40" = {}
 "0x883A7C4C" = {}
@@ -280,8 +283,13 @@
 "0x883ABFF0" = {}
 "0x883ABFFC" = {}
 "0x883AC014" = {}
-"0x883AD9A0" = {}
-"0x883AD9A4" = {}
-"0x883AD9A8" = {}
-"0x883AD9AC" = {}
+# The four are the __restgprlr_26..29 entries of this revision (ld r26..r29 ..
+# r31, lwz r12,-8(r1), mtlr, blr; the other revisions name them). A seed names
+# them sub_ and the codegen elides save/restore helpers by name only, so the
+# 334 tail branches into them would call a localized no-op that loads an
+# unwritten slot into LR. Named, they are elided like __savegprlr_26..29.
+"0x883AD9A0" = { name = "__restgprlr_26" }
+"0x883AD9A4" = { name = "__restgprlr_27" }
+"0x883AD9A8" = { name = "__restgprlr_28" }
+"0x883AD9AC" = { name = "__restgprlr_29" }
 

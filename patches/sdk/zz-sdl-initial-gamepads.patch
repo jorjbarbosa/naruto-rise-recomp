@@ -1,0 +1,34 @@
+diff --git a/src/input/sdl/sdl_input_driver.cpp b/src/input/sdl/sdl_input_driver.cpp
+--- a/src/input/sdl/sdl_input_driver.cpp
++++ b/src/input/sdl/sdl_input_driver.cpp
+@@ -113,6 +113,18 @@
+           }
+         }
+       }
++      // A setup UI may already own SDL_INIT_GAMEPAD and have received the
++      // connection events before this runtime driver installed its watch.
++      // Seed its queue from the current inventory as well as future events.
++      int count = 0;
++      SDL_JoystickID* ids = SDL_GetGamepads(&count);
++      for (int i = 0; ids && i < count; ++i) {
++        SDL_Event event{};
++        event.type = SDL_EVENT_GAMEPAD_ADDED;
++        event.gdevice.which = ids[i];
++        HandleEvent(event);
++      }
++      SDL_free(ids);
+       REXLOG_INFO("SDL input driver initialized successfully");
+     });
+   }
+@@ -446,7 +458,10 @@
+ void SDLInputDriver::OnControllerDeviceAddedLocked(const SDL_Event& event) {
++  // Inventory seeding and an actual SDL event can name the same connection.
++  if (GetControllerIndexFromInstanceID(event.gdevice.which)) return;
+   const auto controller = SDL_OpenGamepad(event.gdevice.which);
+   if (!controller) {
+-    assert_always();
++    // It may have disconnected between enumeration/event delivery and drain.
++    REXLOG_DEBUG("SDL: gamepad {} unavailable when its connection was processed", event.gdevice.which);
+     return;
+   }
+   REXLOG_INFO(

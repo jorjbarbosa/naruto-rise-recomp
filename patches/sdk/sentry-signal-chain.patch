@@ -1,0 +1,40 @@
+diff --git a/src/core/exception_handler_posix.cpp b/src/core/exception_handler_posix.cpp
+index 8b1c76a..5d0d24c 100644
+--- a/src/core/exception_handler_posix.cpp
++++ b/src/core/exception_handler_posix.cpp
+@@ -417,6 +417,26 @@ static void ExceptionHandlerCallback(int signal_number, siginfo_t* signal_info,
+       return;
+     }
+   }
++
++  // Recoverable runtime faults have already returned above. Fatal faults must
++  // reach the previously installed handler (for example Crashpad), with their
++  // original signal information and CPU context, instead of faulting forever.
++  const struct sigaction* previous = &original_sigsegv_handler_;
++  if (signal_number == SIGILL) previous = &original_sigill_handler_;
++#if REX_PLATFORM_MAC
++  if (signal_number == SIGBUS) previous = &original_sigbus_handler_;
++#endif
++  if (previous->sa_handler == SIG_DFL || previous->sa_handler == SIG_IGN) {
++    struct sigaction fatal_action {};
++    fatal_action.sa_handler = SIG_DFL;
++    sigemptyset(&fatal_action.sa_mask);
++    sigaction(signal_number, &fatal_action, nullptr);
++    raise(signal_number);
++  } else if (previous->sa_flags & SA_SIGINFO) {
++    previous->sa_sigaction(signal_number, signal_info, signal_context);
++  } else {
++    previous->sa_handler(signal_number);
++  }
+ }
+ 
+ void ExceptionHandler::Install(Handler fn, void* data) {
+@@ -425,7 +445,7 @@ void ExceptionHandler::Install(Handler fn, void* data) {
+ 
+     std::memset(&signal_handler, 0, sizeof(signal_handler));
+     signal_handler.sa_sigaction = ExceptionHandlerCallback;
+-    signal_handler.sa_flags = SA_SIGINFO;
++    signal_handler.sa_flags = SA_SIGINFO | SA_ONSTACK;
+ 
+     if (sigaction(SIGILL, &signal_handler, &original_sigill_handler_) != 0) {
+       assert_always("Failed to install new SIGILL handler");

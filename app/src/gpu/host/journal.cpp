@@ -2,21 +2,23 @@
 // under one writer lock, the loaded modules, the capped high-frequency records
 // (guest waits, SetLastError) and the provenance that the stop writes.
 #include "gpu/host/internal.h"
+#include "gpu/common/platform.h"
 #include "gpu/common/sha256.h"
 #include "gpu/d3d/d3d.h"
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
-#include <tlhelp32.h>
 #include <fmt/format.h>
 #include <rex/system/thread_state.h>
 #include <rex/system/xthread.h>
+#include <rex/thread.h>
 
 namespace gpu::host {
 std::mutex event_mutex;
 uint64_t sequence = 0;
 namespace {
-HANDLE events = INVALID_HANDLE_VALUE;
+std::FILE* events = nullptr;
 // SHA-256 and size of every byte written to the journal, finished by the
 // stop provenance after the last line (under the final writer lock).
 std::unique_ptr<Sha256> events_hash;
@@ -26,34 +28,32 @@ std::string stop_provenance;  // Fields of the live START provenance.
 const auto start = std::chrono::steady_clock::now();
 }  // namespace
 
-bool Journaled() { return events != INVALID_HANDLE_VALUE; }
+bool Journaled() { return events != nullptr; }
 
+// A new file only ("x": the journal of a run is never overwritten), without a
+// buffer of our own.
 bool OpenJournal(const std::string& path) {
-  events = CreateFileW(std::filesystem::path(path).c_str(), GENERIC_WRITE, FILE_SHARE_READ,
-                       nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (events == INVALID_HANDLE_VALUE) return false;
+  events = std::fopen(std::filesystem::path(path).string().c_str(), "wbx");
+  if (!events) return false;
+  std::setvbuf(events, nullptr, _IONBF, 0);
   events_hash = std::make_unique<Sha256>();
   return true;
 }
 
-// No FlushFileBuffers per record: every guest wait and SetLastError records
-// under event_mutex, and a disk flush per line (about 1.2 ms) would starve the
-// title's main thread while it loads. WriteFile still lands in the system
+// No disk flush per record: every guest wait and SetLastError records under
+// event_mutex, and a flush per line (about 1.2 ms) would starve the title's
+// main thread while it loads. The unbuffered write still lands in the system
 // cache before returning, which survives the process exit codes 86/88.
 void Write(std::string_view text) {
-  if (events == INVALID_HANDLE_VALUE) return;
-  DWORD written = 0;
-  if (!WriteFile(events, text.data(), static_cast<DWORD>(text.size()), &written, nullptr) ||
-      written != text.size()) {
-    std::_Exit(88);
-  }
+  if (!events) return;
+  if (std::fwrite(text.data(), 1, text.size(), events) != text.size()) std::_Exit(88);
   if (events_hash) events_hash->Update(text.data(), text.size());
   events_bytes += text.size();
 }
 
 void Record(std::string_view kind, std::string_view name, PPCContext* ctx,
             uint32_t address, uint32_t value) {
-  if (events == INVALID_HANDLE_VALUE) return;
+  if (!events) return;
   auto* ts = rex::runtime::ThreadState::Get();
   auto* thread = rex::system::XThread::GetCurrentThread();
   const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -62,7 +62,7 @@ void Record(std::string_view kind, std::string_view name, PPCContext* ctx,
       "\"host_thread\":{},\"guest_thread\":{},\"cpu\":{},\"context_present\":{},"
       "\"lr\":{},\"ctr\":{},\"r1\":{},\"r13\":{},\"args\":[{},{},{},{},{},{},{},{}],"
       "\"address\":{},\"value\":{}}}\n",
-      ++sequence, elapsed, kind, name, GetCurrentThreadId(), ts ? ts->thread_id() : 0,
+      ++sequence, elapsed, kind, name, rex::thread::current_thread_system_id(), ts ? ts->thread_id() : 0,
       thread ? int(thread->active_cpu()) : -1, ctx != nullptr,
       ctx ? ctx->lr : 0, ctx ? ctx->ctr.u64 : 0, ctx ? ctx->r1.u32 : 0,
       ctx ? ctx->r13.u32 : 0, ctx ? ctx->r3.u64 : 0, ctx ? ctx->r4.u64 : 0,
@@ -72,30 +72,25 @@ void Record(std::string_view kind, std::string_view name, PPCContext* ctx,
 }
 
 void Modules() {
-  if (events == INVALID_HANDLE_VALUE) return;
-  HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32,
-                                           GetCurrentProcessId());
-  if (snapshot == INVALID_HANDLE_VALUE) std::_Exit(88);
-  MODULEENTRY32W entry{};
-  entry.dwSize = sizeof(entry);
-  if (!Module32FirstW(snapshot, &entry)) std::_Exit(88);
-  do {
-    const std::wstring_view wide(entry.szExePath);
+  if (!events) return;
+  const auto modules = platform::LoadedModules();
+  if (modules.empty()) std::_Exit(88);
+  for (const auto& module : modules) {
     std::string path;
     // JSON escaping; module paths on this machine use ASCII characters.
-    for (wchar_t c : wide) {
-      if (c > 127 || c < 32) std::_Exit(88);
-      if (c == L'\\' || c == L'"') path += '\\';
-      path += static_cast<char>(c);
+    for (const char c : module) {
+      const auto byte = static_cast<unsigned char>(c);
+      if (byte > 127 || byte < 32) std::_Exit(88);
+      if (c == '\\' || c == '"') path += '\\';
+      path += c;
     }
     Write(fmt::format("{{\"sequence\":{},\"kind\":\"module\",\"path\":\"{}\"}}\n",
                       ++sequence, path));
-  } while (Module32NextW(snapshot, &entry));
-  CloseHandle(snapshot);
+  }
 }
 
 void Record(std::string_view kind, std::string_view fields) {
-  if (events == INVALID_HANDLE_VALUE) return;
+  if (!events) return;
   std::lock_guard lock(event_mutex);
   Write(fmt::format("{{\"sequence\":{},\"kind\":\"{}\",{}}}\n", ++sequence, kind, fields));
 }
@@ -119,12 +114,12 @@ std::string RecordSummary() {
 // (REX_NATIVE_SOURCE_IDENTITY), with the fields of the accepted occurrence.
 // Nothing here opens a reference artifact.
 namespace {
-std::string JsonPath(const std::wstring& path) {
+std::string JsonPath(const std::filesystem::path& path) {
   std::string out;
-  for (wchar_t c : path) {
+  for (const char c : path.string()) {
     if (c < 32 || c > 126) { out += '?'; continue; }
-    if (c == L'"' || c == L'\\') out += '\\';
-    out += char(c);
+    if (c == '"' || c == '\\') out += '\\';
+    out += c;
   }
   return out;
 }
@@ -137,12 +132,11 @@ void WriteStopProvenance(int code) {
   }
   const char* dir = std::getenv("REX_NATIVE_FRAME_DIR");
   if (fields.empty() || !dir || !*dir) return;
-  wchar_t exe[MAX_PATH]{};
-  const DWORD length = GetModuleFileNameW(nullptr, exe, MAX_PATH);
-  const std::wstring exe_path = length && length < MAX_PATH ? std::wstring(exe, length) : std::wstring();
+  const std::filesystem::path exe_path = platform::ExecutablePath();
   const char* identity = std::getenv("REX_NATIVE_SOURCE_IDENTITY");
-  const std::wstring identity_path = identity && *identity ? std::filesystem::path(identity).wstring() : std::wstring();
-  const std::wstring events_path = std::filesystem::path(REXCVAR_GET(native_renderer_bootstrap_path)).wstring();
+  const std::filesystem::path identity_path = identity && *identity ? std::filesystem::path(identity)
+                                                                     : std::filesystem::path();
+  const std::filesystem::path events_path(REXCVAR_GET(native_renderer_bootstrap_path));
   const std::string text = fmt::format(
       "{{\"schema\":\"native-start-live-provenance-v1\",\"written_by\":\"process-at-stop\",\"exit_code\":{},"
       "\"executable\":{{\"path\":\"{}\",\"sha256\":\"{}\"}},\"source_identity\":{{\"path\":\"{}\",\"sha256\":\"{}\"}},"
@@ -150,14 +144,11 @@ void WriteStopProvenance(int code) {
       JsonPath(exe_path), exe_path.empty() ? "" : gpu::Sha256File(exe_path), JsonPath(identity_path),
       identity_path.empty() ? "" : gpu::Sha256File(identity_path), JsonPath(events_path), events_bytes, sequence,
       events_hash ? events_hash->Finish() : "", fields);
-  const std::wstring out = std::filesystem::path(dir).wstring() + L"/live-provenance.json";
-  HANDLE file = CreateFileW(out.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL,
-                            nullptr);
-  if (file == INVALID_HANDLE_VALUE) return;
-  DWORD written = 0;
-  WriteFile(file, text.data(), DWORD(text.size()), &written, nullptr);
-  FlushFileBuffers(file);
-  CloseHandle(file);
+  const std::filesystem::path out = std::filesystem::path(dir) / "live-provenance.json";
+  std::FILE* file = std::fopen(out.string().c_str(), "wbx");
+  if (!file) return;
+  std::fwrite(text.data(), 1, text.size(), file);
+  std::fclose(file);
 }
 void SetStopProvenance(std::string_view fields) {
   std::lock_guard lock(provenance_mutex);

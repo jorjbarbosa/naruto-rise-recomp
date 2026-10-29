@@ -1,4 +1,7 @@
 # Discovery seed reported by strict analysis of AI2C.dll.
 # Bounds inferred by ReXGlue; not a native replacement or a runtime correctness claim.
+# share_registers: a branch target may continue its parent's body and read the
+# parent's r14-r31 (locals under non_volatile_as_local); marked, it gets them
+# through the context. This one touches none, so the mark is a guard only.
 [functions]
-"0x88398CFC" = {} # branch at 0x88398D4C
+"0x88398CFC" = { share_registers = true } # branch at 0x88398D4C

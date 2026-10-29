@@ -1,12 +1,14 @@
 // State translation of the D3D boundary (state.h).
 #include "gpu/d3d/state.h"
+#include "gpu/common/constant_delta.h"
 #include "gpu/common/guest_memory.h"
+#include "gpu/diagnostics/profile.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <dxgiformat.h>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <atomic>
 #include <condition_variable>
@@ -21,9 +23,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <windows.h>
-#include <wrl/client.h>
-#include <dxcapi.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <rex/cvar.h>
@@ -43,14 +42,33 @@ void RefreshConstants(uint8_t* base, uint32_t at, uint32_t mask_hi, uint32_t mas
   if (!s.valid) full = true;
   if (!full && !mask_hi && !mask_lo) return;
   const uint64_t mask = uint64_t(mask_hi) << 32 | mask_lo;
-  for (unsigned group = 0; group < 64; ++group) {
-    if (!full && !((mask >> (63 - group)) & 1)) continue;
-    for (unsigned i = 0; i < 16; ++i) {
-      const uint32_t v = Get32(base, at + 64 * group + 4 * i);
-      std::memcpy(&s.bytes[64 * group + 4 * i], &v, 4);
-    }
+  uint64_t changed = 0;  // The groups whose bytes differ from the shadow.
+  unsigned groups = 0, unchanged = 0;  // The profile's: the groups read and those equal to the shadow.
+  // The marked groups only, in order (bit 63 is group 0).
+  for (uint64_t todo = full ? ~0ull : mask; todo;) {
+    const unsigned group = unsigned(std::countl_zero(todo));
+    todo &= ~(1ull << (63 - group));
+    // The group swapped as a whole, then one compare and one copy.
+    std::array<uint32_t, 16> words;
+    for (unsigned i = 0; i < 16; ++i) words[i] = Get32(base, at + 64 * group + 4 * i);
+    uint8_t* const to = &s.bytes[64 * group];
+    const bool same = s.valid && !std::memcmp(to, words.data(), 64);
+    if (!same) std::memcpy(to, words.data(), 64);
+    ++groups;
+    if (same) ++unchanged;
+    else changed |= 1ull << (63 - group);
   }
-  s.pending |= full ? ~0ull : mask;
+  profile::Count(profile::kConstantRefreshes, 1);
+  profile::Count(profile::kConstantGroupsRead, groups);
+  profile::Count(profile::kConstantGroupsUnchanged, unchanged);
+  if (unchanged == groups) profile::Count(profile::kConstantRefreshesUnchanged, 1);
+  // A group the title marked dirty with the same bytes changes nothing the
+  // engine holds: only the changed groups go pending, and without any the
+  // version holds, so the engine keeps the CBV of the batch (its block at a
+  // version is the shadow at that version). A full refresh (the quad, the
+  // START variation, the first one) still carries everything.
+  if (!full && !changed) return;
+  s.pending |= full ? ~0ull : changed;
   s.valid = true;
   ++s.version;
   ++constant_refreshes;
@@ -62,7 +80,7 @@ void RefreshConstants(uint8_t* base, uint32_t at, uint32_t mask_hi, uint32_t mas
 // register, uint16 count, the registers), merged into runs. Taken at the
 // end of the capture, after its guards; a draw the translation skips gives
 // them back (ReturnConstants), so its groups stay pending.
-void TakeConstants(ConstantShadow& s, bool whole, std::vector<uint8_t>& block, std::vector<uint8_t>& delta) {
+void TakeConstants(ConstantShadow& s, bool whole, ConstantBytes& block, ConstantBytes& delta) {
   block.clear();
   delta.clear();
   if (whole || s.pending == ~0ull) {
@@ -71,19 +89,10 @@ void TakeConstants(ConstantShadow& s, bool whole, std::vector<uint8_t>& block, s
     ++constant_whole_requests;
     return;
   }
-  unsigned g = 0;
-  while (g < 64) {
-    if (!((s.pending >> (63 - g)) & 1)) { ++g; continue; }
-    unsigned e = g;
-    while (e < 64 && ((s.pending >> (63 - e)) & 1)) ++e;
-    const uint16_t first = uint16_t(4 * g), count = uint16_t(4 * (e - g));
-    const size_t at = delta.size();
-    delta.resize(at + 4 + size_t(count) * 16);
-    std::memcpy(&delta[at], &first, 2);
-    std::memcpy(&delta[at + 2], &count, 2);
-    std::memcpy(&delta[at + 4], &s.bytes[size_t(first) * 16], size_t(count) * 16);
-    g = e;
-  }
+  // One allocation for the final packet: 64 bytes per dirty group, plus a
+  // four-byte header for each contiguous run. Growing per run copied earlier
+  // runs again and made several heap allocations for fragmented masks.
+  PackConstantDelta(s.bytes, s.pending, delta);
   s.pending = 0;
   if (!delta.empty()) { ++constant_delta_requests; constant_delta_bytes += delta.size(); }
 }
@@ -99,7 +108,7 @@ void ReturnConstants(ConstantShadow& s, uint64_t pending_before, bool whole, siz
   }
 }
 // The carry of a skipped draw in front of the next request's constants.
-void JoinConstants(ConstantCarry& carry, std::vector<uint8_t>& block, std::vector<uint8_t>& delta) {
+void JoinConstants(ConstantCarry& carry, ConstantBytes& block, ConstantBytes& delta) {
   if (!carry.any()) return;
   if (block.size() == 4096) {
     // The whole block of this draw replaces everything carried.

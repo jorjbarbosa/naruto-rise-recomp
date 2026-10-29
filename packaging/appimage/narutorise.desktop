@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Naruto Rise Recompiled
+Comment=Native Linux build with the audio wait fix
+Exec=narutorise
+Icon=narutorise
+Terminal=false
+Categories=Game;
+StartupWMClass=narutorise

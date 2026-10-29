@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <future>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -42,7 +43,7 @@ std::string Order() {
 }
 // A fake capture: translated on the translator, it posts its mark straight to
 // the owner (as a translated draw is posted); optionally it asks for the stop.
-class FakeCapture final : public StageTask {
+class FakeCapture final : public StageTask, public DrawStorageAllocated<FakeCapture> {
  public:
   FakeCapture(Dispatcher& d, int id, bool stop = false, int sleep_ms = 0)
       : d_(d), id_(id), stop_(stop), sleep_ms_(sleep_ms) {}
@@ -110,6 +111,69 @@ int main(int argc, char** argv) {
   line("ordered-close", down && run_returned, "{\"run_ok\":" + std::string(run_ok ? "true" : "false") +
        ",\"run_evidence\":" + (run_evidence.empty() ? "null" : run_evidence) + ",\"shutdown\":" +
        (evidence.empty() ? "null" : evidence) + "}");
+  // Force more than one local consume batch and interleave resource-like
+  // operations. Then stop while a batch is in flight with a Run pending.
+  {
+    std::lock_guard lock(order_mutex);
+    owner_order.clear();
+  }
+  Dispatcher batched(true, true);
+  if (!batched.Initialize(evidence, TestRenderMode())) return 6;
+  std::promise<void> entered, release;
+  auto released = release.get_future().share();
+  batched.Defer([&] { entered.set_value(); released.wait(); });
+  entered.get_future().wait();
+  std::vector<int> expected;
+  for (int i = 0; i < 96; ++i) {
+    batched.Enqueue(std::make_unique<FakeCapture>(batched, i));
+    expected.push_back(i);
+    if (i == 16) { batched.Post(Mark(100)); expected.push_back(100); }
+    if (i == 48) { batched.Defer([&] { batched.Post(Mark(101)); }); expected.push_back(101); }
+  }
+  release.set_value();
+  const bool finished = batched.Run(Mark(999), evidence);
+  expected.push_back(999);
+  bool same_order = false;
+  { std::lock_guard lock(order_mutex); same_order = owner_order == expected; }
+  const std::string batched_summary = "{" + batched.StageSummary() + "}";
+  line("batched-fifo", finished && same_order &&
+       batched_summary.find("\"consume_batch_max\":32") != std::string::npos,
+       "{\"owner_order\":" + Order() + ",\"stage\":" + batched_summary + "}");
+  std::promise<void> entered_full, release_full;
+  auto released_full = release_full.get_future().share();
+  batched.Defer([&] { entered_full.set_value(); released_full.wait(); });
+  entered_full.get_future().wait();
+  for (size_t i = 0; i < Dispatcher::kStageMax; ++i)
+    batched.Enqueue(std::make_unique<FakeCapture>(batched, 500 + int(i)));
+  std::atomic<bool> full_returned{false};
+  bool full_admitted = false;
+  std::thread full_waiter([&] {
+    full_admitted = batched.Enqueue(std::make_unique<FakeCapture>(batched, 9000));
+    full_returned = true;
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  const bool blocked_when_full = !full_returned;
+  release_full.set_value();
+  full_waiter.join();
+  const bool full_drained = batched.Run(Mark(9001), evidence);
+  const std::string full_summary = "{" + batched.StageSummary() + "}";
+  line("batched-backpressure", blocked_when_full && full_admitted && full_drained &&
+       full_summary.find("\"space_notifications\":0") == std::string::npos, full_summary);
+  std::promise<void> entered_close, release_close;
+  auto released_close = release_close.get_future().share();
+  batched.Defer([&] { entered_close.set_value(); released_close.wait(); });
+  entered_close.get_future().wait();
+  for (int i = 0; i < 96; ++i)
+    batched.Enqueue(std::make_unique<FakeCapture>(batched, 200 + i, false, i == 0 ? 300 : 0));
+  bool batch_run_returned = false;
+  std::string batch_run_evidence;
+  std::thread batch_waiter([&] { batched.Run(Mark(399), batch_run_evidence); batch_run_returned = true; });
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  release_close.set_value();
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  const bool batch_down = batched.Shutdown(evidence);
+  batch_waiter.join();
+  line("batched-close", batch_down && batch_run_returned, evidence);
   output << "{\"kind\":\"verdict\",\"passed\":" << (all ? "true" : "false") << ",\"guest_executed\":false}\n";
   return all ? 0 : 5;
 }

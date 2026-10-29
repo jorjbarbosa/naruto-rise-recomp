@@ -35,7 +35,7 @@ int main(int argc, char** argv) {
     PresentMode present;
     present.effect = mode == 1 ? PresentEffect::kCas : mode == 2 ? PresentEffect::kFsr : PresentEffect::kBilinear;
     present.post_effect = mode == 3 ? SwapPostEffect::kFxaa : mode == 4 ? SwapPostEffect::kFxaaExtreme : SwapPostEffect::kNone;
-    if (!engine.AttachWindow(window, evidence, present)) { check("attach", false, evidence); engine.Shutdown(evidence); break; }
+    if (!engine.AttachWindow(platform::WindowHandles(window), evidence, present)) { check("attach", false, evidence); engine.Shutdown(evidence); break; }
     check("attach", true, evidence);
     SurfaceDesc surface{0x1234, 64, 48};
     check("surface", engine.CreateSurface(surface, evidence), evidence);

@@ -16,7 +16,7 @@ body:
     id: description
     attributes:
       label: Bug description
-      description: Describe what happens and how it affects the game or launcher.
+      description: Describe what happens and how it affects the game or menus.
     validations:
       required: true
 
@@ -67,7 +67,7 @@ body:
     id: graphics-api
     attributes:
       label: Graphics API
-      description: Select the option configured in the launcher.
+      description: Select the option configured in Settings → Display.
       options:
         - Direct3D 12
         - Vulkan

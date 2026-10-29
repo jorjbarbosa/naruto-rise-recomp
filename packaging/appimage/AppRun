@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+appdir=${APPDIR:-$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)}
+payload="$appdir/usr/lib/narutorise"
+export LD_LIBRARY_PATH="$payload/bundled-libs:$payload${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+if [ "${1:-}" = "--test-audio-wait" ]; then
+    shift
+    exec "$payload/narutorise_posix_wait_test" "$@"
+fi
+
+# Data/config/log/cache roots and nearby game discovery belong to the native
+# application. APPIMAGE identifies the external distribution; keep cwd/argv.
+exec "$payload/narutorise" "$@"

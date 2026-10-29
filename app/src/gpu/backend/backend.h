@@ -60,14 +60,21 @@ class Backend {
   // Waits for the work submitted so far without closing the open batch: the
   // wait of WaitIdle once a failure was retained.
   virtual bool WaitSubmitted(std::string& evidence) = 0;
-  virtual bool CloseFrame(void* event, uint64_t& target, std::string& evidence) = 0;
-  virtual bool AttachWindow(void* window, std::string& evidence, const PresentMode& mode) = 0;
+  virtual bool CloseFrame(FrameEvent event, uint64_t& target, std::string& evidence) = 0;
+  virtual bool AttachWindow(const platform::NativeWindow& window, std::string& evidence, const PresentMode& mode) = 0;
   virtual bool DetachWindow(std::string& evidence) = 0;
   virtual bool SetGammaRamp(const std::array<uint16_t, 768>& words, std::string& evidence) = 0;
   virtual bool SetVsync(bool enabled, std::string& evidence) = 0;
+  // Owner, after frame completion. Resolved textures and guest resources survive.
+  // Rebuilds transient render targets only when their dimensions/samples change.
+  virtual bool Reconfigure(const RenderMode&, const PresentMode&, std::string& evidence) = 0;
   virtual bool StageFront(uint32_t key, uint32_t& slot, std::string& evidence) = 0;
   virtual bool Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, uint32_t& width, uint32_t& height,
-                       std::string& evidence) = 0;
+                       std::string& evidence, bool& presented) = 0;
+  virtual bool UploadUiTexture(uint32_t key, uint32_t width, uint32_t height, const std::vector<uint8_t>& rgba,
+                               std::string& evidence) = 0;
+  virtual bool ReleaseUiTexture(uint32_t key, std::string& evidence) = 0;
+  virtual bool SetUiFrame(UiFrame frame, std::string& evidence) = 0;
   virtual std::string ResourceCounts() = 0;
   virtual bool ReleaseTexture(uint32_t key, std::string& evidence) = 0;
   virtual bool ReleaseSampled(uint32_t address, std::string& evidence) = 0;

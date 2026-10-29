@@ -1,0 +1,14 @@
+body { position: absolute; width: 100%; height: 100%; }
+#bar { display: block; position: absolute; left: 0; right: 0; top: 0; height: 53.333dp; background-color: #0e1220eb; border-bottom: 2dp #f2701f; }
+#bar-tabs { display: flex; position: absolute; left: 20dp; top: 10.667dp; }
+button { border-width: 0; padding: 0; background-color: transparent; tab-index: auto; nav: horizontal; focus: auto; }
+.tab { position: relative; display: block; height: 30.667dp; margin-right: 10.667dp; }
+.settings { width: 160dp; } .dlc { width: 72dp; } .exit { width: 144dp; }
+.tab-plate { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background-color: #1f2640; transform: skewX(-15deg); }
+.tab-label { position: relative; display: block; line-height: 30.667dp; text-align: center; font-family: "Roboto Condensed"; font-size: 17.333dp; font-weight: bold; text-transform: uppercase; color: #9aa3b5; }
+.tab:focus .tab-plate { background-color: #f2701f; } .tab:focus .tab-label { color: #0e1220; }
+#overlay-close-hint { position: absolute; right: 66.667dp; top: 17.333dp; font-family: Roboto; font-size: 13.333dp; color: #6f7890; }
+#overlay-close { position: absolute; right: 20dp; top: 12dp; width: 24dp; height: 24dp; }
+.cross-one, .cross-two { position: absolute; left: 2dp; top: 11dp; width: 20dp; height: 1.333dp; background-color: #9aa3b5; transform: rotate(45deg); }
+.cross-two { transform: rotate(-45deg); }
+#overlay-close:focus .cross-one, #overlay-close:focus .cross-two { background-color: #f2701f; }

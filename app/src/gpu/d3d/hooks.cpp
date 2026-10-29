@@ -12,15 +12,16 @@
 #include "gpu/buffers/buffers.h"
 #include "gpu/d3d/state.h"
 #include "gpu/diagnostics/census.h"
+#include "gpu/diagnostics/diagnostics.h"
 #include "gpu/shaders/pipelines.h"
 #include "gpu/d3d/frame.h"
 #include "gpu/diagnostics/measure.h"
 #include "gpu/d3d/close.h"
+#include "diagnostics/incident.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <dxgiformat.h>
 #include <array>
 #include <chrono>
 #include <atomic>
@@ -36,9 +37,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <windows.h>
-#include <wrl/client.h>
-#include <dxcapi.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <rex/cvar.h>
@@ -55,6 +53,11 @@ using namespace gpu;
 namespace gpu {
 std::unique_ptr<DeviceOwner> device_owner;
 [[noreturn]] void StopInOrder(PPCContext& ctx, std::string_view reason, int code) {
+  // The reason first, before any of the waits below (the owner's claim, the
+  // interrupts, the services): a stop that blocks there still leaves its cause.
+  narutorise::incident::FirstFailure(reason);
+  REXLOG_ERROR("[narutorise] Native renderer stopping: {}", reason);
+  rex::FlushLogging();
   host::ClaimStop(reason, ctx);  // Parks a second stopping thread.
   // Any stop on the measurement thread keeps the partial profile, a guard
   // outside the draw census (a resolve) included.
@@ -149,7 +152,8 @@ void TakeStopRequest(PPCContext& ctx) {
 // Concurrency monitor: counts every own hook entry per guest thread and
 // records entries made while another guest thread is inside an own hook.
 // Nesting on the same thread (8212EA18 inside BeginVertices) is not overlap.
-// No allocation per call. The counts are
+// Two locks and a map lookup per hook, every draw included: it runs with
+// the diagnostics only. No allocation per call. The counts are
 // keyed by the name's literal and merged by name in the summary, and every
 // guest thread seen keeps its entry (depth 0 outside), so no key is built and
 // no node is inserted or erased at every hook.
@@ -188,8 +192,8 @@ class HookConcurrency {
     for (const auto& [key, count] : merged)
       calls += fmt::format("{}{{\"hook\":\"{}\",\"thread\":{},\"calls\":{}}}", calls.empty() ? "" : ",",
                            key.first, key.second, count);
-    return fmt::format("\"calls\":[{}],\"overlaps\":{},\"overlap_samples\":[{}]", calls, overlaps_,
-                       fmt::join(samples_, ","));
+    return fmt::format("\"monitored\":{},\"calls\":[{}],\"overlaps\":{},\"overlap_samples\":[{}]", Diagnostics(),
+                       calls, overlaps_, fmt::join(samples_, ","));
   }
  private:
   struct Inside { uint32_t thread = 0; const char* name = ""; uint32_t depth = 0; };
@@ -207,11 +211,14 @@ class HookConcurrency {
 HookConcurrency concurrency;
 std::string ConcurrencySummary() { return concurrency.Summary(); }
 HookScope::HookScope(const char* name) {
+  if (!Diagnostics()) return;
   auto* ts = rex::runtime::ThreadState::Get();
   thread_ = ts ? ts->thread_id() : 0;
   concurrency.Enter(name, thread_);
 }
-HookScope::~HookScope() { concurrency.Leave(thread_); }
+HookScope::~HookScope() {
+  if (Diagnostics()) concurrency.Leave(thread_);
+}
 }  // namespace gpu
 
 namespace gpu {

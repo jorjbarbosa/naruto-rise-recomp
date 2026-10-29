@@ -10,7 +10,6 @@
 #include <mutex>
 #include <string>
 #include <string_view>
-#include <windows.h>
 #include <rex/cvar.h>
 #include <rex/ppc/context.h>
 
@@ -54,6 +53,9 @@ struct EngineRegistration {
 };
 extern std::mutex engine_mutex;
 extern std::unique_ptr<Dispatcher> native_engine;
+// native_engine.get(), stored under engine_mutex where native_engine changes:
+// ActiveDispatcher reads it without the lock (twice per draw).
+extern std::atomic<Dispatcher*> active_engine;
 extern std::unique_ptr<Dispatcher> failed_native_engine;
 extern EngineRegistration engine_registration;
 bool InitializeEngines(PPCContext& ctx);

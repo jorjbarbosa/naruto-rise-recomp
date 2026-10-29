@@ -19,7 +19,7 @@
 #include "gpu/backend/backend.h"
 #include "gpu/backend/dispatcher.h"
 #include "gpu/backend/failure_channel.h"
-#include <windows.h>
+#include <rex/thread.h>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -72,7 +72,7 @@ struct Session {
   }
   // A clear of the surface, a sampled copy recorded in the same batch when
   // seed, then CloseFrame with the event.
-  bool Lot(HANDLE event, bool seed, std::string& evidence) {
+  bool Lot(FrameEvent event, bool seed, std::string& evidence) {
     return dispatcher.Run([event, seed](Engine& engine, std::string& out) {
       ClearRequest clear;
       clear.color_keys[0] = kSurface;
@@ -114,7 +114,7 @@ int main(int argc, char** argv) {
     const bool open = s.Open(evidence);
     line("held-open", open, evidence);
     if (!open) return 4;
-    HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    const FrameEvent event = CreateFrameEvent();
     const bool held = s.Hold(evidence);
     line("held-hold", held, evidence);
     const bool lot = s.Lot(event, true, evidence);
@@ -123,13 +123,14 @@ int main(int argc, char** argv) {
       return engine.ReleaseSampled(kSampled, out);
     }, evidence);
     line("held-sampled-retired", released && Has(evidence, "\"deferred\":true"), evidence);
-    const bool unset = WaitForSingleObject(event, 400) == WAIT_TIMEOUT;
+    const bool unset = rex::thread::Wait(event.get(), false, std::chrono::milliseconds(400)) ==
+                       rex::thread::WaitResult::kTimeout;
     const std::string pending_counts = s.Counts();
     line("held-event-unset-copy-retained", unset && Count(pending_counts, "retired_sampled") == 1 &&
          Count(pending_counts, "sampled_released") == 0, pending_counts);
     const auto released_at = std::chrono::steady_clock::now();
     const bool release = s.hooks->ReleaseSubmissions(evidence);
-    const bool fired = WaitForSingleObject(event, 5000) == WAIT_OBJECT_0;
+    const bool fired = rex::thread::Wait(event.get(), false, std::chrono::milliseconds(5000)) == rex::thread::WaitResult::kSuccess;
     const double fired_ms =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - released_at).count();
     line("held-released-event", release && fired, "{\"release\":" + evidence + ",\"fired_ms\":" +
@@ -141,7 +142,6 @@ int main(int argc, char** argv) {
     std::string failure;
     line("held-no-failure", !s.dispatcher.PostedFailure(failure), failure.empty() ? "null" : failure);
     line("held-shutdown", s.dispatcher.Shutdown(evidence), evidence);
-    CloseHandle(event);
   }
 
   // A failure of the service after a CloseFrame that returned success.
@@ -151,7 +151,7 @@ int main(int argc, char** argv) {
     const bool open = s.Open(evidence);
     line(name + "-open", open, evidence);
     if (!open) return 4;
-    HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    const FrameEvent event = CreateFrameEvent();
     const bool held = s.Hold(evidence);
     if (name == "deadline") s.hooks->SetDeadline(250);
     const bool lot = s.Lot(event, false, evidence);
@@ -178,7 +178,7 @@ int main(int argc, char** argv) {
     // The service finds the failure; nothing is posted after the lot.
     const auto started = std::chrono::steady_clock::now();
     if (name == "error") s.hooks->InjectResult(kDeviceLost);
-    const bool woke = WaitForSingleObject(event, 5000) == WAIT_OBJECT_0;
+    const bool woke = rex::thread::Wait(event.get(), false, std::chrono::milliseconds(5000)) == rex::thread::WaitResult::kSuccess;
     std::string failure;
     const bool visible = s.dispatcher.PostedFailure(failure);
     const double woke_ms =
@@ -217,7 +217,6 @@ int main(int argc, char** argv) {
     const bool down = s.dispatcher.Shutdown(evidence);
     line(name + "-shutdown-after-completion", release && down && Has(evidence, "\"open_batch_discarded\":false"),
          evidence);
-    CloseHandle(event);
   }
 
   // Race between the service's failure and the owner's submissions.
@@ -234,7 +233,7 @@ int main(int argc, char** argv) {
       }
       std::atomic<uint64_t> at_failure{UINT64_MAX};
       s.dispatcher.Failures().OnRetained([&] { at_failure = s.hooks->Submissions(); });
-      HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+      const FrameEvent event = CreateFrameEvent();
       std::atomic<bool> stop{false};
       std::atomic<uint64_t> closed{0};
       std::thread owner([&] {
@@ -255,7 +254,6 @@ int main(int argc, char** argv) {
       if (!s.dispatcher.Failures().Failed() || at_failure.load() == UINT64_MAX) ++failed_rounds;
       else if (s.hooks->Submissions() != at_failure.load()) ++late;
       if (!s.dispatcher.Shutdown(evidence)) ++failed_rounds;
-      CloseHandle(event);
     }
     line("race", late == 0 && failed_rounds == 0,
          "{\"rounds\":" + std::to_string(kRounds) + ",\"lots\":" + std::to_string(lots) +

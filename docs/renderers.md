@@ -24,26 +24,26 @@ The ReXGlue SDK's emulation of the Xbox 360 GPU, derived from Xenia. It executes
 | --- | --- | --- |
 | Drawing | Emulated Xbox 360 GPU (Direct3D 12 backend) | The game's Direct3D calls on Direct3D 12 or Vulkan |
 | Shaders | Translated on first appearance, cached per user | Translated at build time, embedded in the executable |
-| Frame rate | The game's: 30, and 60 in fights | 30, 60, or 120 in the launcher; up to 240 in `narutorise.toml` |
+| Frame rate | The game's: 30, and 60 in fights | 30, 60, or 120 in Settings; up to 240 in `narutorise.toml` |
 | Aspect ratio | 16:9, 21:9, 32:9 | 16:9, with bars on wider monitors |
 | Resolution | 1× to 4× | 1×, 1.5×, 2× to 4× |
 | Anti-aliasing | FXAA, CAS/FSR | The game's 4× MSAA or 2×/8×, transparency antialiasing, FXAA, CAS/FSR |
-| Frame rate display | `F1` overlay | Window title, with `REX_NATIVE_FPS_TITLE=1` |
+| Frame rate display | `show_fps_overlay` in TOML | Show FPS option in Settings → Advanced |
 
 ## Choosing the renderer
 
-Open **Settings → Display → Renderer** in the launcher and choose **Direct3D 12** or **Vulkan**. These are the two backends of the native renderer:
+Open **Settings → Display → Renderer** in the setup screen or F1 menu and choose **Direct3D 12** or **Vulkan**. These are the two backends of the native renderer:
 
 ```toml
 renderer = "native"
 native_backend = "vulkan"  # or "d3d12"
 ```
 
-The launcher no longer offers Xenos. Opening an old configuration migrates its renderer choice to native, preserving `native_backend` when present, and saving writes `renderer = "native"`. Xenos-specific settings are hidden. The underlying runtime still accepts `renderer = "xenos"` when configured manually and launched without the native-capable launcher. Builds without the native renderer retain their legacy settings; see [Build and run](build-and-run.md#native-renderer-optional).
+The native menu offers Direct3D 12 and Vulkan. Opening an old configuration in the menu migrates its renderer choice to native, preserving `native_backend` when present, and saving writes `renderer = "native"`. Xenos-specific settings are hidden. The underlying runtime still accepts `renderer = "xenos"` when configured manually and launched directly; that path has no native setup or in-game menu. Builds without the native renderer retain their legacy settings; see [Build and run](build-and-run.md#native-renderer-optional).
 
 Only APIs included in the build are listed. Without `native_backend`, D3D12 is preferred when available, otherwise Vulkan. The graphics card is enumerated by the selected API. The native log identifies the backend, device and driver.
 
-Vulkan's current presentation queue is limited to one pending frame. It requires swapchain maintenance1 (KHR or EXT) so resize and shutdown can prove that presentation no longer uses the old resources. The launcher itself continues using D3D11. Local Vulkan validation currently covers the RX 9070 XT; testing another GPU family remains open.
+Vulkan's current presentation queue is limited to one pending frame. It requires swapchain maintenance1 (KHR or EXT) so resize and shutdown can prove that presentation no longer uses the old resources. The setup screen and in-game menu use the selected native backend. Local Vulkan validation currently covers the RX 9070 XT; testing another GPU family remains open.
 
 ## Frame rate
 
@@ -71,8 +71,9 @@ Game speed, physics, and timing stay those of the console, because the logic its
 
 ### Measuring the frame rate
 
-- **Xenos:** `F1` shows the **guest** rate, the game's own frame production that game speed follows, and the **host** rate, the window present rate.
-- **Native:** with the environment variable `REX_NATIVE_FPS_TITLE=1` (set for your Windows user, so the launcher passes it on), the window title adds the rate and the frame time of the last half second to the game's name and version, for example `| 60.0 fps | 16.7 ms (max 18.1)`. It is visible in windowed mode. By default the title shows only the name and version.
+On the native renderer, enable **Show FPS** under **Settings → Advanced**, from setup or the F1 menu. For Xenos, set `show_fps_overlay = true` in the TOML. The embedded RmlUi panel shows the game swap rate and frame time on both renderers. On the native renderer, F1 opens the menu; the SDK's F3/F4 overlays are not available there.
+
+The window title normally shows the game's name and version. `REX_NATIVE_FPS_TITLE=1` additionally enables native frame statistics in the title for diagnostics in windowed mode.
 
 ## Known issues
 
@@ -86,9 +87,9 @@ These apply to the native renderer. Report anything else through the [issue trac
 | Light glows | The game uses occlusion queries only for light glows, and the native renderer answers them with a fixed value: a glow behind a wall stays visible, and large or close glows look dimmer than with Xenos. |
 | Minimap at 30 FPS | See [Limits](#limits). |
 | No ultrawide | The image stays 16:9, with bars on wider monitors. |
-| No `F1`/`F3` overlays | Set `REX_NATIVE_FPS_TITLE=1` to read the frame rate in the window title. |
+| Closes with `Swap-previous-frame-fence-unproved` | Reported once. At the end of each frame the game waits for the previous frame to finish. With Direct3D 12 the native renderer allows 2 seconds without any frame completing, a span that includes translating the game's commands and compiling pipelines before submission; past that it closes the game with this reason instead of hanging. The cause in the reported case is not established. When reporting it, include the log, the CPU and graphics card, and whether it happened on the first launch after installing the game or updating the driver. |
 | Crash in a long session | A crash after about 16 minutes of play has been reported once with an earlier test build; the cause is under investigation. |
 
 ## Reporting problems
 
-Include the renderer, the frame rate, VSync, MSAA, internal resolution, the graphics card and driver, and the log from `logs/` next to the executable. For speed or smoothness problems, include the frame rate shown by `F1` (Xenos) or in the window title with `REX_NATIVE_FPS_TITLE=1` (native). If a problem appears only with the native renderer, check whether it also happens with `frame_rate = 30`.
+Include the renderer, the frame rate, VSync, MSAA, internal resolution, the graphics card and driver, and the log from `logs/` next to the executable. For speed or smoothness problems, include the frame rate shown by Show FPS (or native window-title statistics with `REX_NATIVE_FPS_TITLE=1`). If a problem appears only with the native renderer, check whether it also happens with `frame_rate = 30`.

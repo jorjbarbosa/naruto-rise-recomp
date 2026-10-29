@@ -1,0 +1,33 @@
+diff --git a/src/ui/presenter.cpp b/src/ui/presenter.cpp
+index 7360ed9..9479ad6 100644
+--- a/src/ui/presenter.cpp
++++ b/src/ui/presenter.cpp
+@@ -72,8 +72,26 @@ REXCVAR_DEFINE_STRING(
+     .allowed({"auto", "nativeaa", "quality", "balanced", "performance", "ultra_performance"})
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+ #else
+-REXCVAR_DEFINE_STRING(present_effect, "bilinear", "UI/Presenter", "Guest output effect: bilinear")
+-    .allowed({"bilinear"})
++// Without FidelityFX this presenter draws bilinear; cas and fsr and their
++// settings stay valid for a host that draws its own output effects.
++REXCVAR_DEFINE_STRING(present_effect, "bilinear", "UI/Presenter",
++                      "Guest output effect: bilinear, cas, fsr")
++    .allowed({"bilinear", "cas", "fsr"})
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++
++REXCVAR_DEFINE_DOUBLE(present_cas_additional_sharpness, 0.0, "UI/Presenter",
++                      "Additional CAS sharpness in [0, 1]")
++    .range(0.0, 1.0)
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++
++REXCVAR_DEFINE_INT32(present_fsr_max_upsampling_passes, 4, "UI/Presenter",
++                     "Maximum chained FSR EASU passes")
++    .range(1, 4)
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++
++REXCVAR_DEFINE_DOUBLE(present_fsr_sharpness_reduction, 0.2, "UI/Presenter",
++                      "FSR RCAS sharpness reduction in stops")
++    .range(0.0, 2.0)
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+ #endif
+ 

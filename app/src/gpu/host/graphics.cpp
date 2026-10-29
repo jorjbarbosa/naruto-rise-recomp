@@ -2,6 +2,7 @@
 // presentation of its own, the GPU MMIO guarded, the watchdog, and the reviewed
 // interrupt registration (owned, never dispatched).
 #include "gpu/host/internal.h"
+#include "gpu/common/guest_memory.h"
 #include "gpu/host/interrupt_contract.h"
 #include "gpu/backend/dispatcher.h"
 #include "gpu/d3d/d3d.h"
@@ -87,8 +88,10 @@ class GraphicsSystem final : public rex::system::IGraphicsSystem {
   void ValidateInterruptRegistration(PPCContext& ctx) {
     auto* ts = rex::runtime::ThreadState::Get();
     auto* thread = rex::system::XThread::GetCurrentThread();
+    // r4 is the device ("mr r4,r31" at 8213ED60; r31 is a local of 8213ECE8,
+    // not in the context): the registration check below pins it.
     if (!ts || !thread || ts->thread_id() != 4 || thread->active_cpu() != 4 ||
-        ctx.lr != 0x8213ED64 || ctx.r3.u32 != 0x8212F950 || ctx.r4.u32 != ctx.r31.u32)
+        ctx.lr != 0x8213ED64 || ctx.r3.u32 != 0x8212F950)
       Stop("VdSetGraphicsInterruptCallback-outside-reviewed-signature", &ctx);
     bool valid = false;
     {
@@ -105,11 +108,8 @@ class GraphicsSystem final : public rex::system::IGraphicsSystem {
     if (callback != ctx->r3.u32 || user_data != ctx->r4.u32)
       Stop("SetInterruptCallback-marshalled-argument-mismatch", ctx, callback, user_data);
     std::array<uint8_t, 184> owned{};
-    SIZE_T copied = 0;
     auto* ts = rex::runtime::ThreadState::Get();
-    if (!ReadProcessMemory(GetCurrentProcess(), ts->memory()->TranslateVirtual(callback),
-                           owned.data(), owned.size(), &copied) || copied != owned.size() ||
-        owned != kInterruptCallbackCode)
+    if (!CopyFromGuest(ts->memory(), callback, owned.data(), owned.size()) || owned != kInterruptCallbackCode)
       Stop("VdSetGraphicsInterruptCallback-code-variant", ctx, callback, user_data);
     bool committed = false;
     {

@@ -29,7 +29,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <dxgiformat.h>
 #include <array>
 #include <chrono>
 #include <atomic>
@@ -45,9 +44,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <windows.h>
-#include <wrl/client.h>
-#include <dxcapi.h>
+#include <rex/thread.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <rex/cvar.h>
@@ -71,9 +68,9 @@ bool CloseTestFallback() {
   }();
   return value;
 }
-HANDLE CloseParkedEvent() {
-  static const HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-  return event;
+rex::thread::Event* CloseParkedEvent() {
+  static const auto event = rex::thread::Event::CreateManualResetEvent(false);
+  return event.get();
 }
 // The render thread at its next own Swap or draw after the close request:
 // owns the stop (or parks behind the fallback's owner), touches nothing more
@@ -81,10 +78,10 @@ HANDLE CloseParkedEvent() {
 void ParkForClose(PPCContext& ctx) {
   host::ClaimStop("window-close", ctx);
   host::Record("native-close-render-parked", fmt::format(
-      "\"lr\":{},\"guest_thread\":{},\"host_tid\":{}", ctx.lr, GuestThread(), GetCurrentThreadId()));
-  SetEvent(CloseParkedEvent());
+      "\"lr\":{},\"guest_thread\":{},\"host_tid\":{}", ctx.lr, GuestThread(), rex::thread::current_thread_system_id()));
+  CloseParkedEvent()->Set();
   for (;;) {
-    Sleep(10);
+    rex::thread::Sleep(std::chrono::milliseconds(10));
     rex::system::XThread::CheckTitleTermination();  // The SDK's cooperative exit; does not return.
   }
 }
@@ -108,7 +105,7 @@ bool CloseInOrder() {
   const auto t0 = Clock::now();
   auto ms = [&] { return int64_t(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count()); };
   host::Record("native-close-request", fmt::format(
-      "\"ui_host_tid\":{},\"test_fallback\":{},\"present\":{}", GetCurrentThreadId(), CloseTestFallback(),
+      "\"ui_host_tid\":{},\"test_fallback\":{},\"present\":{}", rex::thread::current_thread_system_id(), CloseTestFallback(),
       PresentSummary()));
   {
     std::lock_guard lock(stop_request_mutex);
@@ -123,7 +120,8 @@ bool CloseInOrder() {
   // less than the timer resolution).
   bool parked = false;
   for (int64_t left = 10000; !parked && left > 0; left = 10000 - ms())
-    parked = WaitForSingleObject(CloseParkedEvent(), DWORD(left)) == WAIT_OBJECT_0;
+    parked = rex::thread::Wait(CloseParkedEvent(), false, std::chrono::milliseconds(left)) ==
+             rex::thread::WaitResult::kSuccess;
   bool fallback = false;
   if (!parked) {
     fallback = true;
@@ -139,7 +137,7 @@ bool CloseInOrder() {
   // In the fallback the render thread fails its fence wait on the closed
   // source and parks behind the owner.
   if (fallback)
-    for (int i = 0; i < 300 && !host::ParkedStops(); ++i) Sleep(10);
+    for (int i = 0; i < 300 && !host::ParkedStops(); ++i) rex::thread::Sleep(std::chrono::milliseconds(10));
   host::Record("native-close-render", fmt::format(
       "\"parked\":{},\"fallback\":{},\"parked_stops\":{},\"interrupts_joined\":{},\"interrupts\":{{{}}},\"after_ms\":{}",
       parked, fallback, host::ParkedStops(), interrupts_joined, interrupts, ms()));
@@ -154,7 +152,6 @@ bool CloseInOrder() {
     rex::system::object_ref<rex::system::XThread> thread;
     uint32_t id;
     std::string name;
-    HANDLE handle;
   };
   std::vector<Guest> guests;
   if (kernel)
@@ -162,7 +159,7 @@ bool CloseInOrder() {
       if (thread->is_guest_thread() && thread->is_running() && thread->thread()) {
         std::string name;
         for (char c : thread->thread()->name()) name += c == '"' || c == '\\' ? '_' : c;
-        guests.push_back({thread, thread->thread_id(), name, static_cast<HANDLE>(thread->thread()->native_handle())});
+        guests.push_back({thread, thread->thread_id(), name});
       }
   if (kernel) kernel->TerminateTitle();
   std::string joined_threads, straggler_threads;
@@ -170,7 +167,8 @@ bool CloseInOrder() {
   const auto deadline = Clock::now() + std::chrono::seconds(3);
   for (const auto& guest : guests) {
     const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count();
-    const bool done = WaitForSingleObject(guest.handle, DWORD(std::max<int64_t>(left, 0))) == WAIT_OBJECT_0;
+    const bool done = rex::thread::Wait(guest.thread->thread(), false, std::chrono::milliseconds(std::max<int64_t>(left, 0))) ==
+                      rex::thread::WaitResult::kSuccess;
     std::string& list = done ? joined_threads : straggler_threads;
     list += fmt::format("{}{{\"id\":{},\"name\":\"{}\"}}", list.empty() ? "" : ",", guest.id, guest.name);
     ++(done ? joined : stragglers);

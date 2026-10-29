@@ -1,0 +1,19 @@
+diff --git a/src/system/xam/content_manager.cpp b/src/system/xam/content_manager.cpp
+--- a/src/system/xam/content_manager.cpp
++++ b/src/system/xam/content_manager.cpp
+@@ -174,9 +174,12 @@
+       continue;
+     }
+ 
+-    XCONTENT_AGGREGATE_DATA content_data;
+-    if (XSUCCEEDED(ReadContentHeaderFile(rex::path_to_utf8(file_info.name), xuid, title_id,
+-                                         content_type, content_data))) {
++    // X_RESULT carries Win32 codes: a missing header (X_ERROR_FILE_NOT_FOUND)
++    // passes XSUCCEEDED, which would list the unread struct (a file name of
++    // stack bytes the title then tries to open).
++    XCONTENT_AGGREGATE_DATA content_data{};
++    if (ReadContentHeaderFile(rex::path_to_utf8(file_info.name), xuid, title_id, content_type,
++                              content_data) == X_ERROR_SUCCESS) {
+       result.emplace_back(std::move(content_data));
+     } else {
+       content_data.device_id = device_id;

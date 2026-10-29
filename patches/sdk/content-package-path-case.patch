@@ -1,0 +1,50 @@
+diff --git a/src/system/xam/content_manager.cpp b/src/system/xam/content_manager.cpp
+index bd6c797..655b3bb 100644
+--- a/src/system/xam/content_manager.cpp
++++ b/src/system/xam/content_manager.cpp
+@@ -38,6 +38,25 @@ static const char* kGameContentHeaderDirName = "Headers";
+ 
+ static int content_device_id_ = 0;
+ 
++// A title may name a package in another case than the one it was created with
++// (it creates "PlayerSave1.ninjasave" and opens "playersave1.ninjasave"). A
++// case-insensitive host file system hides that; elsewhere, use the existing
++// entry whose name matches ignoring case.
++static std::filesystem::path MatchExistingCase(const std::filesystem::path& path) {
++  std::error_code ec;
++  if (std::filesystem::exists(path, ec)) {
++    return path;
++  }
++  const std::string name = rex::path_to_utf8(path.filename());
++  std::filesystem::directory_iterator it(path.parent_path(), ec);
++  for (; !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
++    if (rex::string::utf8_equal_case(rex::path_to_utf8(it->path().filename()), name)) {
++      return it->path();
++    }
++  }
++  return path;
++}
++
+ ContentPackage::ContentPackage(KernelState* kernel_state, const std::string_view root_name,
+                                const XCONTENT_AGGREGATE_DATA& data,
+                                const std::filesystem::path& package_path)
+@@ -111,7 +130,7 @@ std::filesystem::path ContentManager::ResolvePackagePath(uint64_t xuid,
+   // Content path:
+   // content_root/xuid/title_id/content_type/data_file_name/
+   auto package_root = ResolvePackageRoot(used_xuid, data.content_type, data.title_id);
+-  return package_root / rex::to_path(data.file_name());
++  return MatchExistingCase(package_root / rex::to_path(data.file_name()));
+ }
+ 
+ std::filesystem::path ContentManager::ResolvePackageHeaderPath(const std::string_view file_name,
+@@ -132,8 +151,8 @@ std::filesystem::path ContentManager::ResolvePackageHeaderPath(const std::string
+ 
+   // Header root path:
+   // content_root/xuid/title_id/Headers/content_type/filename.header
+-  return root_path_ / xuid_str / title_id_str / kGameContentHeaderDirName / content_type_str /
+-         final_name;
++  return MatchExistingCase(root_path_ / xuid_str / title_id_str / kGameContentHeaderDirName /
++                           content_type_str / final_name);
+ }
+ 
+ std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContent(uint32_t device_id, uint64_t xuid,

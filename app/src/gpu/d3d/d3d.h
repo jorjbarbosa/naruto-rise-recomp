@@ -14,6 +14,9 @@
 namespace gpu {
 class FailureChannel;
 bool Active();
+// The device of the 8213ECE8 in progress, before its arena (VdInitializeEngines
+// is called there); 0 outside that window.
+uint32_t EnteredDevice();
 void DeviceArena(PPCContext& ctx, uint8_t* base);        // 8212FA80 inside 8213ECE8
 void DeviceWorkers(PPCContext& ctx, uint8_t* base);      // 821480D0
 void DeviceCache(PPCContext& ctx, uint8_t* base);        // 82131428

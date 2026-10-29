@@ -7,21 +7,28 @@ Translation mods replace individual text IDs when the game loads its English tex
 ## Bundled Brazilian Portuguese translation
 
 Releases include the complete 6,453-ID package from [`mods/pt-br`](../mods/pt-br).
-Both the portable ZIP and Setup place it in `mods/pt-br` next to the executable;
-Setup also adds or refreshes it when updating an existing installation.
+ZIP and AppImage place the immutable seed in `defaults/mods/pt-br`.
+Preparation copies it to `<active data folder>/mods/pt-br` when that package is
+absent, after importing eligible old mods. Find the active folder in
+**Settings → Advanced**. The menu and runtime load only this active `mods/` path.
 Choose **Português (Brasil)** in **Settings → Game → Game language** to activate it.
 Installing or updating does not change the selected language.
 
-Updates replace the bundled `mod.toml` and `texts.json`, leaving other mod folders
-and extra files intact. To customize this translation, copy it to another mod
-folder and select that copy in the launcher.
+Initialization, rebuilds, ZIP/AppImage updates and the compatibility bridge
+preserve active packages in full, including customized or partial PT-BR packages.
+Updates refresh only the immutable seed. To update an active translation, close
+the game, back it up and merge or replace it with the new seed deliberately.
+You can also customize a separate package and select it in the ingame menu.
+See [data migration and recovery](data-folder.md) for legacy imports, conflicts,
+portable mode and isolated session overrides.
 
 ## Try the Portuguese demo
 
-Copy [examples/mods/pt-br-demo](../examples/mods/pt-br-demo) into `mods/pt-br-demo` next to `narutorise.exe`:
+Copy [examples/mods/pt-br-demo](../examples/mods/pt-br-demo) into `mods/pt-br-demo`
+inside the active data folder:
 
 ```text
-narutorise.exe
+<active data folder>/
 narutorise.toml
 mods/
   pt-br-demo/
@@ -29,11 +36,20 @@ mods/
     textos.json
 ```
 
-Open the launcher and choose the demo in **Settings → Game → Game language**. Valid packages in `mods/` appear by their manifest name, without added labels. Copying a package makes it available; only selecting it activates it. The launcher refreshes the list when opened, when its window regains focus, and before launching the game.
+Open **Settings → Game → Game language** and choose the demo. Valid packages in
+the active `mods/` appear by their manifest name. Copying a package makes it
+available; selecting it activates it after restart. Reopen the menu to refresh
+the list after installing a package.
 
-Selecting a translation automatically uses English as its base. Selecting any official language disables the translation. The launcher remembers the package selection on the next opening. If the selected package is missing or invalid, it disappears from the list and the launcher automatically selects English and clears the mod selection, without a warning. Restoring the package makes it available again but does not activate it. The launcher checks package structure and JSON, while engine tags and arguments are still checked by the game when it loads each table.
+Selecting a translation automatically uses English as its base. Selecting an
+official language clears the translation selection. The active TOML preserves
+the selected package across restarts and data-folder changes. A missing or
+invalid package is omitted from the list; the runtime reports it and retains
+original English text. Its saved selection remains until you choose another
+language. Package structure and JSON are validated before loading; engine tags
+and arguments are checked when the game loads each table.
 
-For manual configuration, close the game and launcher and set these keys in that executable's `narutorise.toml`:
+For manual configuration, close the game and set these keys in the active data folder’s `narutorise.toml` (Settings → Advanced):
 
 ```toml
 user_language = 1
@@ -42,7 +58,10 @@ translation_mod = "pt-br-demo"
 
 Restart the game after editing either the configuration or the mod. Set `translation_mod = ""` to disable it. The demo translates five IDs covering three labels: **OPTIONS → OPÇÕES**, **Subtitles → Legendas**, and **GAME PAUSED → JOGO PAUSADO**. It is a small test package, not a complete Portuguese translation.
 
-During development, CMake copies `app/narutorise.toml` over the configuration in the build output. Keep your preferred development setting in the template, or test in a separate executable folder.
+During development, CMake copies the factory template to `defaults/narutorise.toml`
+and the two curated PT-BR files to `defaults/mods/pt-br`. It preserves active
+preferences and mods. Personal settings and translations belong in the active
+data folder. See [Data folder and recovery](data-folder.md).
 
 ## Create a package
 
@@ -77,8 +96,41 @@ UTF-16 does not add missing glyphs to the game's fonts. In the Options smoke tes
 on 2026-10-20, typographic quotes and `œ` appeared, but en/em dashes and an ellipsis
 did not appear in that label font, on either renderer. The encoder's exact
 UTF-16LE units are covered by the host tests; font coverage remains a separate
-limit. Local captures: [Xenos](../out/translation-fixes-20261020-082055/mixed-xenos/options.png)
-and [native](../out/translation-fixes-20261020-082055/mixed-native/options.png).
+limit.
+
+## Russian terminology and subtitle references
+
+The initial Russian project glossary is in [`localization/ru`](../localization/ru).
+It uses the user-provided **Alex & Julia** Russian subtitles for Naruto episodes
+**1–81**. Each supported entry includes selected excerpts with episode, ASS line
+number, timestamp and source-file hash. `subtitle-sources.json` identifies all 81
+input files; the full subtitle corpus remains local.
+
+Online research for the seven initially unresolved entries is recorded separately
+in `web-research.json`, including source URLs, access method, corroborated names
+and editorial decisions. Official game/translator sources are distinguished from
+community references for Russian spelling. Palm Healing remains unresolved as a
+specific named-technique equivalence; the literal game label itself is verified.
+
+The glossary distinguishes preferred wording, contextual equivalents and unresolved
+candidates. Subtitle wording does not by itself establish correspondence with an
+English game technique. Notes record composed game labels, source variants and
+conflicts, including the Lotus names. Interface terms are explicitly marked as
+project conventions. These choices do not claim an official Russian localization.
+
+Rebuild the local subtitle index and the spreadsheet/AI exports with:
+
+```powershell
+python -I tools/localization/extract-subtitle-corpus.py "path/to/Russian ASS subtitles" out/ru-subtitles --first 1 --last 81
+python -I tools/localization/export-glossary.py --locale ru
+```
+
+The subtitle index supports terminology review; it does not automatically translate
+or align English and Russian dialogue. Translate from the English game export and
+preserve engine commands and arguments as described above. Cyrillic encoding is
+supported by the TXU codec, but the 2026-10-20 Xenos menu probe displayed only the
+Latin prefix of the supplied Russian label. Cyrillic font coverage and text fit
+must be addressed before claiming a playable Russian package.
 
 ## Validate a complete translation
 

@@ -8,6 +8,7 @@
 #include <cstring>
 #include <map>
 #include <set>
+#include <span>
 #include <regex>
 
 namespace gpu::vulkan {
@@ -109,7 +110,7 @@ inline VkFormat InputFormat(VertexFormat f) {
     default: return VK_FORMAT_UNDEFINED;
   }
 }
-inline bool ApplyDrawConstants(const std::vector<uint8_t>& whole, const std::vector<uint8_t>& delta,
+inline bool ApplyDrawConstants(std::span<const uint8_t> whole, std::span<const uint8_t> delta,
                                std::array<uint8_t, 4096>& block) {
   if (whole.size() == block.size()) {
     std::memcpy(block.data(), whole.data(), block.size());
