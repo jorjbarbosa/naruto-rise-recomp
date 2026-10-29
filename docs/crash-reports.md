@@ -7,7 +7,9 @@ and preserves its exit status. It does not depend on the retired launcher.
 
 Local Crashpad capture is enabled in the normal Sentry-enabled build even when
 **Send crash reports** is off. Off sessions have no ingestion DSN and require SDK
-consent. Upload authorization is separate from local capture. A fresh database is
+consent. Upload authorization is separate from local capture. Until the player
+answers the question shown over the first frame of the game, the session keeps
+the destination but sends nothing; see [Sentry](sentry.md#player-preference). A fresh database is
 used for every session; re-enabling uploads never reopens older databases.
 
 The session includes a versioned manifest, bounded phase history, first renderer
@@ -75,4 +77,4 @@ only with explicit `crash_reporting=true`; all local fixtures default to opt-out
 Tests: `incident_test.py` (supervisor/FailureChannel), `incident_export_test.py`
 (archive/recovery/retention) and `incident_boot_test.py` (real app/dumps/opt-out).
 Test success is distinct from reproducing the unknown fault on the machine in
-issue 72. That machine still needs a build containing this collection system.
+issue 72. Releases from 0.4.0-beta include this collection system.

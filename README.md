@@ -9,7 +9,7 @@
 
 <p align="center">
   A static recompilation for PC powered by ReXGlue<br>
-  <strong>Native Direct3D 12 renderer with 60 and 120 FPS • Ultrawide • DLC support • Seven languages</strong>
+  <strong>Native Direct3D 12 and Vulkan renderer with 60 and 120 FPS • Windows and Linux • DLC support • Seven languages</strong>
 </p>
 
 <p align="center">
@@ -30,7 +30,7 @@ A PC port of **Naruto: Rise of a Ninja**, originally released for Xbox 360. The 
 
 The game can be drawn by two renderers, available in the executable: the **native renderer**, the default, which draws the game's Direct3D calls with Direct3D 12 or Vulkan and can present at 60 or 120 FPS, and **Xenos**, the SDK's emulation of the Xbox 360 GPU, as the alternative.
 
-The current build and distribution workflow targets **Windows x64**. Presets for other platforms exist, but do not represent complete or verified support for this port.
+Releases target **Windows x64** (ZIP) and **Linux x86-64** (AppImage, native renderer on Vulkan). Presets for other platforms exist, but do not represent complete or verified support for this port.
 
 > [!NOTE]
 > AI tools are used to assist the development of this project. The project's direction, technical decisions, and testing are the maintainer's, who reviews every change before it is published.
@@ -39,7 +39,7 @@ The current build and distribution workflow targets **Windows x64**. Presets for
 
 **Graphics**
 
-- **Two renderers:** the native Direct3D 12 renderer (default) and Xenos as the alternative. See [Native renderer and 60 FPS](#native-renderer-and-60-fps).
+- **Two renderers:** the native renderer on Direct3D 12 or Vulkan (default) and Xenos as the alternative. See [Native renderer and 60 FPS](#native-renderer-and-60-fps).
 - **60 and 120 FPS** with the native renderer, keeping the game's logic at its original rate.
 - **21:9 and 32:9 ultrawide** with the Xenos renderer, with projection adjustments and anamorphic presentation; configured through `narutorise.toml`.
 - **Internal resolution from 1× to 4×** (also 1.5× with the native renderer), up to 16× anisotropic filtering, FXAA, FidelityFX CAS/FSR, fullscreen, and VSync.
@@ -59,6 +59,8 @@ The current build and distribution workflow targets **Windows x64**. Presets for
 - **In-game menu** with Settings, DLC and Exit game: press `F1` or `Back+Start`. Both shortcuts are remappable. The game continues running while menu input is captured.
 - **Seven interface languages**, shared settings before and during the game, Show FPS, shader progress, update notices and desktop shortcut creation.
 - **ZIP distribution**, plus a temporary compatibility bridge for older installed copies.
+- **Native Linux AppImage** with the Vulkan renderer, on Wayland or X11.
+- **Local diagnostics:** each session keeps its log and, after a crash, a dump; **Settings → Advanced → Diagnostics** exports a session to a ZIP for bug reports. Sending crash reports is opt-in: the first start asks, and nothing is sent before the answer. See [Local diagnostics](docs/crash-reports.md).
 - **Shader caches:** bundled Xenos storage seeds the user cache; native shaders are translated at build time and embedded in the executable.
 
 ## Native renderer and 60 FPS
@@ -80,9 +82,8 @@ See [Renderers and frame rate](docs/renderers.md) for how it works, its limits, 
 
 ## Requirements
 
-- Windows x64.
-- A GPU and driver compatible with Direct3D 12 or the native Vulkan backend (Xenos requires Direct3D 12).
-- The [Microsoft Visual C++ x64 Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe).
+- **Windows:** Windows x64, a GPU and driver compatible with Direct3D 12 or Vulkan (Xenos requires Direct3D 12), and the [Microsoft Visual C++ x64 Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe).
+- **Linux:** x86-64 with glibc 2.43 or newer (check with `ldd --version`), a Vulkan driver (Mesa or NVIDIA) and FUSE. On an older glibc the AppImage does not start; use the Windows ZIP through Proton there.
 - Your Xbox 360 ISO or a complete extracted copy, including `default.xex`. The source tree does not include game data or DLC packages.
 - An SDL-compatible controller is recommended. Keyboard and mouse can be configured in Settings → Controls; see [Keyboard and mouse](docs/configuration.md#keyboard-and-mouse).
 
@@ -94,6 +95,8 @@ On first launch, choose your original Xbox 360 ISO or `default.xex` from a compl
 
 Press **F1** or **Back+Start** while playing for Settings, DLC and Exit game. Create a desktop shortcut from **Settings → Advanced**. See the [DLC guide](docs/dlc.md) for additional content.
 
+On Linux, download `NarutoRise-<version>-x86_64.AppImage`, make it executable (`chmod +x`) and open it. Select the ISO or a complete game folder on first launch, or put the game files in `game/` beside the AppImage. Data goes to `~/.local/share/narutorise` (`$XDG_DATA_HOME`). Without FUSE, run it with `--appimage-extract-and-run`.
+
 ## Updating
 
 The game checks GitHub Releases in the background and offers to open the release page. It does not download or install updates. Release eligibility follows GitHub's published/pre-release flag; a `beta` tag can still be eligible. Checks are cached; playing offline works.
@@ -104,6 +107,8 @@ For an installed **0.3.0-beta** copy, use the separately attached `NarutoRiseIns
 
 The bridge remains attached for several releases because older launchers check only the latest release. For a portable ZIP updated manually, the old `narutorise_launcher.exe` is left untouched; you may delete it. See the [packaging guide](packaging/README.md) for commands and migration tests.
 
+On Linux, close the game and replace the AppImage file. The data folder stays where it is.
+
 ## Documentation
 
 | Guide | Contents |
@@ -111,7 +116,9 @@ The bridge remains attached for several releases because older launchers check o
 | [Build and run](docs/build-and-run.md) | Toolchain, SDK, code generation, compilation, the native renderer, and first launch |
 | [Configuration](docs/configuration.md) | Ultrawide, renderers, graphics, shortcuts, and user files |
 | [Renderers and frame rate](docs/renderers.md) | Xenos and native renderers, 60 and 120 FPS, and known issues |
+| [Data folder and recovery](docs/data-folder.md) | Where preferences, logs, saves and DLC live, migration and backups |
 | [DLCs and Title Updates](docs/dlc.md) | Content installation and additional module build |
+| [Local diagnostics](docs/crash-reports.md) | Session logs, crash dumps, export, and the crash report consent |
 | [Architecture and analysis](docs/architecture.md) | Project structure, technical workflow, and areas to address |
 | [Troubleshooting](docs/troubleshooting.md) | Build failures, runtime issues, and diagnostics |
 | [Packaging](packaging/README.md) | ZIP distribution and compatibility bridge |
@@ -120,12 +127,12 @@ The bridge remains attached for several releases because older launchers check o
 
 Planned work, in no particular order:
 
-- **Linux support.** Build presets exist, but the port has not been validated on Linux, and native file dialogs and restart behavior still need platform integration.
+- **Linux on more systems.** The AppImage needs glibc 2.43; distributions with an older glibc and the Steam Deck still need a compatible build and testing.
 - **Ultrawide with the native renderer.** It currently draws at 16:9, with bars on wider monitors.
 
 ## Contributing
 
-Read the [technical analysis](docs/architecture.md) before changing the runtime or code generation files. When reporting an issue, include reproduction steps, version/build, CPU, GPU, driver, the renderer and frame rate you use, your configuration, and logs from `logs/` inside the active data folder shown in Settings → Advanced. Also mention whether you use ultrawide, DLCs, or a Title Update.
+Read the [technical analysis](docs/architecture.md) before changing the runtime or code generation files. When reporting an issue, include reproduction steps, version/build, CPU, GPU, driver, the renderer and frame rate you use, your configuration, and logs from `logs/` inside the active data folder shown in Settings → Advanced. After a crash, attach the ZIP from **Settings → Advanced → Diagnostics → Export previous session**. Also mention whether you use ultrawide, DLCs, or a Title Update.
 
 Keep game files, content packages, derived shader data, and generated recompiled code out of commits. SDK changes should include reproducible patches in `patches/sdk/`.
 
@@ -134,6 +141,9 @@ Keep game files, content packages, derived shader data, and generated recompiled
 **Testing**
 
 - [entityeternal](https://github.com/entityeternal), for testing the native renderer and frame rate builds and reporting issues.
+- [JellySnek](https://github.com/JellySnek), for helping the project since the beginning, reporting bugs and suggesting features.
+- [tylerl567](https://github.com/tylerl567), for testing on the Steam Deck.
+- [rubenlopezgirao](https://github.com/rubenlopezgirao), for helping investigate crashes ([#72](https://github.com/jorjbarbosa/naruto-rise-recomp/issues/72)) to improve the game's stability.
 
 **Projects and libraries**
 

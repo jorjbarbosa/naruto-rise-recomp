@@ -39,7 +39,7 @@ PowerPC code is translated ahead of time into C++. The ReXGlue runtime provides 
 | `tools/` | ISO extractor and content utility |
 | `tools/native-renderer/` | Native renderer build support: Plume integration and shader cache generation |
 | `tools/xenosrecomp/` | XenosRecomp fork that translates the game's shaders for the native renderer |
-| `packaging/` | Release preparation, Inno Setup, and tests |
+| `packaging/` | Release preparation (ZIP, the Inno Setup compatibility bridge and the Linux AppImage) and tests |
 | `game_root/` | Local game data used during development |
 | `dist/` | Locally generated packages |
 
@@ -81,44 +81,59 @@ The shader cache is generated at build time from the local `xeshader.sdb` by `to
 | Patch | Purpose |
 | --- | --- |
 | `codegen-alt-version-dll-modules.patch` | Code generation for alternative module versions, required by the DLC workflow |
+| `content-package-path-case.patch` | Finds content packages whose folder name differs only in letter case, for case-sensitive file systems |
+| `content-unread-header.patch` | Lists a content folder without a `.header` file by its folder name instead of uninitialized data |
 | `d3d12-queue-fence-result-check.patch` | Checks the results of the fence signal and wait separately in the D3D12 command processor's submission wait |
+| `data-achievements-unicode.patch` | Reads achievement metadata from data folders with non-ASCII paths |
+| `data-log-directory.patch` | Writes the sequential logs to the data folder's `logs/` and reads the configuration from non-ASCII paths |
+| `disc-image-game-root.patch` | Uses an Xbox 360 disc image (ISO) as the game root, read in place |
 | `guest-frame-stats.patch` | Enables the guest frame rate measurement in Release builds, feeding the F1/F3 overlays |
+| `linux-procmap-query.patch` | Looks host mappings up with `PROCMAP_QUERY` on Linux |
 | `mnk-input-driver.patch` | Keyboard/mouse driver: standalone modifiers, immutable per-port host profiles, mapped mouse directions, and direct camera deltas scoped to J1; retains the previous camera integration |
-| `z-controls-v4.patch` | Device identity shared with the native controls UI, metadata refresh, actual SDL capabilities, and extra keyboard/mouse names. Applied after the MnK patch; both recognize an already applied SDK |
+| `native-window-handle-sdl.patch` | Exposes the SDL window handle and Wayland or X11 surfaces to the native renderer |
 | `obdosdevices-relative-paths.patch` | Relative device path handling |
+| `physical-heap-release-order.patch` | Releases a physical heap region before its parent pages, so a concurrent allocation cannot take the same pages |
 | `physical-memory-trace.patch` | Physical memory diagnostics |
+| `posix-multiwait-sleep-precision.patch` | Keeps the precision of the POSIX multiple-object wait polling |
+| `present-effect-without-fidelityfx.patch` | Accepts the native output effects in builds without FidelityFX |
+| `query-committed-range-access.patch` | Queries whether every page of a guest range is committed, so the renderer refuses copies over uncommitted pages |
+| `recompiled-module-library-path.patch` | Loads recompiled module libraries by their platform file name |
+| `sentry-close-hook.patch` | Lets the application flush crash reporting before the SDK's hard exit |
+| `sentry-signal-chain.patch` | Passes fatal POSIX signals on to the previously installed handler, such as Crashpad's |
 | `ultrawide-presenter.patch` | Anamorphic presentation in the graphics backend |
 | `unclipped-draw-vs-on-cpu-default.patch` | Draw extent calculation adjustment to avoid EDRAM corruption |
+| `z-controls-v4.patch` | Device identity shared with the native controls UI, metadata refresh, actual SDL capabilities, and extra keyboard/mouse names. Applied after the MnK patch; both recognize an already applied SDK |
+| `zz-sdl-initial-gamepads.patch` | Discovers the gamepads connected before the SDL input driver starts |
+| `zzz-input-user-packet.patch` | Gives each guest user one packet number that moves when any of its devices changes, so a controller next to a busier keyboard still reaches the game |
 
-`apply_sdk_patches.ps1` applies files in filename order and detects already applied patches using `git apply --reverse --check`. Rebuild and reinstall the SDK after changing these patches.
+`apply_sdk_patches.ps1` (or `apply_sdk_patches.sh` on Linux) applies files in filename order and detects already applied patches using `git apply --reverse --check`. Rebuild and reinstall the SDK after changing these patches.
 
-## Launcher and distribution
+## Menus and distribution
 
-The launcher saves the TOML file and starts the game with `--game_data_root`. For DLCs, it stages packages in `dlc/` or copies extracted content into Documents. ISO extraction belongs to the installer, through a native helper and `extract-xiso`, rather than the shipped launcher.
+The setup screen and the in-game menu, with their settings, controls and DLC pages, are RmlUi documents drawn by the game itself (`app/src/menu/`). The game reads the original ISO in place, or a complete extracted copy. DLC packages are staged in the data folder's `dlc/` and installed at game startup; preferences, logs, saves and content live in the [data folder](data-folder.md).
 
-`package-release.ps1` configures Release mode, refreshes targets, checks inputs, inspects PE imports to reject debug CRTs, and assembles the distribution in a private staging directory. Previous releases are preserved in `dist/previous-release-*/`.
+`package-release.ps1` configures Release mode, refreshes targets, archives the matching native symbols outside the ZIP, inspects PE imports to reject debug CRTs, and assembles the distribution in a private staging directory. Previous releases are preserved in `dist/previous-release-*/`. `package-bridge.ps1` builds the Inno Setup compatibility bridge for 0.3.0 installations from that payload, and `package-linux-appimage.py` builds the Linux AppImage.
 
 ## Strengths
 
-- Clear separation between port code, generated sources, launcher, and distribution.
+- Clear separation between port code, generated sources, menus, and distribution.
 - Explicit manifest for the base game and DLC engine, with separate seeds.
 - SDK modifications stored as reapplicable patch files.
-- User data preservation in installer and packaging workflows.
-- Synthetic ISO import and installation tests whose fixtures do not require original game data.
+- User data preservation in the data folder migration, the compatibility bridge and packaging.
+- Synthetic disc image, data folder, DLC and package tests whose fixtures do not require original game data.
 
 ## Areas to address and next steps
 
 1. **SDK reproducibility:** the SDK is a submodule pinned at a commit, with the local patches applied on top. Verifying a clean clone with all patches before each release keeps builds reproducible.
 2. **Setup and manifest:** setup's final instructions suggest `init --force`, while the manifest contains DLC customizations. The documented workflow uses `codegen` directly to preserve them.
 3. **Optional DLC builds:** the current manifest requires all three DLC engine input files. Packaging includes each declared revision and rejects missing generated module binaries. A dedicated base-game preset or manifest would be a useful improvement.
-4. **Portability:** Linux/macOS/ARM64 presets exist, but end-to-end validation and a complete non-Windows launcher graphics path are still needed.
+4. **Portability:** Linux x86-64 ships as an AppImage that needs glibc 2.43; older distributions and the Steam Deck need a compatible build and testing. macOS and ARM64 presets exist without validation.
 5. **Revision compatibility:** seeds and hooks use specific addresses. A table of hashes/revisions and test results for the game, DLCs, and TUs is missing.
-6. **Custom user data:** the runtime accepts `user_data_root`; the DLC launcher directly resolves Documents. Shared path resolution would prevent mismatches in customized installations.
-7. **Build configuration:** `narutorise_runtime_config` synchronizes the source TOML on each build and can overwrite preferences changed in the output folder.
-8. **Native renderer:** it is the default and the newest part of the port; its open defects are listed in [Renderers and frame rate](renderers.md#known-issues). Plume is an external checkout pinned by commit rather than a submodule, and the startup pipeline list is generated from local play sessions, so a clean clone builds without it.
+6. **Build configuration:** `narutorise_runtime_config` synchronizes the source TOML on each build and can overwrite preferences changed in the output folder.
+7. **Native renderer:** it is the default and the newest part of the port; its open defects are listed in [Renderers and frame rate](renderers.md#known-issues). Plume is an external checkout pinned by commit rather than a submodule, and the startup pipeline list is generated from local play sessions, so a clean clone builds without it.
 
 ## Maintenance guidance
 
 Edit seeds, the manifest, and application hooks instead of manually fixing generated C++. Keep disc data and derived sources out of version control, as specified by `.gitignore`. When modifying the SDK, update its corresponding patch and check the result in a clean checkout.
 
-For installer changes, see the [bridge tests](../packaging/README.md). Runtime reports should include data revision, DLC/TU usage, renderer and frame rate, aspect ratio, scale, GPU/driver, and logs to help distinguish content, runtime, and presentation failures.
+For bridge or packaging changes, see the [packaging tests](../packaging/README.md). Runtime reports should include data revision, DLC/TU usage, renderer and frame rate, aspect ratio, scale, GPU/driver, and logs to help distinguish content, runtime, and presentation failures.
