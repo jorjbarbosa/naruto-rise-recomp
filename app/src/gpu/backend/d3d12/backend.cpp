@@ -42,11 +42,20 @@
 #include "gpu/backend/sdk_shaders.h"   // CAS, FSR1, bilinear and FXAA of the SDK (DXBC).
 #include "gpu/backend/ui_pass.h"  // kUiVs, kUiPs (DXIL).
 
-namespace plume { std::unique_ptr<RenderInterface> CreateD3D12Interface(); }
+namespace plume {
+std::unique_ptr<RenderInterface> CreateD3D12Interface();
+// The HRESULT of the last swap chain creation on this thread (local Plume patch).
+HRESULT D3D12LastSwapChainResult();
+}  // namespace plume
 
 namespace gpu::d3d12 {
 namespace {
 constexpr size_t kDrawStreamsMax = 8;  // Vertex buffer slots (the title binds up to 4).
+// A window can still hold an earlier engine's swap chain for a while after its
+// release (the setup screen's, before the game's): the creation is retried
+// every kAttachRetryWait, kAttachAttempts tries in all (about 2 s).
+constexpr uint32_t kAttachAttempts = 40;
+constexpr auto kAttachRetryWait = std::chrono::milliseconds(50);
 // REX_NATIVE_D3D12_DEBUG=1 turns the D3D12 debug layer on; without it
 // no info queue exists and no diagnostic can be stored or read. Unset or 0
 // leaves it off, the product default: its validation costs about a third of
@@ -2025,11 +2034,27 @@ bool Backend::AttachWindow(const platform::NativeWindow& target, std::string& ev
     if (FAILED(hr = device->d3d->CreateDescriptorHeap(&targets, IID_PPV_ARGS(&state_->effect_rtv))))
       return fail("native-present-effect-heap", hr);
   }
-  auto swapchain = state_->queue->createSwapChain(plume::RenderSwapChainDesc(
-      static_cast<HWND>(window), plume::RenderFormat::B8G8R8A8_UNORM, state_->swap_buffers, false,
-      state_->max_frame_latency));
-  auto* native = static_cast<plume::D3D12SwapChain*>(swapchain.get());
-  if (!swapchain || !native->d3d) return fail("native-swapchain-create");
+  std::unique_ptr<plume::RenderSwapChain> swapchain;
+  plume::D3D12SwapChain* native = nullptr;
+  HRESULT create_hresult = S_OK;  // Of the first failed creation.
+  uint32_t attempts = 0;
+  for (;;) {
+    ++attempts;
+    swapchain = state_->queue->createSwapChain(plume::RenderSwapChainDesc(
+        static_cast<HWND>(window), plume::RenderFormat::B8G8R8A8_UNORM, state_->swap_buffers, false,
+        state_->max_frame_latency));
+    native = static_cast<plume::D3D12SwapChain*>(swapchain.get());
+    if (native && native->d3d) break;
+    swapchain.reset();
+    hr = plume::D3D12LastSwapChainResult();
+    if (create_hresult == S_OK) create_hresult = hr;
+    if (attempts == kAttachAttempts) {
+      evidence = fmt::format("{{\"attached\":false,\"reason\":\"native-swapchain-create\",\"hresult\":{},"
+                             "\"attempts\":{}}}", static_cast<uint32_t>(hr), attempts);
+      return false;
+    }
+    std::this_thread::sleep_for(kAttachRetryWait);
+  }
   state_->swapchain = std::move(swapchain);
   state_->window = window;
   state_->swapchain->setVsyncEnabled(state_->vsync);
@@ -2044,12 +2069,13 @@ bool Backend::AttachWindow(const platform::NativeWindow& target, std::string& ev
   evidence = fmt::format("{{\"attached\":true,\"window\":{},\"size\":[{},{}],\"format\":{},\"buffers\":{},"
                          "\"swap_effect\":{},\"flags\":{},\"tearing_allowed\":{},\"waitable\":{},\"vsync\":{},"
                          "\"tearing_option\":{},\"max_frame_latency\":{},\"brightness\":{},\"effect\":{},"
-                         "\"post_effect\":{}}}",
+                         "\"post_effect\":{},\"attempts\":{},\"create_hresult\":{}}}",
                          reinterpret_cast<uintptr_t>(window), desc.Width, desc.Height, static_cast<uint32_t>(desc.Format),
                          desc.BufferCount, static_cast<uint32_t>(desc.SwapEffect), desc.Flags,
                          (desc.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) != 0, native->waitableObject != nullptr,
                          state_->vsync, state_->allow_tearing, state_->max_frame_latency, mode.brightness,
-                         uint32_t(mode.effect), uint32_t(mode.post_effect));
+                         uint32_t(mode.effect), uint32_t(mode.post_effect), attempts,
+                         static_cast<uint32_t>(create_hresult));
   return true;
 }
 

@@ -1,15 +1,49 @@
 diff --git a/plume_d3d12.cpp b/plume_d3d12.cpp
 --- a/plume_d3d12.cpp
 +++ b/plume_d3d12.cpp
-@@ -1353,6 +1353,7 @@ namespace plume {
+@@ -1315,6 +1315,14 @@ namespace plume {
+ 
+     // D3D12SwapChain
+ 
++    // The result of the last swap chain creation on this thread: S_OK, or the
++    // HRESULT of the call that failed.
++    static thread_local HRESULT lastSwapChainResult = S_OK;
++
++    HRESULT D3D12LastSwapChainResult() {
++        return lastSwapChainResult;
++    }
++
+     D3D12SwapChain::D3D12SwapChain(D3D12CommandQueue *commandQueue, const RenderSwapChainDesc &desc) {
+         assert(commandQueue != nullptr);
+         assert(desc.renderWindow != 0);
+@@ -1345,14 +1353,17 @@ namespace plume {
+         IDXGISwapChain1 *swapChain1;
+         IDXGIFactory4 *dxgiFactory = commandQueue->device->renderInterface->dxgiFactory;
+         HRESULT res = dxgiFactory->CreateSwapChainForHwnd(commandQueue->d3d, desc.renderWindow, &swapChainDesc, nullptr, nullptr, &swapChain1);
++        lastSwapChainResult = res;
+         if (FAILED(res)) {
+             fprintf(stderr, "CreateSwapChainForHwnd failed with error code 0x%lX.\n", res);
+             return;
+         }
+ 
          res = dxgiFactory->MakeWindowAssociation(desc.renderWindow, DXGI_MWA_NO_ALT_ENTER);
++        lastSwapChainResult = res;
          if (FAILED(res)) {
              fprintf(stderr, "MakeWindowAssociation failed with error code 0x%lX.\n", res);
 +            swapChain1->Release();
              return;
          }
  
-@@ -1383,6 +1384,10 @@ namespace plume {
+@@ -1376,13 +1387,18 @@ namespace plume {
+     }
+ 
+     D3D12SwapChain::~D3D12SwapChain() {
+-        for (uint32_t i = 0; i < desc.textureCount; i++) {
++        // A failed creation returns before the textures are made.
++        for (uint32_t i = 0; i < textures.size(); i++) {
+             if (textures[i].d3d != nullptr) {
+                 textures[i].d3d->Release();
+                 textures[i].d3d = nullptr;
              }
          }
  
@@ -20,7 +54,7 @@ diff --git a/plume_d3d12.cpp b/plume_d3d12.cpp
          if (d3d != nullptr) {
              d3d->Release();
          }
-@@ -3673,20 +3678,23 @@ namespace plume {
+@@ -3673,20 +3689,23 @@ namespace plume {
              const D3D_SHADER_MODEL supportedShaderModels[] = { D3D_SHADER_MODEL_6_0 };
  #       endif
              D3D12_FEATURE_DATA_SHADER_MODEL dataShaderModel = {};

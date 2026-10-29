@@ -428,6 +428,9 @@ if(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP)
                 target_sources(native_engine_bindings_test PRIVATE "${_draw_cache_shaders}/bindings_${_stage}.h")
             endforeach()
             target_include_directories(native_engine_bindings_test PRIVATE "${_draw_cache_shaders}")
+            # Attaching to a window that another swap chain still holds.
+            add_executable(native_engine_attach_test src/gpu/backend/d3d12/tests/attach_test.cpp)
+            target_link_libraries(native_engine_attach_test PRIVATE native_engine_test_units)
         endif()
         # Host test of the Vulkan device (no guest code): clear, upload, copy and
         # readback, with a bounded wait on the submission.
