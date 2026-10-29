@@ -1,3 +1,6 @@
+> [!TIP]
+> Looking for Naruto: The Broken Bond? Click [here](https://github.com/jorjbarbosa/broken-bond-recomp/releases/latest)
+
 <p align="center">
   <img src="docs/assets/naruto-rise-logo.png" alt="Naruto: Rise of a Ninja" width="600">
 </p>
