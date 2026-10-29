@@ -5,6 +5,8 @@
 #include "gpu/backend/vulkan/descriptor_writes.h"
 #include <cstring>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace gpu::vulkan {
 struct DrawCacheCounters {
@@ -27,6 +29,49 @@ inline size_t HashWords(const uint64_t* words, size_t count) {
 }
 template <size_t N> struct DrawKeyHash {
   size_t operator()(const std::array<uint64_t, N>& key) const { return HashWords(key.data(), N); }
+};
+// The sampled views of one image, created at their first draw and destroyed
+// with the image. The backend keeps an image until the last batch that read
+// it completed, so its views outlive every descriptor written with them.
+class ImageViews {
+ public:
+  ImageViews() = default;
+  ImageViews(ImageViews&& other) noexcept : device_(other.device_), views_(std::move(other.views_)) { other.views_.clear(); }
+  ImageViews& operator=(ImageViews&& other) noexcept {
+    if (this != &other) {
+      Clear();
+      device_ = other.device_; views_ = std::move(other.views_); other.views_.clear();
+    }
+    return *this;
+  }
+  ~ImageViews() { Clear(); }
+  VkResult Get(VkDevice device, VkImage image, VkFormat format, uint32_t levels, bool cube,
+               const ComponentMapping& mapping, DrawCacheCounters& counters, VkImageView& out) {
+    uint32_t swizzle = 0;
+    for (unsigned i = 0; i < 4; ++i) swizzle |= uint32_t(mapping[i]) << (i * 3);
+    const uint64_t key = uint64_t(uint32_t(format)) | uint64_t(levels & 255) << 32 | uint64_t(cube) << 40 |
+                         uint64_t(swizzle) << 41;
+    for (const auto& [known, view] : views_) if (known == key) { out = view; return VK_SUCCESS; }
+    VkImageViewCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    info.image = image; info.format = format;
+    info.viewType = cube ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D;
+    info.components = ImageViewMapping(mapping);
+    info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, cube ? 6u : 1u};
+    const auto result = vkCreateImageView(device, &info, nullptr, &out);
+    if (result == VK_SUCCESS) {
+      device_ = device;
+      views_.emplace_back(key, out);
+      counters.views.fetch_add(1, std::memory_order_relaxed);
+    }
+    return result;
+  }
+  void Clear() {
+    for (const auto& [key, view] : views_) vkDestroyImageView(device_, view, nullptr);
+    views_.clear();
+  }
+ private:
+  VkDevice device_ = VK_NULL_HANDLE;
+  std::vector<std::pair<uint64_t, VkImageView>> views_;
 };
 class DrawCache {
  public:

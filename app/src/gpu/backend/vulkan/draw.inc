@@ -264,11 +264,13 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fence, std::string& ev
   for (const auto& t : r.textures) {
     if (t.reg >= 20) return fail("native-draw-texture-register");
     VkImage image{}; VkFormat format{}; uint32_t levels = 1;
+    ImageViews* views = nullptr;  // The image's own: they live as long as it does.
     if (t.resolved) {
       auto it = s.textures.find(t.key);
       if (it == s.textures.end() || !it->second.content_defined) return fail("native-draw-resolve-texture-undefined");
       auto& texture = it->second;
       image = texture.Image(); format = texture.depth ? VK_FORMAT_R32_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+      views = &texture.views;
       s.DrawTransition(image, VK_IMAGE_ASPECT_COLOR_BIT, texture.state, kShaderRead);
       texture.last_use = s.batch.sequence;
     } else {
@@ -276,11 +278,12 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fence, std::string& ev
       if (it == s.sampled.end() || it->second.version < t.version) return fail("native-draw-sampled-copy-stale");
       auto& texture = it->second;
       image = texture.image->image; format = ImageFormat(texture.format); levels = texture.levels;
+      views = &texture.image->views;
       s.DrawTransition(image, VK_IMAGE_ASPECT_COLOR_BIT, texture.state, kShaderRead);
       texture.last_use = s.batch.sequence;
     }
     VkImageView view{};
-    if ((result = resources.View(image, format, VK_IMAGE_ASPECT_COLOR_BIT, levels, t.cube, t.component_mapping, view)) != VK_SUCCESS)
+    if ((result = views->Get(s.vulkan->vk, image, format, levels, t.cube, t.component_mapping, s.draw_counters, view)) != VK_SUCCESS)
       return fail("native-vulkan-sampled-view", result);
     const uint32_t slot = t.reg + 1;
     bindings.View(t.cube, slot, view);

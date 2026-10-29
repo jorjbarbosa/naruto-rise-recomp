@@ -197,10 +197,12 @@ struct VmaImage {
   VmaAllocator allocator = VK_NULL_HANDLE;
   VkImage image = VK_NULL_HANDLE;
   VmaAllocation allocation = VK_NULL_HANDLE;
+  ImageViews views;  // Its sampled views, gone before the image.
   VmaImage() = default;
   VmaImage(const VmaImage&) = delete;
   VmaImage& operator=(const VmaImage&) = delete;
   ~VmaImage() {
+    views.Clear();
     if (image) vmaDestroyImage(allocator, image, allocation);
   }
 };
@@ -473,6 +475,7 @@ struct Backend::State {
   // Own textures of guest texture headers: the resolve destinations.
   struct Texture {
     std::unique_ptr<plume::RenderTexture> texture;
+    ImageViews views;  // Its sampled views; declared after the texture, destroyed first.
     uint32_t width = 0, height = 0;
     bool depth = false, content_defined = false;
     bool render_target = false;  // Created for the resolve passes (depth, one color sample).
