@@ -101,7 +101,8 @@ class Session {
 inline constexpr char kSharedSymbol[] = "narutorise_game_options";
 
 // In the executable (game_options.cpp): its Session, and the app's listener
-// for the screen showing (on the script thread).
+// for the screen showing (on the script thread); Enable does nothing with the
+// game_options_settings option off.
 Session& Shared();
 void Enable(std::function<void(const Values&)> opened);
 

@@ -1,19 +1,27 @@
 /* The in-game settings as the game's Options screen (game_style_panel.h),
    measured 1:1 on the game's own screen at 1280 x 720. Inside the stages,
    lengths are rem: one rem is a unit of the movie's 1280 x 720 stage, its
-   size set by GameStylePanel::Layout. The backdrop, the paper and the curtains
-   are laid out in dp across the whole window. Layers as the movie's: the title
+   size set by GameStylePanel::Layout. The page covers the game's 16:9 image
+   (the body, placed and sized by Layout), with the backdrop, the paper and the
+   curtains laid out in dp across it. Layers as the movie's: the title
    band and the panels pass under the curtains; the cursor's cloud, the help
    and the prompts stay above them. Art: "game/" images of the user's game,
    "generated/" shapes the movie draws. The text effects (the movie's offset
    copies of each text) and the motion (GameStyleMotion) are set by code. */
 body { position: absolute; width: 100%; height: 100%; }  /* What is behind shows once the paper goes. */
 #backdrop { position: absolute; left: 0; top: 0; width: 100%; height: 100%; decorator: image(generated/paper-gradient fill); }
-#paper, #edge-left, #edge-right { position: absolute; top: 0; height: 100%; }
-.side, #curtain-left, #curtain-right { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
-.side { pointer-events: none; }
+#paper { position: absolute; top: 0; height: 100%; }
+#sides, .side, #curtain-left, #curtain-right { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+/* What moves in from beyond the game's image stays within it, as in the movie
+   (always: RmlUi clips overflow only past the right and bottom edges). The
+   curtains move their sides, within #sides. */
+#sides, .stage { overflow: hidden; clip: always; }
+#sides, .side { pointer-events: none; }
 #paper { decorator: image(game/paper fill); }
-.curtain { position: absolute; top: 0; height: 100%; decorator: image(game/curtain fill); }
+/* The curtains' images are 724 tall: as the movie places them, their faded
+   first and last rows fall past the stage. */
+.curtain, #edge-left, #edge-right { position: absolute; top: -1.5rem; height: 724rem; }
+.curtain { decorator: image(game/curtain fill); }
 #curtain-right .curtain { decorator: image(game/curtain flip-horizontal fill); }
 #edge-left { decorator: image(game/curtain-edge fill); }
 #edge-right { decorator: image(game/curtain-edge flip-horizontal fill); }

@@ -3,8 +3,10 @@
 // (the paper at once, the curtains, the rows sliding in one after another,
 // the title band, the panels and the prompts), the closing, a tab switch
 // (the rows and the panels leaving and entering), the focused label's pulse
-// and the spring of the cursor's cloud when the focus moves. Times are frames
-// from a steady clock; lengths are units of the 1280 x 720 stage (rem). Only
+// and the spring of the cursor's cloud when the focus moves. Times are the
+// movie's 60 fps frames from a steady clock, taken two at a time every 1/30 s
+// as the game's menus advance at its logic's step; lengths are units of the
+// 1280 x 720 stage (rem). Only
 // margins, sizes and opacity move, plus transforms of leaf text and of the
 // cloud: the list keeps clipping with the scissor, as the render interface
 // has no clip masks (render_interface.h).

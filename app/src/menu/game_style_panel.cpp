@@ -257,12 +257,16 @@ bool GameStylePanel::FitText() {
 
 void GameStylePanel::Layout(int width, int height, float ratio) {
   if (!document_) return;
-  const float w = width / ratio, h = height / ratio;
-  const float k = std::min(w / kStageWidth, h / kStageHeight);
-  const float left = (w - kStageWidth * k) / 2, top = (h - kStageHeight * k) / 2;
+  // The page fills the game's image, which the native renderer fits at 16:9
+  // in the window, with black bars beside or above it.
+  const float window_w = width / ratio, window_h = height / ratio;
+  const float w = std::min(window_w, window_h * kStageWidth / kStageHeight), h = w * kStageHeight / kStageWidth;
+  const float k = w / kStageWidth, left = 0, top = 0;
   motion_.SetStage(left, k);
   text_px_ = k * ratio;  // Pixels per stage unit, for the text effects.
   const auto dp = [](float n) { return fmt::format("{:.3f}dp", n); };
+  document_->SetProperty("left", dp((window_w - w) / 2)); document_->SetProperty("top", dp((window_h - h) / 2));
+  document_->SetProperty("width", dp(w)); document_->SetProperty("height", dp(h));
   document_->SetProperty("font-size", dp(k));  // One rem: a stage unit.
   for (const char* id : {"stage-back", "stage"}) {  // The layers under and over the curtains.
     auto* stage = document_->GetElementById(id);
@@ -272,8 +276,6 @@ void GameStylePanel::Layout(int width, int height, float ratio) {
     auto* element = document_->GetElementById(id);
     element->SetProperty("left", dp(x)); element->SetProperty("width", dp(std::max(0.0f, width_dp)));
   };
-  // The paper and the curtains span the window's height; beside a narrower
-  // stage the curtains repeat to the window's edges.
   place("paper", left + kPaperLeft * k, (kPaperRight - kPaperLeft) * k);
   // The edges also cover the paper's lighter outer column.
   const float edge = kPaperLeft - kCurtainWidth + kCurtainOverlap + kEdgeOverPaper;

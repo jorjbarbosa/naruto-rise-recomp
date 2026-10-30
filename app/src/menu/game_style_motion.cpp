@@ -9,7 +9,7 @@ namespace narutorise::menu {
 namespace {
 // Measured on the game's own Options screen, frame by frame
 // (out/menu-jogo-study-20261030/reference). Stage units; positive is right or down.
-constexpr float kFrameMs = 1000.0f / 60;
+constexpr float kFrameMs = 1000.0f / 60, kStepFrames = 2;
 // Opening, frames from the cut to the paper. The curtains come in linearly;
 // each row's label slides in from the left, one row every four frames; the
 // title band, the panels (with the values) and the prompts follow.
@@ -113,8 +113,10 @@ void GameStyleMotion::Start(Phase phase) {
 }
 
 float GameStyleMotion::FramesSince(Clock::time_point when) const {
-  // A hair over, so a frame due now counts as reached.
-  return std::chrono::duration<float, std::milli>(now_() - when).count() / kFrameMs + 1e-3f;
+  // The game's menus move at its logic's step, 1/30 s, each step two of the
+  // movie's frames on; a hair over, so a step due now counts as reached.
+  const float frames = std::chrono::duration<float, std::milli>(now_() - when).count() / kFrameMs;
+  return kStepFrames * std::floor(frames / kStepFrames + 1e-3f) + 1e-3f;
 }
 
 float GameStyleMotion::End() const {

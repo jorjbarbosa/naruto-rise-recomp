@@ -4,6 +4,11 @@
 
 #include <utility>
 
+#include <rex/cvar.h>
+
+REXCVAR_DEFINE_BOOL(game_options_settings, true, "narutorise",
+                    "The game's Options screen opens the in-game settings in its place, with the game's options first");
+
 #if defined(_WIN32)
 #define NARUTORISE_EXPORTED extern "C" __declspec(dllexport)
 #else
@@ -22,6 +27,7 @@ void Opened(const Values& values) {
 Session& Shared() { return session; }
 
 void Enable(std::function<void(const Values&)> opened) {
+  if (!REXCVAR_GET(game_options_settings)) return;
   listener = std::move(opened);
   session.Enable(&Opened);
 }

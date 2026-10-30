@@ -90,9 +90,15 @@ cópias, o rodapé sobre quatro cópias pretas e os valores sobre uma sombra. El
 recalculada para a escala da janela, porque os efeitos de fonte do RmlUi são em
 pixels inteiros. O YES/NO tem o círculo atrás da primeira letra, e a barra não
 mostra número. A faixa e os painéis passam sob as cortinas; a nuvem do cursor
-fica por cima.
+fica por cima. A página ocupa a mesma imagem 16:9 em que o renderer nativo
+apresenta o jogo, com as faixas pretas fora dela em janelas de outra proporção
+(21:9, por exemplo), e nada que entra ou sai passa dessa imagem. As cortinas
+têm 724 de altura e começam 1,5 acima, como no filme, para que suas linhas
+esfumadas fiquem fora da tela.
 
-As animações (`game_style_motion.cpp`) usam as curvas medidas:
+As animações (`game_style_motion.cpp`) usam as curvas medidas, avançando dois
+quadros do filme a cada 1/30 s: mesmo com 60 fps ou mais, os menus do jogo
+avançam no passo da lógica, como no console.
 - **Abrir:** o papel aparece de uma vez. As cortinas entram pelas laterais e
   cada rótulo desliza da esquerda, uma linha a cada quatro quadros. A faixa do
   título, os painéis com os valores e o rodapé chegam em seguida, e a mancha de
@@ -115,7 +121,10 @@ O Options do próprio jogo, no menu principal ou na pausa, abre estas
 Configurações no lugar da tela dele, com uma aba **Opções** primeiro: volumes de
 música, vozes e efeitos, câmera invertida nos dois eixos, vibração, legendas e,
 nos menus de título com o conteúdo instalado, as vozes em japonês. O brilho do
-jogo fica fora (vale o nosso, em Tela). Pelo F1 a aba não aparece.
+jogo fica fora (vale o nosso, em Tela). Pelo F1 a aba não aparece. Com
+`game_options_settings = false` (ou `--game_options_settings=false`), o Options
+do jogo continua com a tela original. Como no original, aberto pela pausa o
+Options volta a tocar a música.
 `game_options_script.cpp`, compilado em cada módulo AI2C (o do jogo e os três
 das DLCs), envolve o estado do Options: quando ele mostra o filme, o gancho
 esconde o filme e, nos menus de título, o papel (na pausa o papel é o do menu de
