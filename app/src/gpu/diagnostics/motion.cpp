@@ -1,5 +1,6 @@
 // The motion record of the frames the title builds (motion.h).
 #include "gpu/common/platform.h"
+#include "gpu/d3d/destruction_order.h"
 #include "gpu/diagnostics/motion.h"
 #include "gpu/diagnostics/diagnostics.h"
 #include "gpu/diagnostics/sampler.h"
@@ -531,6 +532,7 @@ REX_HOOK_RAW(sub_8267A2A0) {
 REX_HOOK_RAW(sub_820FC008) {
   if (Enabled()) StageHash(base, kListsIn);
   __imp__sub_820FC008(ctx, base);
+  gpu::destruction_order::ListsDrawn();
   if (Enabled()) StageHash(base, kListsOut);
 }
 REX_HOOK_RAW(sub_826AB438) {
