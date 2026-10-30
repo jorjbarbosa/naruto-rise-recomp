@@ -39,21 +39,49 @@ std::string GameStylePanel::EdoText(std::string text) {
 
 bool GameStylePanel::Show(Rml::Context& context, std::vector<std::string> tabs, int tab, std::vector<PanelRow> rows,
                           std::function<void(int)> select_tab, std::function<void()> close, std::string focus) {
-  Hide();
-  document_ = context.LoadDocument("game_menu.rml");
-  if (!document_) return false;
-  rows_ = std::move(rows); select_tab_ = std::move(select_tab); close_ = std::move(close);
-  tab_ = tab; tabs_ = int(tabs.size());
+  Content content{std::move(tabs), tab, std::move(rows), std::move(select_tab), std::move(close), std::move(focus)};
+  if (document_ && motion_.phase() != Phase::kClose && content.tab != tab_ && int(content.tabs.size()) == tabs_) {
+    // Another tab: its panels enter once the current ones leave (Tick).
+    next_ = std::move(content);
+    if (motion_.phase() != Phase::kTabOut) motion_.Start(Phase::kTabOut, document_, FocusedRow());
+    return true;
+  }
+  const bool opening = !document_;
+  if (opening) {
+    document_ = context.LoadDocument("game_menu.rml");
+    if (!document_) return false;
+    document_->AddEventListener("click", this);
+    document_->AddEventListener("keydown", this);
+    document_->AddEventListener("mouseover", this);
+    document_->AddEventListener("mousedown", this);
+    const auto dimensions = context.GetDimensions();
+    Layout(dimensions.x, dimensions.y, context.GetDensityIndependentPixelRatio());
+    SetGamepadHints(gamepad_);
+    document_->Show(Rml::ModalFlag::Modal, Rml::FocusFlag::Document);
+  }
+  // The same tab redrawn (a changed value) shows at once.
+  motion_.Settle();
+  next_.reset();
+  Build(std::move(content));
+  if (opening) motion_.Start(Phase::kOpen, document_, FocusedRow());
+  return true;
+}
+
+void GameStylePanel::Build(Content content) {
+  for (const auto& row : rows_) if (auto* item = document_->GetElementById(row.id)) item->RemoveEventListener("focus", this);
+  rows_ = std::move(content.rows); select_tab_ = std::move(content.select_tab); close_ = std::move(content.close);
+  tab_ = content.tab; tabs_ = int(content.tabs.size());
   document_->SetClass("cyrillic", Localization::GetLanguage() == Localization::Language::Russian);
   std::string bar = Prompt("tab-previous", "lb", "PgUp");
-  for (size_t i = 0; i < tabs.size(); ++i)
-    bar += fmt::format("<button class='tab{}' tab='{}'>{}</button>", int(i) == tab ? " selected" : "", i,
-                       Escape(EdoText(tabs[i])));
-  bar += Prompt("tab-next", "rb", "PgDn") + "<div id='splash'/>";
+  for (size_t i = 0; i < content.tabs.size(); ++i)
+    bar += fmt::format("<button class='tab{}' tab='{}'>{}</button>", int(i) == tab_ ? " selected" : "", i,
+                       Escape(EdoText(content.tabs[i])));
+  bar += Prompt("tab-next", "rb", "PgDn") + "<div id='splash'><div class='ink'/></div>";
   document_->GetElementById("tabs")->SetInnerRML(bar);
 
   // Rows on the movie's translucent panels: a section starts a new panel.
   auto* options = document_->GetElementById("options");
+  options->SetInnerRML("");
   Rml::Element* group = nullptr;
   std::string section;
   bool restart = false;
@@ -112,20 +140,20 @@ bool GameStylePanel::Show(Rml::Context& context, std::vector<std::string> tabs, 
   document_->SetClass("restart", restart);
   document_->GetElementById("back-label")->SetInnerRML(Escape(EdoText(Text("back"))));
   document_->GetElementById("legend-label")->SetInnerRML(Escape(EdoText(Text("restart-legend"))));
-  document_->AddEventListener("click", this);
-  document_->AddEventListener("keydown", this);
-  document_->AddEventListener("mouseover", this);
-  document_->AddEventListener("mousedown", this);
-  const auto dimensions = context.GetDimensions();
-  Layout(dimensions.x, dimensions.y, context.GetDensityIndependentPixelRatio());
-  SetGamepadHints(gamepad_);
-  document_->Show(Rml::ModalFlag::Modal, Rml::FocusFlag::Document);
-  auto* focused = document_->GetElementById(focus.empty() && !rows_.empty() ? rows_.front().id : focus);
+  auto* focused = document_->GetElementById(content.focus.empty() && !rows_.empty() ? rows_.front().id : content.focus);
   if (!focused && !rows_.empty()) focused = document_->GetElementById(rows_.front().id);
   if (!rows_.empty()) Describe(0);
   if (focused) focused->Focus();
   fit_passes_ = kFitPasses;
-  return true;
+}
+
+int GameStylePanel::FocusedRow() const {
+  for (size_t i = 0; i < rows_.size(); ++i) if (rows_[i].id == focus_id_) return int(i);
+  return -1;
+}
+
+void GameStylePanel::Close() {
+  if (document_ && motion_.phase() != Phase::kClose) motion_.Start(Phase::kClose, document_, FocusedRow());
 }
 
 bool GameStylePanel::FitText() {
@@ -176,6 +204,7 @@ void GameStylePanel::Layout(int width, int height, float ratio) {
   const float w = width / ratio, h = height / ratio;
   const float k = std::min(w / kStageWidth, h / kStageHeight);
   const float left = (w - kStageWidth * k) / 2, top = (h - kStageHeight * k) / 2;
+  motion_.SetStage(left, k);
   const auto dp = [](float n) { return fmt::format("{:.3f}dp", n); };
   document_->SetProperty("font-size", dp(k));  // One rem: a stage unit.
   auto* stage = document_->GetElementById("stage");
@@ -216,11 +245,27 @@ void GameStylePanel::Hide() {
   document_->RemoveEventListener("mouseover", this);
   document_->RemoveEventListener("mousedown", this);
   for (const auto& row : rows_) if (auto* item = document_->GetElementById(row.id)) item->RemoveEventListener("focus", this);
+  motion_.Settle();
   document_->Close(); document_ = nullptr;
-  rows_.clear(); select_tab_ = {}; close_ = {}; pending_ = {};
+  rows_.clear(); select_tab_ = {}; close_ = {}; pending_ = {}; next_.reset(); skipping_ = false;
 }
 
-void GameStylePanel::Tick() { auto action = std::exchange(pending_, {}); if (action) action(); }
+void GameStylePanel::Tick() {
+  const bool skipped = std::exchange(skipping_, false);
+  switch (motion_.Advance()) {
+    case Phase::kClose: pending_ = close_; break;
+    case Phase::kTabOut:
+      if (next_) {
+        Build(std::move(*next_)); next_.reset();
+        if (!skipped) motion_.Start(Phase::kTabIn, document_, FocusedRow());
+      }
+      break;
+    default: break;
+  }
+  auto action = std::exchange(pending_, {}); if (action) action();
+}
+
+void GameStylePanel::SetClock(std::function<GameStyleMotion::Clock::time_point()> now) { motion_.SetClock(std::move(now)); }
 
 void GameStylePanel::Describe(size_t index) {
   if (!document_ || index >= rows_.size()) return;
@@ -245,6 +290,13 @@ void GameStylePanel::Change(size_t index, int step) {
 }
 
 void GameStylePanel::ProcessEvent(Rml::Event& event) {
+  if (motion_.phase() != Phase::kIdle && (event.GetType() == "keydown" || event.GetType() == "mousedown")) {
+    // Any input ends the animation. Closing, or with the panels being
+    // replaced, the input only does that: its target is going away.
+    const Phase phase = motion_.phase();
+    motion_.Skip(); skipping_ = true;
+    if (phase == Phase::kClose || phase == Phase::kTabOut) { event.StopPropagation(); return; }
+  }
   Rml::Element* target = event.GetTargetElement();
   while (target && target != document_ && !target->HasAttribute("row") && !target->HasAttribute("tab") &&
          !target->HasAttribute("adjust") && !target->HasAttribute("choose") && target->GetId() != "back-prompt" &&
@@ -268,7 +320,7 @@ void GameStylePanel::ProcessEvent(Rml::Event& event) {
   const int key = event.GetParameter<int>("key_identifier", 0);
   const auto select = [&](int next) { pending_ = [fn = select_tab_, next] { if (fn) fn(next); }; };
   if (event.GetType() == "keydown") {
-    if (key == Rml::Input::KI_ESCAPE) { pending_ = close_; event.StopPropagation(); }
+    if (key == Rml::Input::KI_ESCAPE) { Close(); event.StopPropagation(); }
     else if (row >= 0 && key == Rml::Input::KI_DELETE && rows_[size_t(row)].clear) {
       pending_ = rows_[size_t(row)].clear; event.StopPropagation();
     } else if (!rows_.empty() && (key == Rml::Input::KI_HOME || key == Rml::Input::KI_END)) {
@@ -283,7 +335,7 @@ void GameStylePanel::ProcessEvent(Rml::Event& event) {
     return;
   }
   if (event.GetType() != "click") return;
-  if (target->GetId() == "back-prompt" || target->GetId() == "back-label") { pending_ = close_; return; }
+  if (target->GetId() == "back-prompt" || target->GetId() == "back-label") { Close(); return; }
   if (target->GetId() == "tab-previous" || target->GetId() == "tab-next") {
     select((tab_ + tabs_ + (target->GetId() == "tab-next" ? 1 : -1)) % std::max(1, tabs_)); return;
   }

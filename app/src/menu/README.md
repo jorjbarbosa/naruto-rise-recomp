@@ -80,9 +80,22 @@ a arte chegar, ou se ela falhar, a página usa o painel comum. A tela de
 configuração, a barra do overlay, a DLC e a janela de controles continuam no
 estilo próprio. O russo usa Roboto Condensed, pois a Edo SZ não tem cirílico.
 Rótulos e valores longos encolhem até caber, e as opções liga/desliga usam
-palavras curtas (On/Off, Sim/Não, Oui/Non…), como o YES/NO do jogo. Com
-`NARUTORISE_TEST_GAME_ROOT`, `native_engine_menu_test` captura as cinco abas nos
-sete idiomas, confere que nada transborda e verifica os botões do controle.
+palavras curtas (On/Off, Sim/Não, Oui/Non…), como o YES/NO do jogo.
+
+As animações (`game_style_motion.cpp`) seguem as medidas do movie do Options,
+a 60 quadros por segundo. Ao abrir, as cortinas entram pelas laterais, a faixa
+do título vem da esquerda com o respingo da mancha, os painéis chegam e o rodapé
+sobe. Em seguida, os textos de cada linha são carimbados (escala 2 → 1, uma linha
+após a outra) e a nuvem do cursor salta. Ao trocar de aba, só os painéis saem e
+entram. Voltar (Esc, B, BACK) toca a saída antes de fechar. Qualquer tecla ou
+clique termina a animação; durante a saída ou a troca de painéis, a entrada só
+faz isso. Só mudam margens, tamanhos e opacidade, e a escala fica nos textos e
+ícones, para que a lista continue recortada pelo scissor.
+
+Com `NARUTORISE_TEST_GAME_ROOT`, `native_engine_menu_test` captura as cinco abas
+nos sete idiomas, confere que nada transborda e verifica os botões do controle.
+Com um relógio próprio, captura quadros de abrir, trocar de aba e fechar, e
+confere que a entrada pula a animação.
 `prelaunch_logo_boot_test.py PRODUCT GAME OUTPUT [ISO]` verifica captura sem jogo,
 seleção pelo diálogo nativo, troca pelo logo e fallback em ambas as APIs. Sem ISO
 fornecida, constrói um contêiner de teste apenas para o pré-lançamento, que não

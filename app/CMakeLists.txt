@@ -206,7 +206,7 @@ else()
     add_executable(narutorise ${NARUTORISE_SOURCES})
 endif()
 target_link_libraries(narutorise PRIVATE narutorise::json RmlUi::Core narutorise_data_migration)
-add_library(narutorise_menu_components STATIC src/menu/text.cpp src/menu/panel.cpp src/menu/game_style_panel.cpp src/menu/pad_input.cpp
+add_library(narutorise_menu_components STATIC src/menu/text.cpp src/menu/panel.cpp src/menu/game_style_panel.cpp src/menu/game_style_motion.cpp src/menu/pad_input.cpp
             src/controls/config.cpp
             src/controls/service.cpp
             src/controls/runtime.cpp

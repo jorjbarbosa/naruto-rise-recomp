@@ -973,6 +973,14 @@ int main(int argc, char** argv) {
       std::vector<uint8_t> art;
       for (int i = 0; i < 300 && !menu.GameArtReady(); ++i) { frame("game-art-await", art); Sleep(10); }
       check("game-art-loaded", menu.GameArtReady(), "{}");
+      // The page's animations run on this clock; a still is a frame past them
+      // (a tab switch takes two: its panels leave, then the new ones enter).
+      auto animation_time = std::chrono::steady_clock::now();
+      menu.SetAnimationClock([&] { return animation_time; });
+      const auto still = [&](const std::string& kind, std::vector<uint8_t>& pixels) {
+        animation_time += std::chrono::seconds(10); frame(kind + "-leaving", pixels);
+        animation_time += std::chrono::seconds(10); return frame(kind, pixels);
+      };
       for (const auto& language : Localization::GetLanguages()) {
         // Opening the settings applies the menu language they keep.
         const auto language_dir = settings_dir / ("game-style-" + std::string(language.code));
@@ -983,7 +991,7 @@ int main(int argc, char** argv) {
         for (int tab = 0; tab < 5; ++tab) {
           translated.Open(menu, tab, true, [] {}, {}, {});
           const std::string name = "game-style-" + std::string(language.code) + "-" + std::to_string(tab);
-          if (!frame(name, art)) continue;
+          if (!still(name, art)) continue;
           std::ofstream(std::string(argv[1]) + "." + name + "-1280x720.bgra", std::ios::binary)
               .write(reinterpret_cast<const char*>(art.data()), std::streamsize(art.size()));
           // The paper fills the stage between the curtains.
@@ -1025,7 +1033,7 @@ int main(int argc, char** argv) {
       const auto style_id = SDL_AttachVirtualJoystick(&style_pad);
       auto* style_joystick = style_id ? SDL_OpenJoystick(style_id) : nullptr;
       settings_model.Open(menu, 1, true, [] {}, {}, {});
-      frame("game-style-pad-before", art);
+      still("game-style-pad-before", art);
       if (check("game-style-pad-attached", style_joystick != nullptr, "{}")) {
         SDL_SetJoystickVirtualButton(style_joystick, SDL_GAMEPAD_BUTTON_DPAD_DOWN, true);
         for (int i = 0; i < 3; ++i) frame("game-style-pad-down", art);
@@ -1039,6 +1047,85 @@ int main(int argc, char** argv) {
         SDL_CloseJoystick(style_joystick); SDL_DetachVirtualJoystick(style_id);
       }
       menu.HidePanel();
+
+      // The opening, a tab switch and the closing at frames of the movie's 60 fps.
+      const auto to_frame = [&](std::chrono::steady_clock::time_point start, float frame_number) {
+        animation_time = start + std::chrono::microseconds(int64_t(frame_number * 1e6f / 60));
+      };
+      const auto capture = [&](const std::string& name) {
+        frame(name, art);
+        std::ofstream(std::string(argv[1]) + "." + name + "-1280x720.bgra", std::ios::binary)
+            .write(reinterpret_cast<const char*>(art.data()), std::streamsize(art.size()));
+      };
+      const auto paper_shown = [&] { const auto p = at(art, 640, 700); return p[0] > 180 && p[1] > 160 && p[2] > 60; };
+      const auto curtain_shown = [&] { return Near(at(art, 60, 360), {68, 119, 100}, 12); };
+      int closed = 0;
+      auto start = animation_time;
+      settings_model.Open(menu, 1, true, [] {}, {}, [&] { ++closed; });
+      to_frame(start, 0); capture("anim-open-00");
+      check("anim-open-starts-over-the-game", !paper_shown() && !curtain_shown(), "{\"paper\":" + Json(at(art, 640, 700)) + "}");
+      for (float q : {6.f, 12.f, 18.f, 22.f, 26.f, 32.f}) { to_frame(start, q); capture("anim-open-" + fmt::format("{:02}", int(q))); }
+      to_frame(start, 60); capture("anim-open-60");
+      check("anim-open-ends-on-the-page", paper_shown() && curtain_shown() && visible_document("back-label"), "{}");
+      key(rex::ui::VirtualKey::kNext);
+      start = animation_time; capture("anim-tab-out-00");
+      to_frame(start, 4); capture("anim-tab-out-04");
+      to_frame(start, 8); frame("anim-tab-swap", art);
+      start = animation_time;
+      to_frame(start, 5); capture("anim-tab-in-05");
+      to_frame(start, 60); capture("anim-tab-in-60");
+      auto* tabbed = visible_document("back-label");
+      auto* selected = tabbed ? tabbed->QuerySelector(".tab.selected") : nullptr;
+      check("anim-tab-switches-panels", selected && selected->GetAttribute<int>("tab", -1) == 2 &&
+            menu.PanelFocus() == "msaa_samples", "{\"focus\":\"" + menu.PanelFocus() + "\"}");
+      key(rex::ui::VirtualKey::kEscape);
+      start = animation_time;
+      for (float q : {2.f, 8.f, 14.f, 22.f}) { to_frame(start, q); capture("anim-close-" + fmt::format("{:02}", int(q))); }
+      check("anim-close-waits-for-the-animation", closed == 0 && menu.PanelShown(), "{}");
+      to_frame(start, 28); frame("anim-close-end", art);
+      check("anim-close-ends-closed", closed == 1 && !menu.PanelShown(), "{\"closed\":" + std::to_string(closed) + "}");
+      // Input skips: the page at once, and the input still acts.
+      start = animation_time;
+      settings_model.Open(menu, 1, true, [] {}, {}, [&] { ++closed; });
+      to_frame(start, 5); frame("anim-skip-open", art);
+      key(rex::ui::VirtualKey::kDown);
+      frame("anim-skip-open-done", art);
+      check("anim-input-skips-opening", paper_shown() && curtain_shown() && menu.PanelFocus() == "graphics_device",
+            "{\"focus\":\"" + menu.PanelFocus() + "\"}");
+      key(rex::ui::VirtualKey::kEscape); frame("anim-skip-closing", art);
+      key(rex::ui::VirtualKey::kEscape); frame("anim-skip-close-done", art);
+      check("anim-input-skips-closing", closed == 2 && !menu.PanelShown(), "{\"closed\":" + std::to_string(closed) + "}");
+      {
+        // A changed value redraws the same tab in place: no animation, same focus.
+        const auto change_dir = settings_dir / "game-style-change";
+        std::filesystem::create_directories(change_dir);
+        narutorise::menu::Settings changing;
+        changing.Initialize(change_dir);
+        changing.Open(menu, 1, true, [] {}, {}, {});
+        still("game-style-change-before", art);
+        focus_id("frame_rate");
+        auto* document = visible_document("back-label");
+        auto* value = document ? document->QuerySelector("#frame_rate .value") : nullptr;
+        const std::string before = value ? value->GetInnerRML() : "";
+        key(rex::ui::VirtualKey::kRight);
+        frame("game-style-change-applied", art); frame("game-style-change", art);
+        document = visible_document("back-label");
+        value = document ? document->QuerySelector("#frame_rate .value") : nullptr;
+        const std::string after = value ? value->GetInnerRML() : "";
+        check("game-style-change-redraws-in-place", value && after != before && menu.PanelFocus() == "frame_rate" &&
+              paper_shown(), "{\"before\":\"" + before + "\",\"after\":\"" + after + "\"}");
+        menu.HidePanel();
+      }
+      // BACK takes the click beside the restart legend.
+      settings_model.Open(menu, 1, true, [] {}, {}, [&] { ++closed; });
+      still("game-style-back-click", art);
+      rex::ui::MouseEvent over_back(nullptr, rex::ui::MouseEvent::Button::kNone, 260, 658);
+      rex::ui::MouseEvent press_back(nullptr, rex::ui::MouseEvent::Button::kLeft, 260, 658);
+      menu.OnMouseMove(over_back); menu.OnMouseDown(press_back); menu.OnMouseUp(press_back);
+      frame("game-style-back-click-closing", art);
+      animation_time += std::chrono::seconds(10); frame("game-style-back-click-closed", art);
+      check("game-style-back-click", closed == 3 && !menu.PanelShown(), "{\"closed\":" + std::to_string(closed) + "}");
+      menu.SetAnimationClock({});
       menu.HideOverlay();
     }
     {
