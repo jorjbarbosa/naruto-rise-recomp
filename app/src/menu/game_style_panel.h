@@ -8,6 +8,7 @@
 #include "menu/game_style_motion.h"
 #include "menu/panel.h"
 #include <RmlUi/Core/EventListener.h>
+#include <deque>
 #include <functional>
 #include <optional>
 #include <string>
@@ -62,9 +63,10 @@ class GameStylePanel final : public Rml::EventListener {
   int tab_ = 0, tabs_ = 0;
   static constexpr int kFitPasses = 4;
   int fit_passes_ = 0;
-  bool gamepad_ = false, skipping_ = false;
+  bool gamepad_ = false, skipping_ = false, replaying_ = false;
   GameStyleMotion motion_;
   std::optional<Content> next_;
+  std::deque<int> held_keys_;  // Rml::Input::KeyIdentifier values.
   std::string focus_id_;
 };
 }  // namespace narutorise::menu

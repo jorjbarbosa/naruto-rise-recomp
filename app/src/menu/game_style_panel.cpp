@@ -19,6 +19,9 @@ std::string Replace(std::string text, std::string_view from, std::string_view to
 // The movie's stage, and where its panels, curtains and paper are on it.
 constexpr float kStageWidth = 1280, kStageHeight = 720;
 constexpr float kPaperLeft = 160, kPaperRight = 1120, kCurtainWidth = 133.333f;
+// Each curtain piece reaches this far under its neighbours: the art fades out
+// over its two outer pixels, which would show the black behind them.
+constexpr float kCurtainOverlap = 3;
 // A prompt: the game's button image, or the key's name with the keyboard.
 std::string Prompt(const char* id, const char* image, const char* key) {
   return fmt::format("<div id='{}' class='prompt {}'><span>{}</span></div>", id, image, key);
@@ -216,8 +219,8 @@ void GameStylePanel::Layout(int width, int height, float ratio) {
   // The paper and the curtains span the window's height; beside a narrower
   // stage the curtains repeat to the window's edges.
   place("paper", left + kPaperLeft * k, (kPaperRight - kPaperLeft) * k);
-  place("edge-left", left + kCurtainWidth * k, (kPaperLeft - kCurtainWidth) * k);
-  place("edge-right", left + kPaperRight * k, (kPaperLeft - kCurtainWidth) * k);
+  place("edge-left", left + (kCurtainWidth - kCurtainOverlap) * k, (kPaperLeft - kCurtainWidth + kCurtainOverlap) * k);
+  place("edge-right", left + kPaperRight * k, (kPaperLeft - kCurtainWidth + kCurtainOverlap) * k);
   const float tile = kCurtainWidth * k;
   for (const auto& [id, edge, toward] : {std::tuple{"curtain-left", left + kCurtainWidth * k, -1.0f},
                                          std::tuple{"curtain-right", left + (kStageWidth - kCurtainWidth) * k, 1.0f}}) {
@@ -226,8 +229,8 @@ void GameStylePanel::Layout(int width, int height, float ratio) {
     const float span = toward < 0 ? edge : w - edge;
     for (int n = 0; n * tile < span + tile && n < 16; ++n) {
       auto piece = document_->CreateElement("div"); piece->SetClass("curtain", true);
-      piece->SetProperty("left", dp(toward < 0 ? edge - (n + 1) * tile : edge + n * tile));
-      piece->SetProperty("width", dp(tile));
+      piece->SetProperty("left", dp((toward < 0 ? edge - (n + 1) * tile : edge + n * tile) - kCurtainOverlap * k));
+      piece->SetProperty("width", dp(tile + 2 * kCurtainOverlap * k));
       curtains->AppendChild(std::move(piece));
     }
   }
@@ -248,21 +251,36 @@ void GameStylePanel::Hide() {
   motion_.Settle();
   document_->Close(); document_ = nullptr;
   rows_.clear(); select_tab_ = {}; close_ = {}; pending_ = {}; next_.reset(); skipping_ = false;
+  held_keys_.clear();
 }
 
 void GameStylePanel::Tick() {
-  const bool skipped = std::exchange(skipping_, false);
+  // Keys waiting for the next page (ProcessEvent) hurry its animations along.
+  const bool hurry = !held_keys_.empty();
+  if (hurry) motion_.Skip();
+  const bool skipped = std::exchange(skipping_, false) || hurry;
+  bool changed = false;
   switch (motion_.Advance()) {
     case Phase::kClose: pending_ = close_; break;
     case Phase::kTabOut:
       if (next_) {
-        Build(std::move(*next_)); next_.reset();
+        Build(std::move(*next_)); next_.reset(); changed = true;
         if (!skipped) motion_.Start(Phase::kTabIn, document_, FocusedRow());
       }
       break;
     default: break;
   }
-  auto action = std::exchange(pending_, {}); if (action) action();
+  auto action = std::exchange(pending_, {});
+  if (action) { action(); changed = true; }
+  // One held key a frame, in order, each on the page it was meant for, once
+  // that page is laid out: navigation goes by the rows' positions.
+  if (!changed && document_ && !held_keys_.empty() && !pending_ && motion_.phase() != Phase::kTabOut) {
+    const int key = held_keys_.front();
+    held_keys_.pop_front();
+    replaying_ = true;
+    document_->GetContext()->ProcessKeyDown(Rml::Input::KeyIdentifier(key), 0);
+    replaying_ = false;
+  }
 }
 
 void GameStylePanel::SetClock(std::function<GameStyleMotion::Clock::time_point()> now) { motion_.SetClock(std::move(now)); }
@@ -283,16 +301,23 @@ void GameStylePanel::Change(size_t index, int step) {
   const int count = int(row.choices.size());
   if (!row.change || !count) return;
   switch (KindOf(row)) {
-    case Kind::kToggle: Choose(index, step < 0 ? 1 : 0); break;  // Left: ON, right: OFF, as drawn.
     case Kind::kSlider: Choose(index, std::clamp(row.selected + step, 0, count - 1)); break;
     default: Choose(index, (row.selected + count + step) % count); break;
   }
 }
 
 void GameStylePanel::ProcessEvent(Rml::Event& event) {
+  if (event.GetType() == "keydown" && !replaying_ &&
+      (motion_.phase() == Phase::kTabOut || pending_ || !held_keys_.empty())) {
+    // The rows on screen are leaving, or an action is due on the next frame:
+    // the key waits for the page it is meant for (Tick).
+    held_keys_.push_back(event.GetParameter<int>("key_identifier", 0));
+    event.StopPropagation();
+    return;
+  }
   if (motion_.phase() != Phase::kIdle && (event.GetType() == "keydown" || event.GetType() == "mousedown")) {
     // Any input ends the animation. Closing, or with the panels being
-    // replaced, the input only does that: its target is going away.
+    // replaced, a click only does that: its target is going away.
     const Phase phase = motion_.phase();
     motion_.Skip(); skipping_ = true;
     if (phase == Phase::kClose || phase == Phase::kTabOut) { event.StopPropagation(); return; }

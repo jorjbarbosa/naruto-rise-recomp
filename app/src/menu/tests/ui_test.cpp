@@ -1067,6 +1067,13 @@ int main(int argc, char** argv) {
       for (float q : {6.f, 12.f, 18.f, 22.f, 26.f, 32.f}) { to_frame(start, q); capture("anim-open-" + fmt::format("{:02}", int(q))); }
       to_frame(start, 60); capture("anim-open-60");
       check("anim-open-ends-on-the-page", paper_shown() && curtain_shown() && visible_document("back-label"), "{}");
+      // The curtain pieces overlap: no black between them and their edges.
+      int darkest = 255;
+      for (uint32_t x : {128u, 130u, 132u, 133u, 134u, 136u, 1144u, 1146u, 1147u, 1148u, 1150u}) {
+        const auto p = at(art, x, 360);
+        darkest = std::min(darkest, std::max({p[0], p[1], p[2]}));
+      }
+      check("anim-curtains-seamless", darkest > 30, "{\"darkest\":" + std::to_string(darkest) + "}");
       key(rex::ui::VirtualKey::kNext);
       start = animation_time; capture("anim-tab-out-00");
       to_frame(start, 4); capture("anim-tab-out-04");
@@ -1114,6 +1121,32 @@ int main(int argc, char** argv) {
         const std::string after = value ? value->GetInnerRML() : "";
         check("game-style-change-redraws-in-place", value && after != before && menu.PanelFocus() == "frame_rate" &&
               paper_shown(), "{\"before\":\"" + before + "\",\"after\":\"" + after + "\"}");
+        // ON/OFF flips with either arrow, as the other choices step through their values.
+        const auto vsync_on = [&] {
+          auto* page = visible_document("back-label");
+          return page && page->QuerySelector("#vsync .option.on.chosen") != nullptr;
+        };
+        focus_id("vsync");
+        const bool vsync_before = vsync_on();
+        key(rex::ui::VirtualKey::kRight); frame("game-style-toggle-once", art); frame("game-style-toggle-once-shown", art);
+        const bool vsync_once = vsync_on();
+        key(rex::ui::VirtualKey::kRight); frame("game-style-toggle-twice", art); frame("game-style-toggle-twice-shown", art);
+        check("game-style-toggle-flips", vsync_once != vsync_before && vsync_on() == vsync_before &&
+              menu.PanelFocus() == "vsync", "{\"focus\":\"" + menu.PanelFocus() + "\"}");
+        // Keys pressed together reach the pages they were meant for, in order.
+        changing.Open(menu, 0, true, [] {}, {}, {});
+        still("game-style-keys-before", art);
+        for (auto vk : {rex::ui::VirtualKey::kNext, rex::ui::VirtualKey::kNext, rex::ui::VirtualKey::kDown,
+                        rex::ui::VirtualKey::kDown})
+          key(vk);
+        for (int i = 0; i < 12; ++i) { animation_time += std::chrono::milliseconds(50); frame("game-style-keys", art); }
+        auto* keyed = visible_document("back-label");
+        Rml::ElementList keyed_rows;
+        if (keyed) keyed->QuerySelectorAll(keyed_rows, "#options .row");
+        auto* keyed_tab = keyed ? keyed->QuerySelector(".tab.selected") : nullptr;
+        check("game-style-held-keys-in-order", keyed_tab && keyed_tab->GetAttribute<int>("tab", -1) == 2 &&
+              keyed_rows.size() > 2 && menu.PanelFocus() == keyed_rows[2]->GetId(),
+              "{\"focus\":\"" + menu.PanelFocus() + "\"}");
         menu.HidePanel();
       }
       // BACK takes the click beside the restart legend.

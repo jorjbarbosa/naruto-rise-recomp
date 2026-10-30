@@ -88,14 +88,20 @@ do título vem da esquerda com o respingo da mancha, os painéis chegam e o roda
 sobe. Em seguida, os textos de cada linha são carimbados (escala 2 → 1, uma linha
 após a outra) e a nuvem do cursor salta. Ao trocar de aba, só os painéis saem e
 entram. Voltar (Esc, B, BACK) toca a saída antes de fechar. Qualquer tecla ou
-clique termina a animação; durante a saída ou a troca de painéis, a entrada só
-faz isso. Só mudam margens, tamanhos e opacidade, e a escala fica nos textos e
-ícones, para que a lista continue recortada pelo scissor.
+clique termina a animação. Teclas que chegam enquanto os painéis saem, ou com
+uma ação ainda pendente, esperam e são aplicadas em ordem na página seguinte,
+de modo que LB/RB e as setas em sequência rápida não se perdem. Só mudam
+margens, tamanhos e opacidade, e a escala fica nos textos e ícones, para que a
+lista continue recortada pelo scissor. ←/→ alternam ON/OFF, como as demais
+escolhas, igual ao painel comum.
 
 Com `NARUTORISE_TEST_GAME_ROOT`, `native_engine_menu_test` captura as cinco abas
 nos sete idiomas, confere que nada transborda e verifica os botões do controle.
 Com um relógio próprio, captura quadros de abrir, trocar de aba e fechar, e
-confere que a entrada pula a animação.
+confere que a entrada pula a animação. `game_style_boot_test.py PRODUCT GAME
+OUTPUT` abre o jogo nas duas APIs e captura a abertura, as cinco abas, a troca
+de aba e o fechamento em 720p, além de 1080p e 2560×1080. As teclas são entrada
+real na janela em foco, então a área de trabalho precisa ficar livre.
 `prelaunch_logo_boot_test.py PRODUCT GAME OUTPUT [ISO]` verifica captura sem jogo,
 seleção pelo diálogo nativo, troca pelo logo e fallback em ambas as APIs. Sem ISO
 fornecida, constrói um contêiner de teste apenas para o pré-lançamento, que não
