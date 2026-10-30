@@ -219,7 +219,7 @@ add_library(narutorise_menu_components STATIC src/menu/text.cpp src/menu/panel.c
             src/menu/game_languages.cpp src/menu/graphics_devices.cpp src/mods/translation_data.cpp)
 target_sources(narutorise_menu_components PRIVATE src/menu/content_manager.cpp src/menu/folders.cpp)
 target_sources(narutorise_menu_components PRIVATE src/menu/update_checker.cpp)
-target_sources(narutorise_menu_components PRIVATE src/menu/game_logo.cpp)
+target_sources(narutorise_menu_components PRIVATE src/menu/game_assets.cpp src/menu/game_logo.cpp)
 target_include_directories(narutorise_menu_components PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/thirdparty/stb)
 target_include_directories(narutorise_menu_components PUBLIC src)
 target_link_libraries(narutorise_menu_components PUBLIC rex::runtime RmlUi::Core narutorise::json narutorise_data_paths narutorise_incidents)
@@ -295,6 +295,8 @@ endif()
 
 add_executable(narutorise_game_logo_test EXCLUDE_FROM_ALL tests/game_logo_test.cpp)
 target_link_libraries(narutorise_game_logo_test PRIVATE narutorise_menu_components)
+add_executable(narutorise_game_assets_test EXCLUDE_FROM_ALL tests/game_assets_test.cpp)
+target_link_libraries(narutorise_game_assets_test PRIVATE narutorise_menu_components)
 
 add_executable(narutorise_setup_gate_test EXCLUDE_FROM_ALL
     tests/setup_gate_test.cpp src/menu/setup_gate.cpp)

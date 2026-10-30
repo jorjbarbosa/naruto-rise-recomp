@@ -57,9 +57,10 @@ sem capa, kunai ou “Port para PC”. Antes de selecionar o jogo, mostra o tít
 em texto e Escolher o jogo; com dados válidos, mostra Jogar, Configurações, DLC
 e Sair. Os comandos do rodapé acompanham teclado ou controle.
 
-O logo é opcional e vem de `Naruto_clip.SRA` da ISO/pasta validada. O leitor em
-`game_logo.cpp` resolve `6e0003ce_I15` pelo catálogo FRSA, limita as leituras e a
-descompressão zlib, confere o checksum e converte DDS BC3 para RGBA. O worker não
+O logo é opcional e vem de `Naruto_clip.SRA` da ISO/pasta validada. O leitor comum
+em `game_assets.cpp`, usado por `game_logo.cpp` para `6e0003ce_I15`, resolve os nomes
+pelo catálogo FRSA (tudo ou nada), limita as leituras e a descompressão zlib, confere
+o checksum e converte DDS BC1/BC3 para RGBA. O worker não
 acessa RmlUi ou GPU; a UI descarta resultados de origens anteriores e publica a
 textura na própria thread. Arquivo ausente, truncado ou incompatível mantém o
 título textual e não bloqueia Jogar. O fundo é procedural e nenhuma dessas artes
@@ -67,6 +68,9 @@ título textual e não bloqueia Jogar. O fundo é procedural e nenhuma dessas ar
 
 `narutorise_game_logo_test` cobre parser, corrupção, alpha, pasta e ISO sintéticos;
 pode receber caminhos adicionais de jogo/ISO para validar o logo local real.
+`narutorise_game_assets_test` cobre a busca de vários nomes (ordem, ausência,
+duplicidade), BC1 com quatro e três cores, BC3 e entradas corrompidas; com caminhos
+de jogo/ISO, confere as 13 imagens do menu no jogo (`kMenuImages`).
 `prelaunch_logo_boot_test.py PRODUCT GAME OUTPUT [ISO]` verifica captura sem jogo,
 seleção pelo diálogo nativo, troca pelo logo e fallback em ambas as APIs. Sem ISO
 fornecida, constrói um contêiner de teste apenas para o pré-lançamento, que não
