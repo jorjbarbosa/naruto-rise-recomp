@@ -487,6 +487,7 @@ void Ui::Draw(rex::ui::UIDrawContext& context) {
   context_->Update();
   if (panel_.RevealSelection()) context_->Update();
   while (game_panel_.FitText()) context_->Update();
+  if (game_panel_.PlaceCursor()) context_->Update();
   render_->Begin(context, width, height);
   context_->Render();
   render_->End();

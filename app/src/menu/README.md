@@ -82,18 +82,34 @@ estilo próprio. O russo usa Roboto Condensed, pois a Edo SZ não tem cirílico.
 Rótulos e valores longos encolhem até caber, e as opções liga/desliga usam
 palavras curtas (On/Off, Sim/Não, Oui/Non…), como o YES/NO do jogo.
 
-As animações (`game_style_motion.cpp`) seguem as medidas do movie do Options,
-a 60 quadros por segundo. Ao abrir, as cortinas entram pelas laterais, a faixa
-do título vem da esquerda com o respingo da mancha, os painéis chegam e o rodapé
-sobe. Em seguida, os textos de cada linha são carimbados (escala 2 → 1, uma linha
-após a outra) e a nuvem do cursor salta. Ao trocar de aba, só os painéis saem e
-entram. Voltar (Esc, B, BACK) toca a saída antes de fechar. Qualquer tecla ou
-clique termina a animação. Teclas que chegam enquanto os painéis saem, ou com
-uma ação ainda pendente, esperam e são aplicadas em ordem na página seguinte,
-de modo que LB/RB e as setas em sequência rápida não se perdem. Só mudam
-margens, tamanhos e opacidade, e a escala fica nos textos e ícones, para que a
-lista continue recortada pelo scissor. ←/→ alternam ON/OFF, como as demais
-escolhas, igual ao painel comum.
+A página foi medida 1:1 na tela Options do próprio jogo, a 1280×720 e quadro a
+quadro a 60 fps. As referências estão em `out/menu-jogo-study-20261030/reference`.
+Os textos usam o tamanho e as cores do movie. A borda reproduz as cópias
+deslocadas que o jogo desenha sob cada texto: os rótulos e as abas sobre quatro
+cópias, o rodapé sobre quatro cópias pretas e os valores sobre uma sombra. Ela é
+recalculada para a escala da janela, porque os efeitos de fonte do RmlUi são em
+pixels inteiros. O YES/NO tem o círculo atrás da primeira letra, e a barra não
+mostra número. A faixa e os painéis passam sob as cortinas; a nuvem do cursor
+fica por cima.
+
+As animações (`game_style_motion.cpp`) usam as curvas medidas:
+- **Abrir:** o papel aparece de uma vez. As cortinas entram pelas laterais e
+  cada rótulo desliza da esquerda, uma linha a cada quatro quadros. A faixa do
+  título, os painéis com os valores e o rodapé chegam em seguida, e a mancha de
+  tinta cresce por último.
+- **Fechar:** o papel some e o jogo aparece atrás. As linhas saem uma por
+  quadro, seguidas dos painéis, da faixa, do rodapé e das cortinas.
+- **Trocar de aba:** só as linhas e os painéis saem e entram.
+- **Seleção:** o rótulo focado pulsa na horizontal (4%, a cada 50 quadros) e a
+  nuvem salta como mola ao mudar de linha.
+
+Voltar (Esc, B, BACK) toca a saída antes de fechar. Qualquer tecla ou clique
+termina a animação. Teclas que chegam enquanto os painéis saem, ou com uma ação
+ainda pendente, esperam e são aplicadas em ordem na página seguinte, de modo que
+LB/RB e as setas em sequência rápida não se perdem. Só mudam margens, tamanhos e
+opacidade, e a escala fica nos rótulos e na nuvem, para que a lista continue
+recortada pelo scissor. ←/→ alternam ON/OFF, como as demais escolhas, igual ao
+painel comum.
 
 Com `NARUTORISE_TEST_GAME_ROOT`, `native_engine_menu_test` captura as cinco abas
 nos sete idiomas, confere que nada transborda e verifica os botões do controle.

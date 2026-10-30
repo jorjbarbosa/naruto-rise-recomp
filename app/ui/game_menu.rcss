@@ -1,30 +1,36 @@
-/* The in-game settings in the style of the game's Options screen
-   (game_style_panel.h). Inside #stage, lengths are rem: one rem is a unit of
-   the movie's 1280 x 720 stage, its size set by GameStylePanel::Layout. The
-   paper and the curtains are laid out in dp across the whole window. Art:
-   "game/" images of the user's game, "generated/" shapes the movie draws.
-   GameStyleMotion moves the sides, #tabs, #options and #footer by their
-   margins, and stamps the text with transforms about its centre. */
-body { position: absolute; width: 100%; height: 100%; background-color: #000000; }
+/* The in-game settings as the game's Options screen (game_style_panel.h),
+   measured 1:1 on the game's own screen at 1280 x 720. Inside the stages,
+   lengths are rem: one rem is a unit of the movie's 1280 x 720 stage, its
+   size set by GameStylePanel::Layout. The backdrop, the paper and the curtains
+   are laid out in dp across the whole window. Layers as the movie's: the title
+   band and the panels pass under the curtains; the cursor's cloud, the help
+   and the prompts stay above them. Art: "game/" images of the user's game,
+   "generated/" shapes the movie draws. The text effects (the movie's offset
+   copies of each text) and the motion (GameStyleMotion) are set by code. */
+body { position: absolute; width: 100%; height: 100%; }  /* What is behind shows once the paper goes. */
+#backdrop { position: absolute; left: 0; top: 0; width: 100%; height: 100%; decorator: image(generated/paper-gradient fill); }
 #paper, #edge-left, #edge-right { position: absolute; top: 0; height: 100%; }
 .side, #curtain-left, #curtain-right { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+.side { pointer-events: none; }
 #paper { decorator: image(game/paper fill); }
 .curtain { position: absolute; top: 0; height: 100%; decorator: image(game/curtain fill); }
 #curtain-right .curtain { decorator: image(game/curtain flip-horizontal fill); }
 #edge-left { decorator: image(game/curtain-edge fill); }
 #edge-right { decorator: image(game/curtain-edge flip-horizontal fill); }
-#stage { position: absolute; width: 1280rem; height: 720rem; }
+.stage { position: absolute; width: 1280rem; height: 720rem; }
+#stage { pointer-events: none; }
+#footer { pointer-events: auto; }
 
-/* Edo SZ, as the movie's text: blue on white, the focused item yellow on red,
-   values white on ink. Russian uses Roboto Condensed (no Cyrillic in Edo SZ). */
+/* Edo SZ, as the movie's text: labels blue, the focused one yellow, values
+   and prompts white. Russian uses Roboto Condensed (no Cyrillic in Edo SZ). */
 .tab, .label, .value, .word, .number, #back-label, #ok-label, #legend-label {
   font-family: "Edo SZ"; text-transform: uppercase; white-space: nowrap; }
-.label { color: #1e8cff; font-effect: outline(2.667dp #ffffff); }
-.tab { color: #2f6ec0; font-effect: outline(2.667dp #ffffff); }
-.value, .word, .number, #back-label, #ok-label, #legend-label { color: #ffffff; font-effect: outline(2.667dp #1e1914); }
-.tab.selected, .row:focus .label { color: #ffd82a; font-effect: outline(2.667dp #be1919); }
-.modified .value, .modified .number { color: #ffd82a; }
-body.cyrillic .tab, body.cyrillic .label, body.cyrillic .value, body.cyrillic .word, body.cyrillic .number,
+.label { color: #0090ff; }
+.tab { color: #005da4; }
+.value, .word, #back-label, #ok-label, #legend-label { color: #ffffff; }
+.tab.selected, .row:focus .label { color: #ffda32; }
+.modified .value { color: #ffda32; }
+body.cyrillic .tab, body.cyrillic .label, body.cyrillic .value, body.cyrillic .word,
 body.cyrillic #back-label, body.cyrillic #ok-label, body.cyrillic #legend-label {
   font-family: "Roboto Condensed"; font-weight: bold; }
 
@@ -54,13 +60,12 @@ body.keys .prompt span { display: block; }
   border-radius: 0 26.667rem 26.667rem 0; }  /* Half a one-row panel: larger radii break its corners. */
 .row { display: block; position: relative; width: 898rem; height: 44.667rem; padding: 0; border-width: 0;
   background-color: transparent; text-align: left; nav: vertical; tab-index: auto; focus: auto; }
-.row:focus { background-color: #ffffff1f; }
-.cursor { display: none; position: absolute; left: -36rem; top: 3.667rem; width: 58rem; height: 37.333rem;
+#cursor { display: none; position: absolute; left: 0; top: 0; width: 58rem; height: 37.333rem;
   decorator: image(game/cloud fill); }
-.row:focus .cursor { display: block; }
-.name { position: absolute; left: 33.333rem; top: 0; height: 44.667rem; display: flex; align-items: center; }
-.label { display: block; font-size: 40.667rem; }
-body.cyrillic .label { font-size: 26.667rem; }
+/* A fixed width keeps the flex label at its text's width while its margin slides it. */
+.name { position: absolute; left: 33.333rem; top: 0; width: 864.667rem; height: 44.667rem; display: flex; align-items: center; }
+.label { display: block; flex-shrink: 0; font-size: 37rem; transform-origin: 0 50%; }
+body.cyrillic .label { font-size: 24.267rem; }
 .star { width: 29.333rem; height: 29.333rem; margin-left: 9.333rem; flex-shrink: 0; decorator: image(game/star fill); }
 .control { position: absolute; left: 566.667rem; top: 0; width: 333.333rem; height: 44.667rem; }
 .arrow { position: absolute; top: 9.733rem; width: 18rem; height: 25.2rem; }
@@ -69,24 +74,22 @@ body.cyrillic .label { font-size: 26.667rem; }
 .value { display: block; position: absolute; left: 20rem; right: 20rem; top: 0; height: 44.667rem;
   line-height: 44.667rem; text-align: center; font-size: 34.667rem; overflow: hidden; }
 body.cyrillic .value { font-size: 22.667rem; }
-.value.action { left: 0; right: 26.667rem; text-align: right; transform-origin: 100% 50%; }
-.value.info { left: 0; right: 26.667rem; text-align: right; transform-origin: 100% 50%; font-family: "Roboto Condensed"; font-weight: bold;
+.value.action { left: 0; right: 26.667rem; text-align: right; }
+.value.info { left: 0; right: 26.667rem; text-align: right; font-family: "Roboto Condensed"; font-weight: bold;
   font-size: 20rem; text-transform: none; }
 .value.plain { right: 0; }
 .chevron { position: absolute; right: 0; top: 10.333rem; width: 16rem; height: 24rem; decorator: image(generated/chevron fill); }
-.option { position: absolute; top: 0; width: 146.667rem; height: 44.667rem; display: flex; align-items: center; opacity: 0.5; }
-.option.chosen { opacity: 1; }
-.option.on { left: 20rem; }
-.option.off { left: 166.667rem; }
-.orb { width: 29.333rem; height: 29.333rem; flex-shrink: 0; decorator: image(generated/orb-off fill); }
+/* YES and NO: the orb behind the word's first letters, both words lit. */
+.option { position: absolute; top: 0; height: 44.667rem; }
+.option.on { left: 38.333rem; width: 165.5rem; }
+.option.off { left: 203.833rem; width: 129.5rem; }
+.orb { position: absolute; left: 0; top: 5.833rem; width: 33rem; height: 33rem; decorator: image(generated/orb-off fill); }
 .option.chosen .orb { decorator: image(generated/orb-on fill); }
-.word { display: block; flex-shrink: 0; margin-left: 9.333rem; font-size: 38.667rem; }
-body.cyrillic .word { font-size: 24rem; }
-.track { position: absolute; left: -3.333rem; top: 3.667rem; width: 280rem; height: 37.333rem; decorator: image(game/brush-dark fill); }
+.word { display: block; position: absolute; left: 1rem; top: 0; height: 44.667rem; line-height: 44.667rem; font-size: 40rem; }
+body.cyrillic .word { font-size: 24.8rem; }
+.track { position: absolute; left: -3.333rem; top: 6.667rem; width: 340rem; height: 37.333rem; decorator: image(game/brush-dark fill); }
 .fill { position: absolute; left: 0; top: 0; height: 37.333rem; overflow: hidden; }
-.blue { display: block; width: 280rem; height: 37.333rem; decorator: image(game/brush-blue fill); }
-.number { display: block; position: absolute; right: 0; top: 0; width: 46.667rem; height: 44.667rem;
-  line-height: 44.667rem; text-align: right; font-size: 34.667rem; }
+.blue { display: block; width: 340rem; height: 37.333rem; decorator: image(game/brush-blue fill); }
 
 scrollbarvertical { width: 6.667rem; margin-left: 4rem; }
 scrollbarvertical slidertrack { background-color: #332c1d80; }
@@ -98,12 +101,12 @@ scrollbarvertical sliderbar { min-height: 20rem; background-color: #f07010; }
 #footer { position: absolute; left: 0; top: 636rem; width: 1280rem; height: 44rem; }
 #back-prompt, #ok-prompt { position: absolute; top: 0; width: 44rem; height: 44rem; }
 #back-prompt { left: 174.667rem; decorator: image(game/button-b fill); }
-#ok-prompt { left: 1061.333rem; decorator: image(game/button-a fill); }
+#ok-prompt { left: 1064.333rem; top: -2.333rem; decorator: image(game/button-a fill); }
 body.keys #back-prompt, body.keys #ok-prompt { top: 11.333rem; width: auto; height: 21.333rem; decorator: none; }
-#back-label, #ok-label { display: block; position: absolute; top: 0; height: 44rem; line-height: 44rem; font-size: 34.667rem; }
+#back-label, #ok-label { display: block; position: absolute; top: -4rem; height: 44rem; line-height: 44rem; font-size: 32rem; }
 #back-label { left: 225.333rem; }
-#ok-label { right: 226.667rem; }
-body.cyrillic #back-label, body.cyrillic #ok-label { font-size: 22.667rem; }
+#ok-label { right: 219.667rem; }
+body.cyrillic #back-label, body.cyrillic #ok-label { font-size: 20.8rem; }
 #legend { display: none; position: absolute; left: 0; top: 0; width: 1280rem; height: 44rem; pointer-events: none;
   justify-content: center; align-items: center; }
 body.restart #legend { display: flex; }

@@ -69,21 +69,32 @@ struct Canvas {
   }
 };
 constexpr uint32_t kInk = 0x1E1914;
-// The ON/OFF orb: dark rim, white ring, a radial gradient lit from the top left.
+// The YES/NO orb as the Options movie draws it: a thin white ring around a
+// diagonal gradient, light at the top left (colours sampled on the game's screen).
 game_assets::Image Orb(bool on) {
-  const std::array<Color, 3> stops = on ? std::array{Hex(0xFFD27A), Hex(0xF07010), Hex(0xA82400)}
-                                        : std::array{Hex(0xFAFAFA), Hex(0x9A9A9A), Hex(0x383838)};
+  const std::array<Color, 3> stops = on ? std::array{Hex(0xFFCE78), Hex(0xDE8600), Hex(0xA02400)}
+                                        : std::array{Hex(0xF0F0F0), Hex(0x6E6E6E), Hex(0x3C3C3C)};
   Canvas canvas(64, 64);
   for (uint32_t y = 0; y < 64; ++y) for (uint32_t x = 0; x < 64; ++x) {
     const size_t i = size_t(y) * 64 + x;
     const float d = std::hypot(x + .5f - 32, y + .5f - 32);
-    const float t = std::clamp(std::hypot(x + .5f - 25.6f, y + .5f - 22.4f) / 48, 0.0f, 1.0f);
-    const float u = t < .55f ? t / .55f : (t - .55f) / .45f;
-    const Color& a = t < .55f ? stops[0] : stops[1];
-    const Color& b = t < .55f ? stops[1] : stops[2];
-    canvas.Over(i, Hex(kInk), Cover(d - 31));
-    canvas.Over(i, Hex(0xFFFFFF), Cover(d - 29));
-    canvas.Over(i, {a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u}, Cover(d - 26));
+    const float t = std::clamp((x + y + 1.0f) / 128, 0.0f, 1.0f);
+    const float u = t < .5f ? t / .5f : (t - .5f) / .5f;
+    const Color& a = t < .5f ? stops[0] : stops[1];
+    const Color& b = t < .5f ? stops[1] : stops[2];
+    canvas.Over(i, Hex(0xFFFFFF), Cover(d - 31.5f));
+    canvas.Over(i, {a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u}, Cover(d - 28.5f));
+  }
+  return canvas.Image();
+}
+// The movie's backdrop behind the paper: flat yellow down to the stage's
+// y 300, then darker to its foot.
+game_assets::Image PaperGradient() {
+  Canvas canvas(1, 720);
+  const Color top = Hex(0xFFF1A4), foot = Hex(0xFBE75F);
+  for (uint32_t y = 0; y < 720; ++y) {
+    const float u = std::clamp((y + .5f - 300) / 420, 0.0f, 1.0f);
+    canvas.Over(y, {top[0] + (foot[0] - top[0]) * u, top[1] + (foot[1] - top[1]) * u, top[2] + (foot[2] - top[2]) * u}, 1);
   }
   return canvas.Image();
 }
@@ -123,6 +134,7 @@ std::optional<game_assets::Image> Shape(std::string_view name) {
   if (name == "generated/arrow-left") return Arrow(false);
   if (name == "generated/arrow-right") return Arrow(true);
   if (name == "generated/chevron") return Chevron();
+  if (name == "generated/paper-gradient") return PaperGradient();
   return {};
 }
 }  // namespace

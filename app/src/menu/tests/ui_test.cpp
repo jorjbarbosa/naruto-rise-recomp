@@ -1063,8 +1063,8 @@ int main(int argc, char** argv) {
       auto start = animation_time;
       settings_model.Open(menu, 1, true, [] {}, {}, [&] { ++closed; });
       to_frame(start, 0); capture("anim-open-00");
-      check("anim-open-starts-over-the-game", !paper_shown() && !curtain_shown(), "{\"paper\":" + Json(at(art, 640, 700)) + "}");
-      for (float q : {6.f, 12.f, 18.f, 22.f, 26.f, 32.f}) { to_frame(start, q); capture("anim-open-" + fmt::format("{:02}", int(q))); }
+      check("anim-open-cuts-to-the-paper", paper_shown() && !curtain_shown(), "{\"paper\":" + Json(at(art, 640, 700)) + "}");
+      for (float q : {7.f, 9.f, 12.f, 14.f, 16.f, 19.f, 21.f, 25.f, 30.f}) { to_frame(start, q); capture("anim-open-" + fmt::format("{:02}", int(q))); }
       to_frame(start, 60); capture("anim-open-60");
       check("anim-open-ends-on-the-page", paper_shown() && curtain_shown() && visible_document("back-label"), "{}");
       // The curtain pieces overlap: no black between them and their edges.
@@ -1087,7 +1087,7 @@ int main(int argc, char** argv) {
             menu.PanelFocus() == "msaa_samples", "{\"focus\":\"" + menu.PanelFocus() + "\"}");
       key(rex::ui::VirtualKey::kEscape);
       start = animation_time;
-      for (float q : {2.f, 8.f, 14.f, 22.f}) { to_frame(start, q); capture("anim-close-" + fmt::format("{:02}", int(q))); }
+      for (float q : {0.f, 1.f, 2.f, 4.f, 6.f, 8.f, 12.f, 16.f, 22.f}) { to_frame(start, q); capture("anim-close-" + fmt::format("{:02}", int(q))); }
       check("anim-close-waits-for-the-animation", closed == 0 && menu.PanelShown(), "{}");
       to_frame(start, 28); frame("anim-close-end", art);
       check("anim-close-ends-closed", closed == 1 && !menu.PanelShown(), "{\"closed\":" + std::to_string(closed) + "}");

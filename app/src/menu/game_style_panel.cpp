@@ -4,6 +4,7 @@
 #include "menu/text.h"
 #include <RmlUi/Core.h>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <tuple>
 #include <utility>
@@ -22,6 +23,33 @@ constexpr float kPaperLeft = 160, kPaperRight = 1120, kCurtainWidth = 133.333f;
 // Each curtain piece reaches this far under its neighbours: the art fades out
 // over its two outer pixels, which would show the black behind them.
 constexpr float kCurtainOverlap = 3;
+constexpr float kEdgeOverPaper = 2;
+constexpr float kNameLeft = 33.333f;  // The labels' place in their rows (game_menu.rcss .name).
+// The movie's outlines are copies of the text under it, offset in stage units:
+// labels and the title over four copies, the prompts over four closer ones,
+// the values over a single shadow.
+using Offsets = std::vector<std::array<float, 2>>;
+const Offsets kOutline{{2.5f, 2.5f}, {-2.5f, 2.5f}, {-1.5f, -1.5f}, {1.5f, -1.5f}};
+const Offsets kPromptOutline{{1.5f, 1.5f}, {-1.5f, -1.5f}, {1.5f, -1.5f}, {-1.5f, 1.5f}};
+const Offsets kValueShadow{{2.5f, 2.5f}};
+constexpr uint32_t kWhite = 0xFFFFFF, kInk = 0x000000, kOverOutline = 0xA30000;
+// The copies as RmlUi shadows at px pixels per stage unit. Shadows move by
+// whole pixels: one at the offset's whole part, and one a pixel further out
+// with the fraction left as its alpha, as the game's antialiased copies.
+std::string Copies(const Offsets& offsets, float px, uint32_t rgb) {
+  std::string effects;
+  const auto shadow = [&](float x, float y, float alpha) {
+    effects += fmt::format("{}shadow({}px {}px #{:06x}{:02x})", effects.empty() ? "" : ", ", int(x), int(y), rgb,
+                           int(std::lround(255 * alpha)));
+  };
+  for (const auto& [dx, dy] : offsets) {
+    const float x = dx * px, y = dy * px, whole = std::floor(std::abs(x)), fraction = std::abs(x) - whole;
+    const float sx = x < 0 ? -1.f : 1.f, sy = y < 0 ? -1.f : 1.f;
+    if (whole >= 1) shadow(sx * whole, sy * whole, 1);
+    if (fraction > .1f) shadow(sx * (whole + 1), sy * (whole + 1), fraction);
+  }
+  return effects;
+}
 // A prompt: the game's button image, or the key's name with the keyboard.
 std::string Prompt(const char* id, const char* image, const char* key) {
   return fmt::format("<div id='{}' class='prompt {}'><span>{}</span></div>", id, image, key);
@@ -46,7 +74,7 @@ bool GameStylePanel::Show(Rml::Context& context, std::vector<std::string> tabs, 
   if (document_ && motion_.phase() != Phase::kClose && content.tab != tab_ && int(content.tabs.size()) == tabs_) {
     // Another tab: its panels enter once the current ones leave (Tick).
     next_ = std::move(content);
-    if (motion_.phase() != Phase::kTabOut) motion_.Start(Phase::kTabOut, document_, FocusedRow());
+    if (motion_.phase() != Phase::kTabOut) motion_.Start(Phase::kTabOut);
     return true;
   }
   const bool opening = !document_;
@@ -61,12 +89,13 @@ bool GameStylePanel::Show(Rml::Context& context, std::vector<std::string> tabs, 
     Layout(dimensions.x, dimensions.y, context.GetDensityIndependentPixelRatio());
     SetGamepadHints(gamepad_);
     document_->Show(Rml::ModalFlag::Modal, Rml::FocusFlag::Document);
+    motion_.Attach(document_);
   }
   // The same tab redrawn (a changed value) shows at once.
   motion_.Settle();
   next_.reset();
   Build(std::move(content));
-  if (opening) motion_.Start(Phase::kOpen, document_, FocusedRow());
+  if (opening) motion_.Start(Phase::kOpen);
   return true;
 }
 
@@ -109,8 +138,8 @@ void GameStylePanel::Build(Content content) {
         break;
       case Kind::kSlider: {
         const float level = row.choices.size() > 1 ? float(row.selected) / float(row.choices.size() - 1) : 0;
-        control = fmt::format("<div class='track'><div class='fill' style='width: {:.3f}rem;'><div class='blue'/></div></div>"
-                              "<span class='number'>{}</span>", 280 * std::clamp(level, 0.0f, 1.0f), value);
+        control = fmt::format("<div class='track'><div class='fill' style='width: {:.3f}rem;'><div class='blue'/></div></div>",
+                              340 * std::clamp(level, 0.0f, 1.0f));
         break;
       }
       case Kind::kChoice:
@@ -134,7 +163,7 @@ void GameStylePanel::Build(Content content) {
     item->SetId(row.id); item->SetClass("row", true);
     item->SetAttribute("row", int(i));
     item->SetClass("modified", row.modified);
-    item->SetInnerRML("<div class='cursor'/><div class='name'><span class='label'>" + Escape(EdoText(row.label)) +
+    item->SetInnerRML("<div class='name'><span class='label'>" + Escape(EdoText(row.label)) +
                       "</span>" + (row.restart ? "<div class='star'/>" : "") + "</div><div class='control'>" +
                       control + "</div>");
     item->AddEventListener("focus", this);
@@ -148,6 +177,28 @@ void GameStylePanel::Build(Content content) {
   if (!rows_.empty()) Describe(0);
   if (focused) focused->Focus();
   fit_passes_ = kFitPasses;
+  std::vector<Rml::Element*> items;
+  for (const auto& row : rows_) items.push_back(document_->GetElementById(row.id));
+  motion_.BindRows(items, FocusedRow());
+  ApplyTextEffects();
+}
+
+void GameStylePanel::ApplyTextEffects() {
+  if (!document_) return;
+  // On each text element: an inherited font-effect does not reach the text here.
+  const std::string outline = Copies(kOutline, text_px_, kWhite), over = Copies(kOutline, text_px_, kOverOutline);
+  const auto apply = [&](const char* selector, const std::string& effect) {
+    Rml::ElementList elements;
+    document_->QuerySelectorAll(elements, selector);
+    for (auto* element : elements) element->SetProperty("font-effect", effect);
+  };
+  apply("#options .label", outline);
+  apply("#options .value, #options .word", Copies(kValueShadow, text_px_, kInk));
+  apply("#tabs .tab", outline);
+  apply("#back-label, #ok-label, #legend-label", Copies(kPromptOutline, text_px_, kInk));
+  if (auto* item = FocusedRow() >= 0 ? document_->GetElementById(focus_id_) : nullptr)
+    if (auto* label = item->QuerySelector(".label")) label->SetProperty("font-effect", over);
+  if (auto* selected = document_->QuerySelector("#tabs .tab.selected")) selected->SetProperty("font-effect", over);
 }
 
 int GameStylePanel::FocusedRow() const {
@@ -156,7 +207,7 @@ int GameStylePanel::FocusedRow() const {
 }
 
 void GameStylePanel::Close() {
-  if (document_ && motion_.phase() != Phase::kClose) motion_.Start(Phase::kClose, document_, FocusedRow());
+  if (document_ && motion_.phase() != Phase::kClose) motion_.Start(Phase::kClose);
 }
 
 bool GameStylePanel::FitText() {
@@ -180,11 +231,13 @@ bool GameStylePanel::FitText() {
     auto* label = item->QuerySelector(".label");
     auto* control = item->QuerySelector(".control");
     if (label && control) {
-      // The label and its star end a gap before the control.
+      // The label and its star end a gap before the control. Measured within
+      // the row, as the opening slides the labels by their margins.
       auto* star = item->QuerySelector(".name .star");
-      const float end = label->GetAbsoluteLeft() + label->GetOffsetWidth();
-      const float trail = star ? star->GetAbsoluteLeft() + star->GetOffsetWidth() - end : 0;
-      shrink(label, label->GetOffsetWidth(), control->GetAbsoluteLeft() - label->GetAbsoluteLeft() - trail - 12 * rem);
+      const float end = label->GetOffsetLeft() + label->GetOffsetWidth();
+      const float trail = star ? star->GetOffsetLeft() + star->GetOffsetWidth() - end : 0;
+      shrink(label, label->GetOffsetWidth(),
+             control->GetOffsetLeft() - kNameLeft * rem - label->GetOffsetLeft() - trail - 12 * rem);
     }
     if (auto* value = item->QuerySelector(".value")) shrink(value, value->GetScrollWidth(), value->GetClientWidth());
   }
@@ -208,10 +261,13 @@ void GameStylePanel::Layout(int width, int height, float ratio) {
   const float k = std::min(w / kStageWidth, h / kStageHeight);
   const float left = (w - kStageWidth * k) / 2, top = (h - kStageHeight * k) / 2;
   motion_.SetStage(left, k);
+  text_px_ = k * ratio;  // Pixels per stage unit, for the text effects.
   const auto dp = [](float n) { return fmt::format("{:.3f}dp", n); };
   document_->SetProperty("font-size", dp(k));  // One rem: a stage unit.
-  auto* stage = document_->GetElementById("stage");
-  stage->SetProperty("left", dp(left)); stage->SetProperty("top", dp(top));
+  for (const char* id : {"stage-back", "stage"}) {  // The layers under and over the curtains.
+    auto* stage = document_->GetElementById(id);
+    stage->SetProperty("left", dp(left)); stage->SetProperty("top", dp(top));
+  }
   const auto place = [&](const char* id, float x, float width_dp) {
     auto* element = document_->GetElementById(id);
     element->SetProperty("left", dp(x)); element->SetProperty("width", dp(std::max(0.0f, width_dp)));
@@ -219,8 +275,10 @@ void GameStylePanel::Layout(int width, int height, float ratio) {
   // The paper and the curtains span the window's height; beside a narrower
   // stage the curtains repeat to the window's edges.
   place("paper", left + kPaperLeft * k, (kPaperRight - kPaperLeft) * k);
-  place("edge-left", left + (kCurtainWidth - kCurtainOverlap) * k, (kPaperLeft - kCurtainWidth + kCurtainOverlap) * k);
-  place("edge-right", left + kPaperRight * k, (kPaperLeft - kCurtainWidth + kCurtainOverlap) * k);
+  // The edges also cover the paper's lighter outer column.
+  const float edge = kPaperLeft - kCurtainWidth + kCurtainOverlap + kEdgeOverPaper;
+  place("edge-left", left + (kCurtainWidth - kCurtainOverlap) * k, edge * k);
+  place("edge-right", left + (kPaperRight - kEdgeOverPaper) * k, edge * k);
   const float tile = kCurtainWidth * k;
   for (const auto& [id, edge, toward] : {std::tuple{"curtain-left", left + kCurtainWidth * k, -1.0f},
                                          std::tuple{"curtain-right", left + (kStageWidth - kCurtainWidth) * k, 1.0f}}) {
@@ -234,6 +292,7 @@ void GameStylePanel::Layout(int width, int height, float ratio) {
       curtains->AppendChild(std::move(piece));
     }
   }
+  ApplyTextEffects();
 }
 
 void GameStylePanel::SetGamepadHints(bool gamepad) {
@@ -248,7 +307,7 @@ void GameStylePanel::Hide() {
   document_->RemoveEventListener("mouseover", this);
   document_->RemoveEventListener("mousedown", this);
   for (const auto& row : rows_) if (auto* item = document_->GetElementById(row.id)) item->RemoveEventListener("focus", this);
-  motion_.Settle();
+  motion_.Detach();
   document_->Close(); document_ = nullptr;
   rows_.clear(); select_tab_ = {}; close_ = {}; pending_ = {}; next_.reset(); skipping_ = false;
   held_keys_.clear();
@@ -265,7 +324,7 @@ void GameStylePanel::Tick() {
     case Phase::kTabOut:
       if (next_) {
         Build(std::move(*next_)); next_.reset(); changed = true;
-        if (!skipped) motion_.Start(Phase::kTabIn, document_, FocusedRow());
+        if (!skipped) motion_.Start(Phase::kTabIn);
       }
       break;
     default: break;
@@ -337,6 +396,11 @@ void GameStylePanel::ProcessEvent(Rml::Event& event) {
   }
   if (event.GetType() == "focus") {
     if (row >= 0) {
+      // The focused label takes the movie's red outline; the cloud springs to it.
+      if (auto* previous = document_->GetElementById(focus_id_))
+        if (auto* label = previous->QuerySelector(".label")) label->SetProperty("font-effect", Copies(kOutline, text_px_, kWhite));
+      if (auto* label = item->QuerySelector(".label")) label->SetProperty("font-effect", Copies(kOutline, text_px_, kOverOutline));
+      motion_.Focus(row);
       focus_id_ = rows_[size_t(row)].id; Describe(size_t(row));
       item->ScrollIntoView(Rml::ScrollIntoViewOptions{Rml::ScrollAlignment::Nearest});
     }

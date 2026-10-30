@@ -37,6 +37,9 @@ class GameStylePanel final : public Rml::EventListener {
   // (translations, file names) shrink to it. True when the layout changed,
   // for another update and pass, at most kFitPasses after Show.
   bool FitText();
+  // After the context's update: the cursor's cloud on the focused row. True
+  // when it moved, for another update.
+  bool PlaceCursor() { return motion_.PlaceCursor(); }
   void Layout(int width, int height, float ratio);
   void SetGamepadHints(bool gamepad);
   void ProcessEvent(Rml::Event& event) override;
@@ -51,6 +54,7 @@ class GameStylePanel final : public Rml::EventListener {
     std::string focus;
   };
   void Build(Content content);
+  void ApplyTextEffects();
   int FocusedRow() const;
   void Close();
   void Describe(size_t row);
@@ -62,6 +66,7 @@ class GameStylePanel final : public Rml::EventListener {
   std::function<void()> close_, pending_;
   int tab_ = 0, tabs_ = 0;
   static constexpr int kFitPasses = 4;
+  float text_px_ = 1;
   int fit_passes_ = 0;
   bool gamepad_ = false, skipping_ = false, replaying_ = false;
   GameStyleMotion motion_;
