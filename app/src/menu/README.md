@@ -111,13 +111,32 @@ opacidade, e a escala fica nos rótulos e na nuvem, para que a lista continue
 recortada pelo scissor. ←/→ alternam ON/OFF, como as demais escolhas, igual ao
 painel comum.
 
+O Options do próprio jogo, no menu principal ou na pausa, abre estas
+Configurações no lugar da tela dele, com uma aba **Opções** primeiro: volumes de
+música, vozes e efeitos, câmera invertida nos dois eixos, vibração, legendas e,
+nos menus de título com o conteúdo instalado, as vozes em japonês. O brilho do
+jogo fica fora (vale o nosso, em Tela). Pelo F1 a aba não aparece.
+`game_options_script.cpp`, compilado em cada módulo AI2C (o do jogo e os três
+das DLCs), envolve o estado do Options: quando ele mostra o filme, o gancho
+esconde o filme e, nos menus de título, o papel (na pausa o papel é o do menu de
+pausa e fica), lê as opções e avisa o app. Cada mudança passa pelo
+`fn_Option_SetValue` do jogo no quadro seguinte, então volume e vibração valem na
+hora. Ao fim da saída da página, o filtro de entrada aperta o A do jogo, que
+salva as opções e volta ao menu dele como na tela original; o gancho termina de
+esconder o filme e não deixa filme na tela, para o próximo menu não esperar a
+saída de um filme escondido. O app guarda a sessão (`game_options.h`) e a
+exporta por nome (`narutorise_game_options`), porque os módulos são bibliotecas
+à parte.
+
 Com `NARUTORISE_TEST_GAME_ROOT`, `native_engine_menu_test` captura as cinco abas
-nos sete idiomas, confere que nada transborda e verifica os botões do controle.
-Com um relógio próprio, captura quadros de abrir, trocar de aba e fechar, e
-confere que a entrada pula a animação. `game_style_boot_test.py PRODUCT GAME
-OUTPUT` abre o jogo nas duas APIs e captura a abertura, as cinco abas, a troca
-de aba e o fechamento em 720p, além de 1080p e 2560×1080. As teclas são entrada
-real na janela em foco, então a área de trabalho precisa ficar livre.
+e a aba Opções nos sete idiomas, confere que nada transborda e verifica os botões
+do controle. Com um relógio próprio, captura quadros de abrir, trocar de aba e
+fechar, e confere que a entrada pula a animação. `game_style_boot_test.py PRODUCT
+GAME OUTPUT` abre o jogo nas duas APIs, entra no Options do jogo, muda a música e
+confere que o jogo guardou o valor ao reabrir; depois captura a abertura, as
+cinco abas, a troca de aba e o fechamento em 720p, além de 1080p e 2560×1080. As
+teclas são entrada real na janela em foco, então a área de trabalho precisa
+ficar livre.
 `prelaunch_logo_boot_test.py PRODUCT GAME OUTPUT [ISO]` verifica captura sem jogo,
 seleção pelo diálogo nativo, troca pelo logo e fallback em ambas as APIs. Sem ISO
 fornecida, constrói um contêiner de teste apenas para o pré-lançamento, que não

@@ -981,6 +981,10 @@ int main(int argc, char** argv) {
         animation_time += std::chrono::seconds(10); frame(kind + "-leaving", pixels);
         animation_time += std::chrono::seconds(10); return frame(kind, pixels);
       };
+      // The game's options as its Options screen reports them, the Japanese voices offered.
+      narutorise::game_options::Values game_values;
+      game_values.option = {7, 10, 5, 16, 0, 1, 1, 1, 0};
+      game_values.japanese_voices = true;
       for (const auto& language : Localization::GetLanguages()) {
         // Opening the settings applies the menu language they keep.
         const auto language_dir = settings_dir / ("game-style-" + std::string(language.code));
@@ -988,9 +992,12 @@ int main(int argc, char** argv) {
         std::ofstream(language_dir / "narutorise.toml") << "launcher_language = \"" << language.code << "\"\n";
         narutorise::menu::Settings translated;
         translated.Initialize(language_dir);
-        for (int tab = 0; tab < 5; ++tab) {
-          translated.Open(menu, tab, true, [] {}, {}, {});
-          const std::string name = "game-style-" + std::string(language.code) + "-" + std::to_string(tab);
+        for (int tab = 0; tab < 6; ++tab) {
+          // The last: the game's options, first when its Options screen opened the settings.
+          if (tab == 5) translated.SetGameOptions(game_values, {});
+          translated.Open(menu, tab == 5 ? 0 : tab, true, [] {}, {}, {});
+          const std::string name = "game-style-" + std::string(language.code) + "-" +
+                                   (tab == 5 ? std::string("options") : std::to_string(tab));
           if (!still(name, art)) continue;
           std::ofstream(std::string(argv[1]) + "." + name + "-1280x720.bgra", std::ios::binary)
               .write(reinterpret_cast<const char*>(art.data()), std::streamsize(art.size()));
@@ -1148,6 +1155,36 @@ int main(int argc, char** argv) {
               keyed_rows.size() > 2 && menu.PanelFocus() == keyed_rows[2]->GetId(),
               "{\"focus\":\"" + menu.PanelFocus() + "\"}");
         menu.HidePanel();
+      }
+      {
+        // The game's options: each change reaches the game; back closes once
+        // the out-animation ends (the game's A then).
+        narutorise::menu::Settings game;
+        game.Initialize(settings_dir);
+        std::vector<std::pair<int, int>> sent;
+        int game_closed = 0;
+        game.SetGameOptions(game_values, [&](narutorise::game_options::Option option, int value) {
+          sent.emplace_back(option, value);
+        });
+        game.Open(menu, 0, true, [] {}, {}, [&] { ++game_closed; });
+        still("game-options-before", art);
+        auto* page = visible_document("back-label");
+        auto* tab = page ? page->QuerySelector(".tab.selected") : nullptr;
+        check("game-options-first-tab", tab && tab->GetAttribute<int>("tab", -1) == 0 && menu.PanelFocus() == "game-music-volume" &&
+              page->GetElementById("game-japanese-voices") && !page->GetElementById("brightness"),
+              "{\"focus\":\"" + menu.PanelFocus() + "\"}");
+        key(rex::ui::VirtualKey::kRight); frame("game-options-music", art); frame("game-options-music-shown", art);
+        focus_id("game-subtitles");
+        key(rex::ui::VirtualKey::kRight); frame("game-options-subtitles", art); frame("game-options-subtitles-shown", art);
+        page = visible_document("back-label");
+        check("game-options-sent", sent == std::vector<std::pair<int, int>>{{0, 8}, {7, 0}} &&
+              page && page->QuerySelector("#game-subtitles .option.off.chosen") && menu.PanelFocus() == "game-subtitles",
+              "{\"sent\":" + std::to_string(sent.size()) + ",\"focus\":\"" + menu.PanelFocus() + "\"}");
+        key(rex::ui::VirtualKey::kEscape); frame("game-options-closing", art);
+        check("game-options-closing-animates", game_closed == 0 && menu.PanelShown(), "{}");
+        animation_time += std::chrono::seconds(10); frame("game-options-closed", art);
+        check("game-options-closed", game_closed == 1 && !menu.PanelShown(),
+              "{\"closed\":" + std::to_string(game_closed) + "}");
       }
       // BACK takes the click beside the restart legend.
       settings_model.Open(menu, 1, true, [] {}, {}, [&] { ++closed; });

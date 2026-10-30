@@ -99,7 +99,7 @@ void Settings::Open(Ui& ui, int tab, bool in_game, std::function<void()> choose_
                      std::function<void(const std::string&)> changed, std::function<void()> closed) {
   ui.HideDialog();
   if (!pending_config_) Reload();
-  ui_ = &ui; group_ = std::clamp(tab, 0, 4); in_game_ = in_game;
+  ui_ = &ui; group_ = std::clamp(tab, 0, int(Tabs().size()) - 1); in_game_ = in_game;
   choose_game_ = std::move(choose_game); changed_ = std::move(changed); closed_ = std::move(closed);
   Redraw();
 }
@@ -171,15 +171,59 @@ void Settings::SaveMenuOptions(const std::string& key, MenuOptions next) {
   if (changed_) changed_(key);
   Redraw(key);
 }
+std::vector<std::string> Settings::Tabs() const {
+  std::vector<std::string> tabs{Tr(TextId::GroupGame), Tr(TextId::GroupDisplay), Tr(TextId::GroupQuality),
+      Tr(TextId::GroupControls), Tr(TextId::GroupAdvanced)};
+  if (game_options_) tabs.insert(tabs.begin(), Text("game-options"));
+  return tabs;
+}
 void Settings::Redraw(std::string focus) {
-  ui_->ShowPanel(Text("settings"), {Tr(TextId::GroupGame), Tr(TextId::GroupDisplay), Tr(TextId::GroupQuality),
-      Tr(TextId::GroupControls), Tr(TextId::GroupAdvanced)}, group_, Rows(group_),
+  ui_->ShowPanel(Text("settings"), Tabs(), group_, Rows(group_),
       [this](int group) { group_ = group; Redraw(); },
       [this] { panel_revision_ = 0; ui_->HidePanel(); ui_->CancelKeyCapture(); if (closed_) closed_(); }, std::move(focus),
       in_game_);
   panel_revision_ = ui_->ViewRevision();
 }
+// The game's options as its own screen lists them, without its brightness
+// (the settings' brightness stands in for it), each panel a section.
+std::vector<PanelRow> Settings::GameOptionRows() {
+  using namespace game_options;
+  std::vector<PanelRow> rows;
+  std::vector<std::string> volume;
+  for (int level = 0; level <= 10; ++level) volume.push_back(std::to_string(level));
+  const auto row = [&](Option option, const char* id, const char* label, const char* help, const char* section,
+                       std::vector<std::string> choices, bool slider = false) {
+    const int value = std::clamp(game_options_->option[size_t(option)], 0, int(choices.size()) - 1);
+    PanelRow item{id, Text(label), choices[size_t(value)], Text(help),
+        game_options_->option[size_t(option)] != initial_game_options_->option[size_t(option)], false, std::move(choices),
+        value, [this, option, id = std::string(id)](int chosen) { SetGameOption(option, id, chosen); }, {}};
+    item.section = section;
+    item.inline_adjust = slider;
+    rows.push_back(std::move(item));
+  };
+  const std::vector<std::string> toggle{Text("off"), Text("on")};
+  row(kMusicVolume, "game-music-volume", "game-music-volume", "game-music-volume-help", "volume", volume, true);
+  row(kVoiceVolume, "game-voice-volume", "game-voice-volume", "game-voice-volume-help", "volume", volume, true);
+  row(kEffectsVolume, "game-effects-volume", "game-effects-volume", "game-effects-volume-help", "volume", volume, true);
+  row(kInvertX, "game-invert-x", "game-invert-x", "game-invert-x-help", "camera", toggle);
+  row(kInvertY, "game-invert-y", "game-invert-y", "game-invert-y-help", "camera", toggle);
+  row(kVibration, "game-vibration", "game-vibration", "game-vibration-help", "camera", toggle);
+  row(kSubtitles, "game-subtitles", "game-subtitles", "game-subtitles-help", "language", toggle);
+  if (game_options_->japanese_voices)
+    row(kJapaneseVoices, "game-japanese-voices", "game-japanese-voices", "game-japanese-voices-help", "language", toggle);
+  return rows;
+}
+void Settings::SetGameOption(game_options::Option option, const std::string& id, int value) {
+  if (!game_options_) return;
+  game_options_->option[size_t(option)] = value;
+  if (set_game_option_) set_game_option_(option, value);
+  if (ui_ && panel_revision_ == ui_->ViewRevision()) Redraw(id);
+}
 std::vector<PanelRow> Settings::Rows(int group) {
+  if (game_options_) {
+    if (group == 0) return GameOptionRows();
+    --group;
+  }
   std::vector<PanelRow> rows;
   const auto choice = [&](std::string key, TextId label, TextId description, std::vector<std::string> values,
                            int selected, bool modified, bool restart, std::function<void(GameConfig&, int)> set) {

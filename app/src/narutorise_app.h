@@ -38,6 +38,7 @@
 #include "menu/folders.h"
 #include "data_migration.h"
 #include "game_image.h"
+#include "game_options.h"
 #include "graphics_device.h"
 #include "input_replay.h"
 #include "intro_skip.h"
@@ -453,10 +454,15 @@ class NarutoriseApp : public rex::ReXApp {
       game_running_ = true;
       UpdateMenuShortcut();
       // The in-game settings use the art of the game's own Options screen.
-      if (game_identity_.status == narutorise::game_image::Status::kReady)
+      if (game_identity_.status == narutorise::game_image::Status::kReady) {
         app_context().CallInUIThreadDeferred([this, root = game_root_, disc = game_identity_.disc_image] {
           ui_.LoadGameArt(root, disc);
         });
+        // And they stand in for that screen when the game opens it.
+        narutorise::game_options::Enable([this](const narutorise::game_options::Values& values) {
+          app_context().CallInUIThreadDeferred([this, values] { OpenGameOptions(values); });
+        });
+      }
       char hint[512];
       const auto& options = menu_settings_.menu_options();
       std::string chord;
@@ -1168,6 +1174,7 @@ class NarutoriseApp : public rex::ReXApp {
       }
     }, [this] {
       if (setup_resume_) ui_.RefreshSetup({setup_reason_, game_identity_, narutorise::Version(), setup_paths_.game_data_root});
+      else if (game_options_shown_) CloseGameOptions();
       else if (ui_.OverlayShown()) OpenGameMenu();
     });
   }
@@ -1305,8 +1312,33 @@ class NarutoriseApp : public rex::ReXApp {
     DrawNativeUi(); // Replace the persistent GPU frame when nothing remains.
     REXLOG_INFO("[narutorise] Game menu closed; guest input resumes after release");
   }
+  // The game's Options screen showed (game_options.h): the in-game settings
+  // open in its place with the game's options first. Their out-animation
+  // stands in for the screen's, after which the screen takes its A.
+  void OpenGameOptions(const narutorise::game_options::Values& values) {
+    auto& session = narutorise::game_options::Shared();
+    if (!game_running_ || closing_.load() || !session.Open()) return;
+    if (ui_.OverlayShown()) ui_.HideOverlay();
+    game_options_shown_ = true;
+    narutorise::menu::input_blocked = true;
+    menu_settings_.SetGameOptions(values, [&session](narutorise::game_options::Option option, int value) {
+      session.Set(option, value);
+    });
+    OpenSettings();
+    REXLOG_INFO("[narutorise] The game's Options screen opened the settings; guest input neutral");
+  }
+  void CloseGameOptions() {
+    game_options_shown_ = false;
+    narutorise::game_options::Shared().Accept();
+    menu_settings_.SetGameOptions(std::nullopt, {});
+    narutorise::menu::input_blocked = ui_.OverlayShown();
+    DrawNativeUi();
+    REXLOG_INFO("[narutorise] Settings closed; the game's Options screen accepts");
+  }
   void ToggleGameMenu() {
-    if (crash_question_open_) return;  // Opening the menu would close the question unanswered.
+    // Opening the menu would close the question unanswered; the game's Options
+    // screen closes with its settings.
+    if (crash_question_open_ || game_options_shown_) return;
     if (ui_.OverlayShown()) CloseGameMenu(); else OpenGameMenu();
   }
   void CreateDesktopShortcut() {
@@ -1503,6 +1535,7 @@ class NarutoriseApp : public rex::ReXApp {
   std::chrono::steady_clock::time_point shortcut_hint_due_{};
   bool ask_crash_reporting_ = false;  // Shown over the first frame of the game.
   bool crash_question_open_ = false;  // The game menu waits for the answer.
+  bool game_options_shown_ = false;   // The settings stand in for the game's Options screen.
   std::atomic<bool> ui_draw_pending_{false};
   std::atomic<bool> closing_{false};
   rex::RuntimeConfig* runtime_config_ = nullptr;  // ReXApp's, from OnPreSetup on.

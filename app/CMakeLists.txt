@@ -206,13 +206,17 @@ else()
     add_executable(narutorise ${NARUTORISE_SOURCES})
 endif()
 target_link_libraries(narutorise PRIVATE narutorise::json RmlUi::Core narutorise_data_migration)
+if(UNIX AND NOT APPLE)
+    # The script modules find the session of the game's options by name (game_options.h).
+    target_link_options(narutorise PRIVATE "LINKER:--export-dynamic-symbol=narutorise_game_options")
+endif()
 add_library(narutorise_menu_components STATIC src/menu/text.cpp src/menu/panel.cpp src/menu/game_style_panel.cpp src/menu/game_style_motion.cpp src/menu/pad_input.cpp
             src/controls/config.cpp
             src/controls/service.cpp
             src/controls/runtime.cpp
             src/controls/capture.cpp
             src/menu/controls.cpp src/menu/controls_text.cpp
-            src/menu/input_gate.cpp src/menu/shortcut.cpp
+            src/menu/input_gate.cpp src/menu/shortcut.cpp src/game_options.cpp
             src/menu/settings.cpp
             src/menu/localization.cpp src/menu/config_manager.cpp
             src/menu/key_bindings.cpp src/menu/key_names.cpp
@@ -451,16 +455,24 @@ else()
     rexglue_setup_target(narutorise ${NARUTORISE_GPU_PLUGINS})
 endif()
 
-# The mouse camera inside each script module, the base game's and the DLCs':
-# the orbit routine of the exploration camera in each (mouse_camera_script.cpp).
-foreach(_narutorise_module IN ITEMS ai2c:sub_882227F8 ai2c1:sub_88228C18 ai2c2:sub_88234D28 ai2c3:sub_88235D10)
+# The hooks inside each script module, the base game's and the DLCs': the
+# orbit routine of the exploration camera (mouse_camera_script.cpp) and the
+# state of the Options screen (game_options_script.cpp, with the module's row
+# of its addresses).
+foreach(_narutorise_module IN ITEMS ai2c:sub_882227F8:sub_8810B248:0 ai2c1:sub_88228C18:sub_8810B378:1
+                                    ai2c2:sub_88234D28:sub_8810B490:2 ai2c3:sub_88235D10:sub_8810B490:3)
     string(REPLACE ":" ";" _narutorise_module "${_narutorise_module}")
     list(GET _narutorise_module 0 _narutorise_module_name)
     list(GET _narutorise_module 1 _narutorise_orbit)
+    list(GET _narutorise_module 2 _narutorise_options_state)
+    list(GET _narutorise_module 3 _narutorise_script_module)
     if(TARGET narutorise_${_narutorise_module_name})
-        target_sources(narutorise_${_narutorise_module_name} PRIVATE src/mouse_camera_script.cpp)
+        target_sources(narutorise_${_narutorise_module_name} PRIVATE src/mouse_camera_script.cpp src/game_options_script.cpp)
+        target_link_libraries(narutorise_${_narutorise_module_name} PRIVATE ${CMAKE_DL_LIBS})
         target_compile_definitions(narutorise_${_narutorise_module_name} PRIVATE
-            NARUTORISE_CAMERA_ORBIT=${_narutorise_orbit})
+            NARUTORISE_CAMERA_ORBIT=${_narutorise_orbit}
+            NARUTORISE_OPTIONS_STATE=${_narutorise_options_state}
+            NARUTORISE_SCRIPT_MODULE=${_narutorise_script_module})
     endif()
 endforeach()
 
