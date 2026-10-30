@@ -962,6 +962,85 @@ int main(int argc, char** argv) {
     }
     menu.HideSetup();
     check("setup-hidden", !menu.Shown(), "{}");
+    if (const char* root = std::getenv("NARUTORISE_TEST_GAME_ROOT")) {
+      // The in-game settings as the game's Options screen once the art of the
+      // game's menus arrives; before it, the menus' own panel.
+      menu.ShowOverlay({}, {}, {}, {});
+      settings_model.Open(menu, 0, true, {}, {}, {});
+      check("game-style-waits-for-art", !menu.GameArtReady() && visible_document("panel-title"), "{}");
+      menu.HidePanel();
+      menu.LoadGameArt(root, false);
+      std::vector<uint8_t> art;
+      for (int i = 0; i < 300 && !menu.GameArtReady(); ++i) { frame("game-art-await", art); Sleep(10); }
+      check("game-art-loaded", menu.GameArtReady(), "{}");
+      for (const auto& language : Localization::GetLanguages()) {
+        // Opening the settings applies the menu language they keep.
+        const auto language_dir = settings_dir / ("game-style-" + std::string(language.code));
+        std::filesystem::create_directories(language_dir);
+        std::ofstream(language_dir / "narutorise.toml") << "launcher_language = \"" << language.code << "\"\n";
+        narutorise::menu::Settings translated;
+        translated.Initialize(language_dir);
+        for (int tab = 0; tab < 5; ++tab) {
+          translated.Open(menu, tab, true, [] {}, {}, {});
+          const std::string name = "game-style-" + std::string(language.code) + "-" + std::to_string(tab);
+          if (!frame(name, art)) continue;
+          std::ofstream(std::string(argv[1]) + "." + name + "-1280x720.bgra", std::ios::binary)
+              .write(reinterpret_cast<const char*>(art.data()), std::streamsize(art.size()));
+          // The paper fills the stage between the curtains.
+          const auto paper = at(art, 640, 700), curtain = at(art, 60, 360);
+          auto* document = visible_document("back-label");
+          check(name + "-shown", document && !visible_document("panel-title") &&
+                paper[0] > 180 && paper[1] > 160 && !Near(paper, curtain, 40),
+                "{\"paper\":" + Json(paper) + ",\"curtain\":" + Json(curtain) + "}");
+          // Each label and its star end before the control; each value fits its box.
+          std::string overflow;
+          Rml::ElementList rows;
+          if (document) document->GetElementsByClassName(rows, "row");
+          for (auto* row : rows) {
+            auto* label = row->QuerySelector(".label");
+            auto* star = row->QuerySelector(".name .star");
+            auto* control = row->QuerySelector(".control");
+            auto* value = row->QuerySelector(".value");
+            auto* end = star ? star : label;
+            bool words_fit = true;
+            Rml::ElementList words;
+            row->GetElementsByClassName(words, "word");
+            for (auto* word : words) {
+              auto* option = word->GetParentNode();
+              words_fit &= word->GetAbsoluteLeft() + word->GetOffsetWidth() <= option->GetAbsoluteLeft() + option->GetClientWidth();
+            }
+            if ((end && control && end->GetAbsoluteLeft() + end->GetOffsetWidth() > control->GetAbsoluteLeft()) ||
+                (value && value->GetScrollWidth() > value->GetClientWidth() + 1) || !words_fit)
+              overflow += (overflow.empty() ? "\"" : ",\"") + row->GetId() + "\"";
+          }
+          check(name + "-fits", document && !rows.empty() && overflow.empty(), "{\"overflow\":[" + overflow + "]}");
+        }
+        menu.HidePanel();
+      }
+      settings_model.Reload();
+      // A controller's input shows the game's button images.
+      SDL_VirtualJoystickDesc style_pad; SDL_INIT_INTERFACE(&style_pad);
+      style_pad.type = SDL_JOYSTICK_TYPE_GAMEPAD; style_pad.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+      style_pad.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1; style_pad.name = "Game style fixture";
+      const auto style_id = SDL_AttachVirtualJoystick(&style_pad);
+      auto* style_joystick = style_id ? SDL_OpenJoystick(style_id) : nullptr;
+      settings_model.Open(menu, 1, true, [] {}, {}, {});
+      frame("game-style-pad-before", art);
+      if (check("game-style-pad-attached", style_joystick != nullptr, "{}")) {
+        SDL_SetJoystickVirtualButton(style_joystick, SDL_GAMEPAD_BUTTON_DPAD_DOWN, true);
+        for (int i = 0; i < 3; ++i) frame("game-style-pad-down", art);
+        SDL_SetJoystickVirtualButton(style_joystick, SDL_GAMEPAD_BUTTON_DPAD_DOWN, false);
+        for (int i = 0; i < 3; ++i) frame("game-style-pad-up", art);
+        std::ofstream(std::string(argv[1]) + ".game-style-pad-1280x720.bgra", std::ios::binary)
+            .write(reinterpret_cast<const char*>(art.data()), std::streamsize(art.size()));
+        auto* document = visible_document("back-label");
+        check("game-style-pad-prompts", document && !document->IsClassSet("keys") &&
+              menu.PanelFocus() == "graphics_device", "{\"focus\":\"" + menu.PanelFocus() + "\"}");
+        SDL_CloseJoystick(style_joystick); SDL_DetachVirtualJoystick(style_id);
+      }
+      menu.HidePanel();
+      menu.HideOverlay();
+    }
     {
       // Complete real filesystem work after its UI destination has closed.
       const auto source = settings_dir / "async-source";

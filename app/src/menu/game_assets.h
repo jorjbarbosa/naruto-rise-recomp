@@ -34,6 +34,10 @@ inline constexpr std::array<std::string_view, 13> kMenuImages = {
     "6e0003c4_IB",    // RB
     "6e0003c4_I90",   // restart star
 };
+// The documents' names for them, as "game/<name>" image sources.
+inline constexpr std::array<std::string_view, kMenuImages.size()> kMenuImageKeys = {
+    "paper", "curtain", "curtain-edge", "splash", "brush-dark", "brush-blue", "button-a", "button-b",
+    "cloud", "cloud-white", "lb", "rb", "star"};
 // Bounded FRSA lookup of every name, zlib and DDS BC1/BC3 decoding. All or
 // nothing: empty when a name is missing, ambiguous or malformed.
 std::optional<std::vector<Image>> ReadImages(uint64_t file_size, const Read& read,

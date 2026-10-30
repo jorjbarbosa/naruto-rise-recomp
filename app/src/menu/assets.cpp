@@ -24,6 +24,9 @@ constexpr uint8_t kMedium[] = {
 constexpr uint8_t kRoboto[] = {
 #embed "../../ui/fonts/Roboto-Regular.ttf"
 };
+constexpr uint8_t kEdo[] = {
+#embed "../../ui/fonts/EdoSZ.ttf"
+};
 constexpr uint8_t kTheme[] = {
 #embed "../../ui/theme.rcss"
 };
@@ -47,6 +50,12 @@ constexpr uint8_t kPanel[] = {
 };
 constexpr uint8_t kPanelStyle[] = {
 #embed "../../ui/panel.rcss"
+};
+constexpr uint8_t kGameMenu[] = {
+#embed "../../ui/game_menu.rml"
+};
+constexpr uint8_t kGameMenuStyle[] = {
+#embed "../../ui/game_menu.rcss"
 };
 constexpr uint8_t kControls[] = {
 #embed "../../ui/controls.rml"
@@ -77,6 +86,7 @@ constexpr std::array kAssets{
     Entry{"fonts/RobotoCondensed-Bold.ttf", kBold},
     Entry{"fonts/RobotoCondensed-Medium.ttf", kMedium},
     Entry{"fonts/Roboto-Regular.ttf", kRoboto},
+    Entry{"fonts/EdoSZ.ttf", kEdo},
     Entry{"theme.rcss", kTheme},
     Entry{"fps.rml", kFps},
     Entry{"setup.rml", kSetup},
@@ -85,6 +95,8 @@ constexpr std::array kAssets{
     Entry{"dialog.rcss", kDialogStyle},
     Entry{"panel.rml", kPanel},
     Entry{"panel.rcss", kPanelStyle},
+    Entry{"game_menu.rml", kGameMenu},
+    Entry{"game_menu.rcss", kGameMenuStyle},
     Entry{"controls.rml", kControls},
     Entry{"controls.rcss", kControlsStyle},
     Entry{"overlay.rml", kOverlay},

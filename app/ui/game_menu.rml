@@ -1,0 +1,7 @@
+<rml><head><title>Settings</title><link type="text/rcss" href="theme.rcss"/><link type="text/rcss" href="game_menu.rcss"/></head>
+<body><div id="paper"/><div id="curtain-left"/><div id="curtain-right"/><div id="edge-left"/><div id="edge-right"/>
+<div id="stage"><div id="tabs"/><div id="options"/><div id="help"/>
+<div id="back-prompt" class="prompt button-b"><span>Esc</span></div><span id="back-label"/>
+<div id="legend"><div class="star"/><span id="legend-label"/></div>
+<span id="ok-label">OK</span><div id="ok-prompt" class="prompt button-a"><span>Enter</span></div>
+</div></body></rml>

@@ -175,7 +175,8 @@ void Settings::Redraw(std::string focus) {
   ui_->ShowPanel(Text("settings"), {Tr(TextId::GroupGame), Tr(TextId::GroupDisplay), Tr(TextId::GroupQuality),
       Tr(TextId::GroupControls), Tr(TextId::GroupAdvanced)}, group_, Rows(group_),
       [this](int group) { group_ = group; Redraw(); },
-      [this] { panel_revision_ = 0; ui_->HidePanel(); ui_->CancelKeyCapture(); if (closed_) closed_(); }, std::move(focus));
+      [this] { panel_revision_ = 0; ui_->HidePanel(); ui_->CancelKeyCapture(); if (closed_) closed_(); }, std::move(focus),
+      in_game_);
   panel_revision_ = ui_->ViewRevision();
 }
 std::vector<PanelRow> Settings::Rows(int group) {

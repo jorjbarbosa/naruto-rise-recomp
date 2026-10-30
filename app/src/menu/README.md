@@ -71,6 +71,18 @@ pode receber caminhos adicionais de jogo/ISO para validar o logo local real.
 `narutorise_game_assets_test` cobre a busca de vários nomes (ordem, ausência,
 duplicidade), BC1 com quatro e três cores, BC3 e entradas corrompidas; com caminhos
 de jogo/ISO, confere as 13 imagens do menu no jogo (`kMenuImages`).
+
+Durante o jogo, Configurações imita a tela Options do próprio jogo
+(`game_style_panel.cpp`, `ui/game_menu.rml`): papel, cortinas, faixa do título,
+nuvem do cursor, pincéis do brilho e botões vêm das 13 imagens, lidas num worker
+quando o jogo começa; os textos usam Edo SZ (licença Vic Fieger, embutida). Até
+a arte chegar, ou se ela falhar, a página usa o painel comum. A tela de
+configuração, a barra do overlay, a DLC e a janela de controles continuam no
+estilo próprio. O russo usa Roboto Condensed, pois a Edo SZ não tem cirílico.
+Rótulos e valores longos encolhem até caber, e as opções liga/desliga usam
+palavras curtas (On/Off, Sim/Não, Oui/Non…), como o YES/NO do jogo. Com
+`NARUTORISE_TEST_GAME_ROOT`, `native_engine_menu_test` captura as cinco abas nos
+sete idiomas, confere que nada transborda e verifica os botões do controle.
 `prelaunch_logo_boot_test.py PRODUCT GAME OUTPUT [ISO]` verifica captura sem jogo,
 seleção pelo diálogo nativo, troca pelo logo e fallback em ambas as APIs. Sem ISO
 fornecida, constrói um contêiner de teste apenas para o pré-lançamento, que não

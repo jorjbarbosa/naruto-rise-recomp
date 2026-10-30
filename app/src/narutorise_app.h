@@ -305,6 +305,7 @@ class NarutoriseApp : public rex::ReXApp {
   void LogGameData(const std::filesystem::path& root) {
     using narutorise::game_image::Status;
     game_identity_ = narutorise::game_image::Identify(root);
+    game_root_ = root;
     const auto line = fmt::format("[narutorise] Game data: {} ({}); Title ID {:08X}, default.xex {}: {}",
                                   rex::path_to_utf8(root), game_identity_.disc_image ? "disc image" : "folder",
                                   game_identity_.title_id, game_identity_.xex_digest,
@@ -451,6 +452,11 @@ class NarutoriseApp : public rex::ReXApp {
     if (NativeRenderer()) {
       game_running_ = true;
       UpdateMenuShortcut();
+      // The in-game settings use the art of the game's own Options screen.
+      if (game_identity_.status == narutorise::game_image::Status::kReady)
+        app_context().CallInUIThreadDeferred([this, root = game_root_, disc = game_identity_.disc_image] {
+          ui_.LoadGameArt(root, disc);
+        });
       char hint[512];
       const auto& options = menu_settings_.menu_options();
       std::string chord;
@@ -1502,6 +1508,7 @@ class NarutoriseApp : public rex::ReXApp {
   rex::RuntimeConfig* runtime_config_ = nullptr;  // ReXApp's, from OnPreSetup on.
   // The game data and the setup screen (menu/setup_gate.h).
   narutorise::game_image::Identity game_identity_;
+  std::filesystem::path game_root_;  // The one game_identity_ describes.
   bool command_line_root_ = false, configured_root_ = false, start_failed_ = false;
   std::filesystem::path launch_marker_;
   rex::PathConfig setup_paths_;
