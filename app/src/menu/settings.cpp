@@ -269,6 +269,20 @@ std::vector<PanelRow> Settings::Rows(int group) {
     audio_row("master_volume", "master-volume", "master-volume-help", volumes, int(std::lround(config_.master_volume * 100)),
         config_.master_volume != initial_.master_volume,
         [](GameConfig& config, int value) { config.master_volume = value / 100.0; });
+    if (const auto volumes = read_game_volumes_ && !game_options_ ? read_game_volumes_() : std::nullopt) {
+      std::vector<std::string> levels;
+      for (int level = 0; level <= 10; ++level) levels.push_back(std::to_string(level));
+      const char* ids[] = {"game-music-volume", "game-voice-volume", "game-effects-volume"};
+      for (int volume = 0; volume < 3; ++volume) {
+        const int value = std::clamp((*volumes)[size_t(volume)], 0, 10);
+        const std::string id = ids[volume];
+        rows.push_back({id, Text(id), levels[size_t(value)], Text(id + "-help"), false, false, levels, value,
+            [this, volume, id](int chosen) {
+              if (set_game_volume_ && set_game_volume_(volume, chosen) && ui_ && panel_revision_ == ui_->ViewRevision())
+                Redraw(id);
+            }, {}});
+      }
+    }
     audio_row("audio_channels", "audio-channels", "audio-channels-help", {Text("stereo"), Text("surround")},
         config_.audio_channels == "surround" ? 1 : 0, config_.audio_channels != initial_.audio_channels,
         [](GameConfig& config, int value) { config.audio_channels = value ? "surround" : "stereo"; });
@@ -443,7 +457,8 @@ std::vector<PanelRow> Settings::Rows(int group) {
         row.id == "present_effect" || row.id == "anisotropic_override" || row.id == "transparency_antialiasing" ||
         row.id == "max_frame_latency" || row.id == "triple_buffering" || row.id == "skip_intro_videos")) row.restart = false;
     if (pending_config_ && row.id == pending_key_) { row.value += " …"; row.description = Text("applying-settings"); }
-    row.inline_adjust = row.id == "brightness" || row.id == "mnk_sensitivity" || row.id == "master_volume";
+    row.inline_adjust = row.id == "brightness" || row.id == "mnk_sensitivity" || row.id == "master_volume" ||
+                        row.id == "game-music-volume" || row.id == "game-voice-volume" || row.id == "game-effects-volume";
     if (row.id == "controller") {
       row.description += "\n\n" + row.value;
       if (row.value == Tr(TextId::NoControllerDetected)) row.value = Text("not-connected");

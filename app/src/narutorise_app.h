@@ -32,6 +32,7 @@
 #include <rex/ui/presenter.h>
 #include <rex/ui/window.h>
 
+#include "audio/game_volumes.h"
 #include "audio/render.h"
 #include "crash_report.h"
 #include "sentry_reporting.h"
@@ -1128,6 +1129,9 @@ class NarutoriseApp : public rex::ReXApp {
     resume(setup_paths_);
   }
   void OpenSettings() {
+    menu_settings_.SetGameVolumes([] { return audio::game_volumes::Read(); }, [](int volume, int value) {
+      return audio::game_volumes::Set(audio::game_volumes::Volume(volume), value);
+    });
     menu_settings_.SetDataFolder(prepared_data_->paths, pending_data_root_, [this](narutorise::data::Mode mode) {
       app_context().CallInUIThreadDeferred([this, mode] { RequestDataLocation(mode); });
     });

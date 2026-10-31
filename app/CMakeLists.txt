@@ -39,6 +39,7 @@ set(NARUTORISE_SOURCES
     # The native audio layer: the hooks on the title's XAudio driver, the render
     # grid, the mix, the SDL3 device and the diagnostics.
     src/audio/hooks.cpp src/audio/render.cpp src/audio/mix.cpp src/audio/device.cpp src/audio/diagnostics.cpp
+    src/audio/game_volumes.cpp
 )
 # The files that menu/assets.cpp embeds (#embed): a change rebuilds it.
 file(GLOB_RECURSE NARUTORISE_UI_FILES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/ui/*)
@@ -464,22 +465,26 @@ else()
 endif()
 
 # The hooks inside each script module, the base game's and the DLCs': the
-# orbit routine of the exploration camera (mouse_camera_script.cpp) and the
-# state of the Options screen (game_options_script.cpp, with the module's row
-# of its addresses).
-foreach(_narutorise_module IN ITEMS ai2c:sub_882227F8:sub_8810B248:0 ai2c1:sub_88228C18:sub_8810B378:1
-                                    ai2c2:sub_88234D28:sub_8810B490:2 ai2c3:sub_88235D10:sub_8810B490:3)
+# orbit routine of the exploration camera (mouse_camera_script.cpp), the
+# state of the Options screen and the read of an option (game_options_script.cpp,
+# with the module's row of its addresses).
+foreach(_narutorise_module IN ITEMS ai2c:sub_882227F8:sub_8810B248:0:sub_88064500
+                                    ai2c1:sub_88228C18:sub_8810B378:1:sub_880644B8
+                                    ai2c2:sub_88234D28:sub_8810B490:2:sub_88064558
+                                    ai2c3:sub_88235D10:sub_8810B490:3:sub_88064558)
     string(REPLACE ":" ";" _narutorise_module "${_narutorise_module}")
     list(GET _narutorise_module 0 _narutorise_module_name)
     list(GET _narutorise_module 1 _narutorise_orbit)
     list(GET _narutorise_module 2 _narutorise_options_state)
     list(GET _narutorise_module 3 _narutorise_script_module)
+    list(GET _narutorise_module 4 _narutorise_option_get)
     if(TARGET narutorise_${_narutorise_module_name})
         target_sources(narutorise_${_narutorise_module_name} PRIVATE src/mouse_camera_script.cpp src/game_options_script.cpp)
         target_link_libraries(narutorise_${_narutorise_module_name} PRIVATE ${CMAKE_DL_LIBS})
         target_compile_definitions(narutorise_${_narutorise_module_name} PRIVATE
             NARUTORISE_CAMERA_ORBIT=${_narutorise_orbit}
             NARUTORISE_OPTIONS_STATE=${_narutorise_options_state}
+            NARUTORISE_OPTION_GET=${_narutorise_option_get}
             NARUTORISE_SCRIPT_MODULE=${_narutorise_script_module})
     endif()
 endforeach()

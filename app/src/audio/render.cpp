@@ -3,6 +3,7 @@
 #include "audio/attenuation.h"
 #include "audio/device.h"
 #include "audio/diagnostics.h"
+#include "audio/game_volumes.h"
 #include "audio/mix.h"
 #include "audio/pacing.h"
 #include <algorithm>
@@ -198,6 +199,7 @@ int Run() {
     const auto now = Clock::now();
     if (!grid.Advance(now)) ++counters.restarts;
     if (!running.load()) break;
+    game_volumes::SaveIfDue();
     const Client served = Serve();
     if (!served.callback) {
       CloseDevice();

@@ -30,6 +30,11 @@
 //   +200   in the title menus           +2124  the Options layer (menu 26 of the layers at +2016)
 //   +2984  the paper's layer            +3132  the menus' state
 //
+// fni_Option_GetValue (NARUTORISE_OPTION_GET) reads the options through an
+// array it finds and keeps (Module::options); the hook reports it to the
+// executable after each read, so the audio settings follow the game's options
+// outside its screen too.
+//
 // NARUTORISE_OPTIONS_STATE names the module's state and NARUTORISE_SCRIPT_MODULE
 // its row of kModules (CMakeLists.txt).
 #include <cstdint>
@@ -56,8 +61,10 @@
 #define NARUTORISE_CAT_(a, b) a##b
 #define NARUTORISE_CAT(a, b) NARUTORISE_CAT_(a, b)
 #define NARUTORISE_OPTIONS_STATE_ORIGINAL NARUTORISE_CAT(__imp__, NARUTORISE_OPTIONS_STATE)
+#define NARUTORISE_OPTION_GET_ORIGINAL NARUTORISE_CAT(__imp__, NARUTORISE_OPTION_GET)
 
 extern "C" void NARUTORISE_OPTIONS_STATE_ORIGINAL(PPCContext& __restrict, uint8_t*);
+extern "C" void NARUTORISE_OPTION_GET_ORIGINAL(PPCContext& __restrict, uint8_t*);
 
 namespace {
 
@@ -88,12 +95,13 @@ struct Module {
   uint32_t hide;      // Holds the engine's function hiding a movie's layer.
   uint32_t retire;    // Holds the engine's function hiding a movie's clip.
   uint32_t voices;    // Holds the engine's function the state asks, with 1, before offering the Japanese voices.
+  uint32_t options;   // fni_Option_GetValue's array of the options, once it read one.
 };
 constexpr Module kModules[] = {
-    {0x883B2118, 0x883B4DBC, 0x88064500, 0x88061C20, 0x883B38F0, 0x883B3834, 0x883B3304},  // ai2c
-    {0x883B2158, 0x883B4DFC, 0x880644B8, 0x88061BD8, 0x883B3930, 0x883B3874, 0x883B3344},  // ai2c1
-    {0x883C21B8, 0x883C4E60, 0x88064558, 0x88061C78, 0x883C3990, 0x883C38D4, 0x883C33A4},  // ai2c2
-    {0x883C21C8, 0x883C4E70, 0x88064558, 0x88061C78, 0x883C39A0, 0x883C38E4, 0x883C33B4},  // ai2c3
+    {0x883B2118, 0x883B4DBC, 0x88064500, 0x88061C20, 0x883B38F0, 0x883B3834, 0x883B3304, 0x883B3FD8},  // ai2c
+    {0x883B2158, 0x883B4DFC, 0x880644B8, 0x88061BD8, 0x883B3930, 0x883B3874, 0x883B3344, 0x883B4018},  // ai2c1
+    {0x883C21B8, 0x883C4E60, 0x88064558, 0x88061C78, 0x883C3990, 0x883C38D4, 0x883C33A4, 0x883C4078},  // ai2c2
+    {0x883C21C8, 0x883C4E70, 0x88064558, 0x88061C78, 0x883C39A0, 0x883C38E4, 0x883C33B4, 0x883C4088},  // ai2c3
 };
 constexpr const Module& kModule = kModules[NARUTORISE_SCRIPT_MODULE];
 
@@ -197,4 +205,10 @@ REX_HOOK_RAW(NARUTORISE_OPTIONS_STATE) {
     REXLOG_INFO("[game-options] Options screen left");
   }
   ctx.r3.u64 = result;
+}
+
+// fni_Option_GetValue(object, &value, option): reports the options' array.
+REX_HOOK_RAW(NARUTORISE_OPTION_GET) {
+  NARUTORISE_OPTION_GET_ORIGINAL(ctx, base);
+  if (options::Session* session = Shared()) session->ReportOptions(REX_LOAD_U32(kModule.options));
 }

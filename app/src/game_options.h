@@ -9,6 +9,10 @@
 // A (Accept), which the input gate presses until the screen leaves: the game
 // then saves its options and returns to its menu as with its own screen.
 //
+// The script modules also report, at each read of an option, where the game
+// keeps its options (Options), which the audio settings read and write at any
+// time (audio/game_volumes.h).
+//
 // The executable keeps the one Session (game_options.cpp); the script modules
 // are libraries of their own and find it by name (kSharedSymbol). It holds
 // plain data only: each module runs its own copy of this code.
@@ -75,6 +79,12 @@ class Session {
     accepting_ = false;
   }
 
+  // The script modules: the game's options, an array of kArrayLength words
+  // (its length first, option i at +4 + 4 i), at each of its reads.
+  static constexpr uint32_t kArrayLength = 12;
+  void ReportOptions(uint32_t array) { options_.store(array); }
+  uint32_t Options() const { return options_.load(); }
+
   // The input gate: the buttons pressed for the screen, over the player's.
   uint16_t PressedButtons() {
     if (!accepting_.load()) return 0;
@@ -93,6 +103,7 @@ class Session {
   }
   std::atomic<bool> enabled_{false}, open_{false}, accepting_{false};
   std::atomic<int64_t> accepted_at_{0};
+  std::atomic<uint32_t> options_{0};
   std::array<std::atomic<int>, kCount> changes_;
   void (*opened_)(const Values&) = nullptr;
 };

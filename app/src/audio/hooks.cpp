@@ -20,6 +20,7 @@
 // game sets for it; once a tick of the DARE (821502C8, the voice categories'
 // update) a moving fade sets it again.
 #include "audio/diagnostics.h"
+#include "audio/game_volumes.h"
 #include "audio/render.h"
 #include <array>
 #include <atomic>
@@ -161,10 +162,12 @@ REX_HOOK_RAW(sub_826251A0) {
   __imp__sub_826251A0(ctx, base);
 }
 
-// (mixer, flag): once a tick, under the sound mutex; a moving fade sets the music again.
+// (mixer, flag): once a tick, under the sound mutex: the game's volumes changed
+// in the settings (game_volumes.h), and a moving fade sets the music again.
 REX_HOOK_RAW(sub_821502C8) {
   using namespace audio;
   __imp__sub_821502C8(ctx, base);
+  game_volumes::ApplyPending(ctx, base);
   const uint32_t manager = music_manager.load();
   const float volume = music_volume.load();
   if (!StepMusicFade() || !manager || volume < 0.0f) return;
