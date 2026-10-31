@@ -37,9 +37,10 @@ set(NARUTORISE_SOURCES
     src/menu/game_choice.cpp
     src/menu/dlc.cpp
     # The native audio layer: the hooks on the title's XAudio driver, the render
-    # grid, the mix, the SDL3 device and the diagnostics.
+    # grid, the mix, the SDL3 device and the diagnostics; the game's volumes and
+    # its interface sounds in our menus.
     src/audio/hooks.cpp src/audio/render.cpp src/audio/mix.cpp src/audio/device.cpp src/audio/diagnostics.cpp
-    src/audio/game_volumes.cpp
+    src/audio/game_volumes.cpp src/audio/ui_sounds.cpp
 )
 # The files that menu/assets.cpp embeds (#embed): a change rebuilds it.
 file(GLOB_RECURSE NARUTORISE_UI_FILES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/ui/*)

@@ -19,6 +19,11 @@ class GameStylePanel final : public Rml::EventListener {
  public:
   // How a row shows its value.
   enum class Kind { kChoice, kToggle, kSlider, kAction, kInfo };
+  // The game's interface sounds for the page's actions (the owner plays
+  // them): another row or tab, an action, a changed value, the opening and
+  // the closing. The rows a page shows itself with make no sound.
+  enum class Sound { kMove, kConfirm, kAdjust, kOpen, kClose };
+  void SetSound(std::function<void(Sound)> sound) { sound_ = std::move(sound); }
   static Kind KindOf(const PanelRow& row);
   // The Edo SZ spelling of a text: the glyphs it lacks become the nearest it has.
   static std::string EdoText(std::string text);
@@ -60,15 +65,17 @@ class GameStylePanel final : public Rml::EventListener {
   void Describe(size_t row);
   void Change(size_t row, int step);
   void Choose(size_t row, int value);
+  void Play(Sound sound) const { if (sound_) sound_(sound); }
   Rml::ElementDocument* document_ = nullptr;
   std::vector<PanelRow> rows_;
   std::function<void(int)> select_tab_;
   std::function<void()> close_, pending_;
+  std::function<void(Sound)> sound_;
   int tab_ = 0, tabs_ = 0;
   static constexpr int kFitPasses = 4;
   float text_px_ = 1;
   int fit_passes_ = 0;
-  bool gamepad_ = false, skipping_ = false, replaying_ = false;
+  bool gamepad_ = false, skipping_ = false, replaying_ = false, building_ = false;
   GameStyleMotion motion_;
   std::optional<Content> next_;
   std::deque<int> held_keys_;  // Rml::Input::KeyIdentifier values.

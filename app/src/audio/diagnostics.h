@@ -4,6 +4,7 @@
 // in the log (once a minute and at the end), and the recording of the title's
 // frames by REX_NATIVE_AUDIO_DUMP=<file.wav> (6 channels, 32-bit float, 48 kHz,
 // as the title delivers them, before the mix), in both layers.
+#include <array>
 #include <atomic>
 #include <cstdint>
 
@@ -18,6 +19,10 @@ struct Counters {
   std::atomic<uint64_t> underruns{0};   // Periods that found the device's queue empty.
   std::atomic<uint64_t> restarts{0};    // Grid restarts after a delay over 100 ms.
   std::atomic<uint64_t> stalls{0};      // Device stalls (no sample taken for 250 ms).
+  // The game's interface sounds played in our menus, by ui_sounds::Sound, and
+  // those the game's sound manager refused.
+  std::array<std::atomic<uint64_t>, 5> interface_sounds{};
+  std::atomic<uint64_t> interface_refused{0};
   std::atomic<int32_t> queue_limit{0};
   std::atomic<int32_t> largest_block{0};
 };

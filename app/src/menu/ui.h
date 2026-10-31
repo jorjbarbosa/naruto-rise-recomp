@@ -81,6 +81,8 @@ class Ui final : public rex::ui::UIDrawer, public rex::ui::WindowInputListener {
   // menus' own panel.
   void LoadGameArt(std::filesystem::path game_root, bool disc_image);
   bool GameArtReady() const;
+  // The game's interface sounds for the in-game settings' actions.
+  void SetPanelSound(std::function<void(GameStylePanel::Sound)> sound) { game_panel_.SetSound(std::move(sound)); }
   // Tests step the in-game settings' animations with their own clock.
   void SetAnimationClock(std::function<std::chrono::steady_clock::time_point()> now) { game_panel_.SetClock(std::move(now)); }
   // UI thread: asynchronous results belong to the view that started them.

@@ -34,6 +34,7 @@
 
 #include "audio/game_volumes.h"
 #include "audio/render.h"
+#include "audio/ui_sounds.h"
 #include "crash_report.h"
 #include "sentry_reporting.h"
 #include "diagnostics/incident.h"
@@ -1024,6 +1025,19 @@ class NarutoriseApp : public rex::ReXApp {
     // Below the window shortcuts (fullscreen), above the SDK's overlays.
     if (window()) window()->AddInputListener(&ui_, std::numeric_limits<size_t>::max() - 1);
     ui_.SetInputActive([this] { return window() && window()->HasFocus(); });
+    // The game's interface sounds in the in-game settings. Standing in for the
+    // game's Options screen, they open on the game's own confirmation.
+    ui_.SetPanelSound([this](narutorise::menu::GameStylePanel::Sound sound) {
+      using Panel = narutorise::menu::GameStylePanel::Sound;
+      using audio::ui_sounds::Sound;
+      switch (sound) {
+        case Panel::kMove: audio::ui_sounds::Play(Sound::kMove); break;
+        case Panel::kConfirm: audio::ui_sounds::Play(Sound::kConfirm); break;
+        case Panel::kAdjust: audio::ui_sounds::Play(Sound::kAdjust); break;
+        case Panel::kOpen: if (!game_options_shown_) audio::ui_sounds::Play(Sound::kOpen); break;
+        case Panel::kClose: audio::ui_sounds::Play(Sound::kClose); break;
+      }
+    });
     if (const auto previous = narutorise::incident::Latest(true, true); !previous.empty()) {
       ui_.Notify(narutorise::menu::Text("diagnostics-recovered"), narutorise::menu::Text("diagnostics-open"),
                  [previous] { launcher_ui::OpenFolder(previous); });

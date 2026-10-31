@@ -1067,6 +1067,15 @@ int main(int argc, char** argv) {
       const auto paper_shown = [&] { const auto p = at(art, 640, 700); return p[0] > 180 && p[1] > 160 && p[2] > 60; };
       const auto curtain_shown = [&] { return Near(at(art, 60, 360), {68, 119, 100}, 12); };
       int closed = 0;
+      // The game's interface sounds, in the order of the page's actions.
+      using Sound = narutorise::menu::GameStylePanel::Sound;
+      std::vector<Sound> sounds;
+      const auto sounds_json = [&] {
+        std::string list;
+        for (auto sound : sounds) list += (list.empty() ? "" : ",") + std::to_string(int(sound));
+        return "{\"sounds\":[" + list + "]}";
+      };
+      menu.SetPanelSound([&](Sound sound) { sounds.push_back(sound); });
       auto start = animation_time;
       settings_model.Open(menu, 1, true, [] {}, {}, [&] { ++closed; });
       to_frame(start, 0); capture("anim-open-00");
@@ -1098,6 +1107,8 @@ int main(int argc, char** argv) {
       check("anim-close-waits-for-the-animation", closed == 0 && menu.PanelShown(), "{}");
       to_frame(start, 28); frame("anim-close-end", art);
       check("anim-close-ends-closed", closed == 1 && !menu.PanelShown(), "{\"closed\":" + std::to_string(closed) + "}");
+      check("game-style-sounds-open-tab-close", sounds == std::vector<Sound>{Sound::kOpen, Sound::kMove, Sound::kClose},
+            sounds_json());
       // Input skips: the page at once, and the input still acts.
       start = animation_time;
       settings_model.Open(menu, 1, true, [] {}, {}, [&] { ++closed; });
@@ -1121,8 +1132,11 @@ int main(int argc, char** argv) {
         auto* document = visible_document("back-label");
         auto* value = document ? document->QuerySelector("#frame_rate .value") : nullptr;
         const std::string before = value ? value->GetInnerRML() : "";
+        sounds.clear();
         key(rex::ui::VirtualKey::kRight);
         frame("game-style-change-applied", art); frame("game-style-change", art);
+        // The redraw in place makes no sound of its own.
+        check("game-style-sounds-adjust", sounds == std::vector<Sound>{Sound::kAdjust}, sounds_json());
         document = visible_document("back-label");
         value = document ? document->QuerySelector("#frame_rate .value") : nullptr;
         const std::string after = value ? value->GetInnerRML() : "";
@@ -1195,6 +1209,7 @@ int main(int argc, char** argv) {
       frame("game-style-back-click-closing", art);
       animation_time += std::chrono::seconds(10); frame("game-style-back-click-closed", art);
       check("game-style-back-click", closed == 3 && !menu.PanelShown(), "{\"closed\":" + std::to_string(closed) + "}");
+      menu.SetPanelSound({});
       menu.SetAnimationClock({});
       menu.HideOverlay();
     }

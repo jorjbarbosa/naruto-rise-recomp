@@ -95,11 +95,15 @@ bool GameStylePanel::Show(Rml::Context& context, std::vector<std::string> tabs, 
   motion_.Settle();
   next_.reset();
   Build(std::move(content));
-  if (opening) motion_.Start(Phase::kOpen);
+  if (opening) {
+    motion_.Start(Phase::kOpen);
+    Play(Sound::kOpen);
+  }
   return true;
 }
 
 void GameStylePanel::Build(Content content) {
+  building_ = true;  // The page's first focus makes no sound.
   for (const auto& row : rows_) if (auto* item = document_->GetElementById(row.id)) item->RemoveEventListener("focus", this);
   rows_ = std::move(content.rows); select_tab_ = std::move(content.select_tab); close_ = std::move(content.close);
   tab_ = content.tab; tabs_ = int(content.tabs.size());
@@ -181,6 +185,7 @@ void GameStylePanel::Build(Content content) {
   for (const auto& row : rows_) items.push_back(document_->GetElementById(row.id));
   motion_.BindRows(items, FocusedRow());
   ApplyTextEffects();
+  building_ = false;
 }
 
 void GameStylePanel::ApplyTextEffects() {
@@ -207,7 +212,9 @@ int GameStylePanel::FocusedRow() const {
 }
 
 void GameStylePanel::Close() {
-  if (document_ && motion_.phase() != Phase::kClose) motion_.Start(Phase::kClose);
+  if (!document_ || motion_.phase() == Phase::kClose) return;
+  motion_.Start(Phase::kClose);
+  Play(Sound::kClose);
 }
 
 bool GameStylePanel::FitText() {
@@ -355,6 +362,7 @@ void GameStylePanel::Choose(size_t index, int value) {
   const auto& row = rows_.at(index);
   if (!row.change || value == row.selected || value < 0 || value >= int(row.choices.size())) return;
   pending_ = [fn = row.change, value] { fn(value); };
+  Play(Sound::kAdjust);
 }
 
 void GameStylePanel::Change(size_t index, int step) {
@@ -394,7 +402,9 @@ void GameStylePanel::ProcessEvent(Rml::Event& event) {
   while (item && item != document_ && !item->HasAttribute("row")) item = item->GetParentNode();
   const int row = item && item != document_ ? item->GetAttribute<int>("row", -1) : -1;
   if (row >= 0 && event.GetType() == "mousedown" && event.GetParameter<int>("button", 0) == 1) {
-    pending_ = rows_[size_t(row)].clear; return;
+    pending_ = rows_[size_t(row)].clear;
+    if (pending_) Play(Sound::kAdjust);
+    return;
   }
   if (event.GetType() == "focus") {
     if (row >= 0) {
@@ -403,17 +413,21 @@ void GameStylePanel::ProcessEvent(Rml::Event& event) {
         if (auto* label = previous->QuerySelector(".label")) label->SetProperty("font-effect", Copies(kOutline, text_px_, kWhite));
       if (auto* label = item->QuerySelector(".label")) label->SetProperty("font-effect", Copies(kOutline, text_px_, kOverOutline));
       motion_.Focus(row);
+      if (!building_ && rows_[size_t(row)].id != focus_id_) Play(Sound::kMove);
       focus_id_ = rows_[size_t(row)].id; Describe(size_t(row));
       item->ScrollIntoView(Rml::ScrollIntoViewOptions{Rml::ScrollAlignment::Nearest});
     }
     return;
   }
   const int key = event.GetParameter<int>("key_identifier", 0);
-  const auto select = [&](int next) { pending_ = [fn = select_tab_, next] { if (fn) fn(next); }; };
+  const auto select = [&](int next) {
+    pending_ = [fn = select_tab_, next] { if (fn) fn(next); };
+    if (next != tab_) Play(Sound::kMove);
+  };
   if (event.GetType() == "keydown") {
     if (key == Rml::Input::KI_ESCAPE) { Close(); event.StopPropagation(); }
     else if (row >= 0 && key == Rml::Input::KI_DELETE && rows_[size_t(row)].clear) {
-      pending_ = rows_[size_t(row)].clear; event.StopPropagation();
+      pending_ = rows_[size_t(row)].clear; Play(Sound::kAdjust); event.StopPropagation();
     } else if (!rows_.empty() && (key == Rml::Input::KI_HOME || key == Rml::Input::KI_END)) {
       const auto& id = key == Rml::Input::KI_HOME ? rows_.front().id : rows_.back().id;
       if (auto* element = document_->GetElementById(id)) element->Focus();
@@ -436,7 +450,10 @@ void GameStylePanel::ProcessEvent(Rml::Event& event) {
   if (target->HasAttribute("choose")) { Choose(size_t(row), target->GetAttribute<int>("choose", 0)); return; }
   const auto& option = rows_[size_t(row)];
   switch (KindOf(option)) {
-    case Kind::kAction: pending_ = option.activate; break;
+    case Kind::kAction:
+      pending_ = option.activate;
+      if (pending_) Play(Sound::kConfirm);
+      break;
     case Kind::kToggle: Choose(size_t(row), option.selected == 1 ? 0 : 1); break;
     case Kind::kChoice: Change(size_t(row), 1); break;
     default: break;

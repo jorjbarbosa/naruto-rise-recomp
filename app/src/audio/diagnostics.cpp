@@ -52,11 +52,15 @@ Counters& Get() { return counters; }
 void Report(const char* reason) {
   REXLOG_INFO("[narutorise] Audio ({}): {} periods, {} callbacks, {} frames native, {} through the SDK; "
               "largest block {} samples, queue limit {}; {} underruns, {} periods without a callback, "
-              "{} with two, {} grid restarts, {} device stalls",
+              "{} with two, {} grid restarts, {} device stalls; interface sounds {}/{}/{}/{}/{} "
+              "(cursor, confirmation, value, opening, closing), {} refused",
               reason, counters.periods.load(), counters.callbacks.load(), counters.frames.load(),
               counters.sdk_frames.load(), counters.largest_block.load(), counters.queue_limit.load(),
               counters.underruns.load(), counters.skipped.load(), counters.doubled.load(),
-              counters.restarts.load(), counters.stalls.load());
+              counters.restarts.load(), counters.stalls.load(), counters.interface_sounds[0].load(),
+              counters.interface_sounds[1].load(), counters.interface_sounds[2].load(),
+              counters.interface_sounds[3].load(), counters.interface_sounds[4].load(),
+              counters.interface_refused.load());
 }
 
 void Record(const uint8_t* frame) {
