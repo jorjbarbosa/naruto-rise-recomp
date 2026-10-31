@@ -36,6 +36,9 @@ set(NARUTORISE_SOURCES
     src/menu/setup_gate.cpp src/menu/setup_screen.cpp
     src/menu/game_choice.cpp
     src/menu/dlc.cpp
+    # The native audio layer: the hooks on the title's XAudio driver, the render
+    # grid, the mix, the SDL3 device and the diagnostics.
+    src/audio/hooks.cpp src/audio/render.cpp src/audio/mix.cpp src/audio/device.cpp src/audio/diagnostics.cpp
 )
 # The files that menu/assets.cpp embeds (#embed): a change rebuilds it.
 file(GLOB_RECURSE NARUTORISE_UI_FILES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/ui/*)
@@ -88,6 +91,9 @@ if(WIN32)
 endif()
 add_executable(narutorise_data_paths_test EXCLUDE_FROM_ALL tests/data_paths_test.cpp)
 target_link_libraries(narutorise_data_paths_test PRIVATE narutorise_data_paths narutorise::json)
+# The pacing and the mix of the native audio layer, without the runtime.
+add_executable(narutorise_audio_test EXCLUDE_FROM_ALL tests/audio_test.cpp src/audio/mix.cpp)
+target_include_directories(narutorise_audio_test PRIVATE src)
 if(WIN32)
     target_link_libraries(narutorise_data_paths_test PRIVATE advapi32)
     target_link_libraries(narutorise_data_migration_test PRIVATE advapi32)

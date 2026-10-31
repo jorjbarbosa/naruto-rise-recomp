@@ -32,6 +32,7 @@
 #include <rex/ui/presenter.h>
 #include <rex/ui/window.h>
 
+#include "audio/render.h"
 #include "crash_report.h"
 #include "sentry_reporting.h"
 #include "diagnostics/incident.h"
@@ -427,6 +428,7 @@ class NarutoriseApp : public rex::ReXApp {
     narutorise::incident::Event("runtime-and-xex", "end");
     narutorise::reporting::FinishStartup();
     narutorise::translation::Initialize(prepared_data_->paths.mods_dir);
+    audio::Initialize();
     narutorise::crash_report::Install();  // After the SDK's exception handler.
     // The game's name and version in place of the SDK's name and build stamp.
     if (window()) window()->SetTitle(narutorise::WindowTitle());
@@ -499,6 +501,7 @@ class NarutoriseApp : public rex::ReXApp {
     // here, and block new guest motor commands while shutdown joins it.
     narutorise::menu::input_blocked = true;
     narutorise::controls::Hardware().StopAllRumble();
+    audio::Shutdown();  // No audio callback of the title from here on.
     menu_dlc_.Wait(); // Finish filesystem copies before the process can exit.
     // Closed on the setup screen: the start ends cleanly there.
     if (setup_resume_) {
@@ -534,6 +537,7 @@ class NarutoriseApp : public rex::ReXApp {
 
   void OnClosing(rex::ui::UIEvent& event) override {
     // The SDK uses _Exit here, so destructors and OnShutdown cannot flush it.
+    audio::Shutdown();
     narutorise::reporting::Close();
     narutorise::incident::ExpectedExit("window-close");
     rex::ReXApp::OnClosing(event);
@@ -1155,6 +1159,12 @@ class NarutoriseApp : public rex::ReXApp {
         rex::cvar::SetFlagByName(key, menu_settings_.config().fullscreen ? "true" : "false");
       } else if (key == "skip_intro_videos") {
         narutorise::SetSkipIntroVideos(menu_settings_.config().skip_intro_videos);
+      } else if (key == "master_volume" || key == "audio_channels" || key == "audio_layer") {
+        const auto& config = menu_settings_.config();
+        rex::cvar::SetFlagByName("master_volume", fmt::format("{}", config.master_volume));
+        rex::cvar::SetFlagByName("audio_channels", config.audio_channels);
+        rex::cvar::SetFlagByName("audio_layer", config.audio_layer);
+        audio::ReloadSettings();
       } else if (key == "native_backend" || key == "graphics_device") {
         app_context().CallInUIThreadDeferred([this] { OfferSettingsRestart(); });
       } else if (key == "bind_game_menu" || key == "game_menu_chord") {
