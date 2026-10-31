@@ -57,9 +57,10 @@ sem capa, kunai ou “Port para PC”. Antes de selecionar o jogo, mostra o tít
 em texto e Escolher o jogo; com dados válidos, mostra Jogar, Configurações, DLC
 e Sair. Os comandos do rodapé acompanham teclado ou controle.
 
-O logo é opcional e vem de `Naruto_clip.SRA` da ISO/pasta validada. O leitor em
-`game_logo.cpp` resolve `6e0003ce_I15` pelo catálogo FRSA, limita as leituras e a
-descompressão zlib, confere o checksum e converte DDS BC3 para RGBA. O worker não
+O logo é opcional e vem de `Naruto_clip.SRA` da ISO/pasta validada. O leitor comum
+em `game_assets.cpp`, usado por `game_logo.cpp` para `6e0003ce_I15`, resolve os nomes
+pelo catálogo FRSA (tudo ou nada), limita as leituras e a descompressão zlib, confere
+o checksum e converte DDS BC1/BC3 para RGBA. O worker não
 acessa RmlUi ou GPU; a UI descarta resultados de origens anteriores e publica a
 textura na própria thread. Arquivo ausente, truncado ou incompatível mantém o
 título textual e não bloqueia Jogar. O fundo é procedural e nenhuma dessas artes
@@ -67,6 +68,84 @@ título textual e não bloqueia Jogar. O fundo é procedural e nenhuma dessas ar
 
 `narutorise_game_logo_test` cobre parser, corrupção, alpha, pasta e ISO sintéticos;
 pode receber caminhos adicionais de jogo/ISO para validar o logo local real.
+`narutorise_game_assets_test` cobre a busca de vários nomes (ordem, ausência,
+duplicidade), BC1 com quatro e três cores, BC3 e entradas corrompidas; com caminhos
+de jogo/ISO, confere as 13 imagens do menu no jogo (`kMenuImages`).
+
+Durante o jogo, Configurações imita a tela Options do próprio jogo
+(`game_style_panel.cpp`, `ui/game_menu.rml`): papel, cortinas, faixa do título,
+nuvem do cursor, pincéis do brilho e botões vêm das 13 imagens, lidas num worker
+quando o jogo começa; os textos usam Edo SZ (licença Vic Fieger, embutida). Até
+a arte chegar, ou se ela falhar, a página usa o painel comum. A tela de
+configuração, a barra do overlay, a DLC e a janela de controles continuam no
+estilo próprio. O russo usa Roboto Condensed, pois a Edo SZ não tem cirílico.
+Rótulos e valores longos encolhem até caber, e as opções liga/desliga usam
+palavras curtas (On/Off, Sim/Não, Oui/Non…), como o YES/NO do jogo.
+
+A página foi medida 1:1 na tela Options do próprio jogo, a 1280×720 e quadro a
+quadro a 60 fps. As referências estão em `out/menu-jogo-study-20261030/reference`.
+Os textos usam o tamanho e as cores do movie. A borda reproduz as cópias
+deslocadas que o jogo desenha sob cada texto: os rótulos e as abas sobre quatro
+cópias, o rodapé sobre quatro cópias pretas e os valores sobre uma sombra. Ela é
+recalculada para a escala da janela, porque os efeitos de fonte do RmlUi são em
+pixels inteiros. O YES/NO tem o círculo atrás da primeira letra, e a barra não
+mostra número. A faixa e os painéis passam sob as cortinas; a nuvem do cursor
+fica por cima. A página ocupa a mesma imagem 16:9 em que o renderer nativo
+apresenta o jogo, com as faixas pretas fora dela em janelas de outra proporção
+(21:9, por exemplo), e nada que entra ou sai passa dessa imagem. As cortinas
+têm 724 de altura e começam 1,5 acima, como no filme, para que suas linhas
+esfumadas fiquem fora da tela.
+
+As animações (`game_style_motion.cpp`) usam as curvas medidas, avançando dois
+quadros do filme a cada 1/30 s: mesmo com 60 fps ou mais, os menus do jogo
+avançam no passo da lógica, como no console.
+- **Abrir:** o papel aparece de uma vez. As cortinas entram pelas laterais e
+  cada rótulo desliza da esquerda, uma linha a cada quatro quadros. A faixa do
+  título, os painéis com os valores e o rodapé chegam em seguida, e a mancha de
+  tinta cresce por último.
+- **Fechar:** o papel some e o jogo aparece atrás. As linhas saem uma por
+  quadro, seguidas dos painéis, da faixa, do rodapé e das cortinas.
+- **Trocar de aba:** só as linhas e os painéis saem e entram.
+- **Seleção:** o rótulo focado pulsa na horizontal (4%, a cada 50 quadros) e a
+  nuvem salta como mola ao mudar de linha.
+
+Voltar (Esc, B, BACK) toca a saída antes de fechar. Qualquer tecla ou clique
+termina a animação. Teclas que chegam enquanto os painéis saem, ou com uma ação
+ainda pendente, esperam e são aplicadas em ordem na página seguinte, de modo que
+LB/RB e as setas em sequência rápida não se perdem. Só mudam margens, tamanhos e
+opacidade, e a escala fica nos rótulos e na nuvem, para que a lista continue
+recortada pelo scissor. ←/→ alternam ON/OFF, como as demais escolhas, igual ao
+painel comum.
+
+O Options do próprio jogo, no menu principal ou na pausa, abre estas
+Configurações no lugar da tela dele, com uma aba **Opções** primeiro: volumes de
+música, vozes e efeitos, câmera invertida nos dois eixos, vibração, legendas e,
+nos menus de título com o conteúdo instalado, as vozes em japonês. O brilho do
+jogo fica fora (vale o nosso, em Tela). Pelo F1 a aba não aparece. Com
+`game_options_settings = false` (ou `--game_options_settings=false`), o Options
+do jogo continua com a tela original. Como no original, aberto pela pausa o
+Options volta a tocar a música.
+`game_options_script.cpp`, compilado em cada módulo AI2C (o do jogo e os três
+das DLCs), envolve o estado do Options: quando ele mostra o filme, o gancho
+esconde o filme e, nos menus de título, o papel (na pausa o papel é o do menu de
+pausa e fica), lê as opções e avisa o app. Cada mudança passa pelo
+`fn_Option_SetValue` do jogo no quadro seguinte, então volume e vibração valem na
+hora. Ao fim da saída da página, o filtro de entrada aperta o A do jogo, que
+salva as opções e volta ao menu dele como na tela original; o gancho termina de
+esconder o filme e não deixa filme na tela, para o próximo menu não esperar a
+saída de um filme escondido. O app guarda a sessão (`game_options.h`) e a
+exporta por nome (`narutorise_game_options`), porque os módulos são bibliotecas
+à parte.
+
+Com `NARUTORISE_TEST_GAME_ROOT`, `native_engine_menu_test` captura as cinco abas
+e a aba Opções nos sete idiomas, confere que nada transborda e verifica os botões
+do controle. Com um relógio próprio, captura quadros de abrir, trocar de aba e
+fechar, e confere que a entrada pula a animação. `game_style_boot_test.py PRODUCT
+GAME OUTPUT` abre o jogo nas duas APIs, entra no Options do jogo, muda a música e
+confere que o jogo guardou o valor ao reabrir; depois captura a abertura, as
+cinco abas, a troca de aba e o fechamento em 720p, além de 1080p e 2560×1080. As
+teclas são entrada real na janela em foco, então a área de trabalho precisa
+ficar livre.
 `prelaunch_logo_boot_test.py PRODUCT GAME OUTPUT [ISO]` verifica captura sem jogo,
 seleção pelo diálogo nativo, troca pelo logo e fallback em ambas as APIs. Sem ISO
 fornecida, constrói um contêiner de teste apenas para o pré-lançamento, que não

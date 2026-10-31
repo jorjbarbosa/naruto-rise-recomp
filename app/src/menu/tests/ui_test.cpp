@@ -962,6 +962,242 @@ int main(int argc, char** argv) {
     }
     menu.HideSetup();
     check("setup-hidden", !menu.Shown(), "{}");
+    if (const char* root = std::getenv("NARUTORISE_TEST_GAME_ROOT")) {
+      // The in-game settings as the game's Options screen once the art of the
+      // game's menus arrives; before it, the menus' own panel.
+      menu.ShowOverlay({}, {}, {}, {});
+      settings_model.Open(menu, 0, true, {}, {}, {});
+      check("game-style-waits-for-art", !menu.GameArtReady() && visible_document("panel-title"), "{}");
+      menu.HidePanel();
+      menu.LoadGameArt(root, false);
+      std::vector<uint8_t> art;
+      for (int i = 0; i < 300 && !menu.GameArtReady(); ++i) { frame("game-art-await", art); Sleep(10); }
+      check("game-art-loaded", menu.GameArtReady(), "{}");
+      // The page's animations run on this clock; a still is a frame past them
+      // (a tab switch takes two: its panels leave, then the new ones enter).
+      auto animation_time = std::chrono::steady_clock::now();
+      menu.SetAnimationClock([&] { return animation_time; });
+      const auto still = [&](const std::string& kind, std::vector<uint8_t>& pixels) {
+        animation_time += std::chrono::seconds(10); frame(kind + "-leaving", pixels);
+        animation_time += std::chrono::seconds(10); return frame(kind, pixels);
+      };
+      // The game's options as its Options screen reports them, the Japanese voices offered.
+      narutorise::game_options::Values game_values;
+      game_values.option = {7, 10, 5, 16, 0, 1, 1, 1, 0};
+      game_values.japanese_voices = true;
+      for (const auto& language : Localization::GetLanguages()) {
+        // Opening the settings applies the menu language they keep.
+        const auto language_dir = settings_dir / ("game-style-" + std::string(language.code));
+        std::filesystem::create_directories(language_dir);
+        std::ofstream(language_dir / "narutorise.toml") << "launcher_language = \"" << language.code << "\"\n";
+        narutorise::menu::Settings translated;
+        translated.Initialize(language_dir);
+        for (int tab = 0; tab < 6; ++tab) {
+          // The last: the game's options, first when its Options screen opened the settings.
+          if (tab == 5) translated.SetGameOptions(game_values, {});
+          translated.Open(menu, tab == 5 ? 0 : tab, true, [] {}, {}, {});
+          const std::string name = "game-style-" + std::string(language.code) + "-" +
+                                   (tab == 5 ? std::string("options") : std::to_string(tab));
+          if (!still(name, art)) continue;
+          std::ofstream(std::string(argv[1]) + "." + name + "-1280x720.bgra", std::ios::binary)
+              .write(reinterpret_cast<const char*>(art.data()), std::streamsize(art.size()));
+          // The paper fills the stage between the curtains.
+          const auto paper = at(art, 640, 700), curtain = at(art, 60, 360);
+          auto* document = visible_document("back-label");
+          check(name + "-shown", document && !visible_document("panel-title") &&
+                paper[0] > 180 && paper[1] > 160 && !Near(paper, curtain, 40),
+                "{\"paper\":" + Json(paper) + ",\"curtain\":" + Json(curtain) + "}");
+          // Each label and its star end before the control; each value fits its box.
+          std::string overflow;
+          Rml::ElementList rows;
+          if (document) document->GetElementsByClassName(rows, "row");
+          for (auto* row : rows) {
+            auto* label = row->QuerySelector(".label");
+            auto* star = row->QuerySelector(".name .star");
+            auto* control = row->QuerySelector(".control");
+            auto* value = row->QuerySelector(".value");
+            auto* end = star ? star : label;
+            bool words_fit = true;
+            Rml::ElementList words;
+            row->GetElementsByClassName(words, "word");
+            for (auto* word : words) {
+              auto* option = word->GetParentNode();
+              words_fit &= word->GetAbsoluteLeft() + word->GetOffsetWidth() <= option->GetAbsoluteLeft() + option->GetClientWidth();
+            }
+            if ((end && control && end->GetAbsoluteLeft() + end->GetOffsetWidth() > control->GetAbsoluteLeft()) ||
+                (value && value->GetScrollWidth() > value->GetClientWidth() + 1) || !words_fit)
+              overflow += (overflow.empty() ? "\"" : ",\"") + row->GetId() + "\"";
+          }
+          check(name + "-fits", document && !rows.empty() && overflow.empty(), "{\"overflow\":[" + overflow + "]}");
+        }
+        menu.HidePanel();
+      }
+      settings_model.Reload();
+      // A controller's input shows the game's button images.
+      SDL_VirtualJoystickDesc style_pad; SDL_INIT_INTERFACE(&style_pad);
+      style_pad.type = SDL_JOYSTICK_TYPE_GAMEPAD; style_pad.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+      style_pad.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1; style_pad.name = "Game style fixture";
+      const auto style_id = SDL_AttachVirtualJoystick(&style_pad);
+      auto* style_joystick = style_id ? SDL_OpenJoystick(style_id) : nullptr;
+      settings_model.Open(menu, 1, true, [] {}, {}, {});
+      still("game-style-pad-before", art);
+      if (check("game-style-pad-attached", style_joystick != nullptr, "{}")) {
+        SDL_SetJoystickVirtualButton(style_joystick, SDL_GAMEPAD_BUTTON_DPAD_DOWN, true);
+        for (int i = 0; i < 3; ++i) frame("game-style-pad-down", art);
+        SDL_SetJoystickVirtualButton(style_joystick, SDL_GAMEPAD_BUTTON_DPAD_DOWN, false);
+        for (int i = 0; i < 3; ++i) frame("game-style-pad-up", art);
+        std::ofstream(std::string(argv[1]) + ".game-style-pad-1280x720.bgra", std::ios::binary)
+            .write(reinterpret_cast<const char*>(art.data()), std::streamsize(art.size()));
+        auto* document = visible_document("back-label");
+        check("game-style-pad-prompts", document && !document->IsClassSet("keys") &&
+              menu.PanelFocus() == "graphics_device", "{\"focus\":\"" + menu.PanelFocus() + "\"}");
+        SDL_CloseJoystick(style_joystick); SDL_DetachVirtualJoystick(style_id);
+      }
+      menu.HidePanel();
+
+      // The opening, a tab switch and the closing at frames of the movie's 60 fps.
+      const auto to_frame = [&](std::chrono::steady_clock::time_point start, float frame_number) {
+        animation_time = start + std::chrono::microseconds(int64_t(frame_number * 1e6f / 60));
+      };
+      const auto capture = [&](const std::string& name) {
+        frame(name, art);
+        std::ofstream(std::string(argv[1]) + "." + name + "-1280x720.bgra", std::ios::binary)
+            .write(reinterpret_cast<const char*>(art.data()), std::streamsize(art.size()));
+      };
+      const auto paper_shown = [&] { const auto p = at(art, 640, 700); return p[0] > 180 && p[1] > 160 && p[2] > 60; };
+      const auto curtain_shown = [&] { return Near(at(art, 60, 360), {68, 119, 100}, 12); };
+      int closed = 0;
+      auto start = animation_time;
+      settings_model.Open(menu, 1, true, [] {}, {}, [&] { ++closed; });
+      to_frame(start, 0); capture("anim-open-00");
+      check("anim-open-cuts-to-the-paper", paper_shown() && !curtain_shown(), "{\"paper\":" + Json(at(art, 640, 700)) + "}");
+      for (float q : {7.f, 9.f, 12.f, 14.f, 16.f, 19.f, 21.f, 25.f, 30.f}) { to_frame(start, q); capture("anim-open-" + fmt::format("{:02}", int(q))); }
+      to_frame(start, 60); capture("anim-open-60");
+      check("anim-open-ends-on-the-page", paper_shown() && curtain_shown() && visible_document("back-label"), "{}");
+      // The curtain pieces overlap: no black between them and their edges.
+      int darkest = 255;
+      for (uint32_t x : {128u, 130u, 132u, 133u, 134u, 136u, 1144u, 1146u, 1147u, 1148u, 1150u}) {
+        const auto p = at(art, x, 360);
+        darkest = std::min(darkest, std::max({p[0], p[1], p[2]}));
+      }
+      check("anim-curtains-seamless", darkest > 30, "{\"darkest\":" + std::to_string(darkest) + "}");
+      key(rex::ui::VirtualKey::kNext);
+      start = animation_time; capture("anim-tab-out-00");
+      to_frame(start, 4); capture("anim-tab-out-04");
+      to_frame(start, 8); frame("anim-tab-swap", art);
+      start = animation_time;
+      to_frame(start, 5); capture("anim-tab-in-05");
+      to_frame(start, 60); capture("anim-tab-in-60");
+      auto* tabbed = visible_document("back-label");
+      auto* selected = tabbed ? tabbed->QuerySelector(".tab.selected") : nullptr;
+      check("anim-tab-switches-panels", selected && selected->GetAttribute<int>("tab", -1) == 2 &&
+            menu.PanelFocus() == "msaa_samples", "{\"focus\":\"" + menu.PanelFocus() + "\"}");
+      key(rex::ui::VirtualKey::kEscape);
+      start = animation_time;
+      for (float q : {0.f, 1.f, 2.f, 4.f, 6.f, 8.f, 12.f, 16.f, 22.f}) { to_frame(start, q); capture("anim-close-" + fmt::format("{:02}", int(q))); }
+      check("anim-close-waits-for-the-animation", closed == 0 && menu.PanelShown(), "{}");
+      to_frame(start, 28); frame("anim-close-end", art);
+      check("anim-close-ends-closed", closed == 1 && !menu.PanelShown(), "{\"closed\":" + std::to_string(closed) + "}");
+      // Input skips: the page at once, and the input still acts.
+      start = animation_time;
+      settings_model.Open(menu, 1, true, [] {}, {}, [&] { ++closed; });
+      to_frame(start, 5); frame("anim-skip-open", art);
+      key(rex::ui::VirtualKey::kDown);
+      frame("anim-skip-open-done", art);
+      check("anim-input-skips-opening", paper_shown() && curtain_shown() && menu.PanelFocus() == "graphics_device",
+            "{\"focus\":\"" + menu.PanelFocus() + "\"}");
+      key(rex::ui::VirtualKey::kEscape); frame("anim-skip-closing", art);
+      key(rex::ui::VirtualKey::kEscape); frame("anim-skip-close-done", art);
+      check("anim-input-skips-closing", closed == 2 && !menu.PanelShown(), "{\"closed\":" + std::to_string(closed) + "}");
+      {
+        // A changed value redraws the same tab in place: no animation, same focus.
+        const auto change_dir = settings_dir / "game-style-change";
+        std::filesystem::create_directories(change_dir);
+        narutorise::menu::Settings changing;
+        changing.Initialize(change_dir);
+        changing.Open(menu, 1, true, [] {}, {}, {});
+        still("game-style-change-before", art);
+        focus_id("frame_rate");
+        auto* document = visible_document("back-label");
+        auto* value = document ? document->QuerySelector("#frame_rate .value") : nullptr;
+        const std::string before = value ? value->GetInnerRML() : "";
+        key(rex::ui::VirtualKey::kRight);
+        frame("game-style-change-applied", art); frame("game-style-change", art);
+        document = visible_document("back-label");
+        value = document ? document->QuerySelector("#frame_rate .value") : nullptr;
+        const std::string after = value ? value->GetInnerRML() : "";
+        check("game-style-change-redraws-in-place", value && after != before && menu.PanelFocus() == "frame_rate" &&
+              paper_shown(), "{\"before\":\"" + before + "\",\"after\":\"" + after + "\"}");
+        // ON/OFF flips with either arrow, as the other choices step through their values.
+        const auto vsync_on = [&] {
+          auto* page = visible_document("back-label");
+          return page && page->QuerySelector("#vsync .option.on.chosen") != nullptr;
+        };
+        focus_id("vsync");
+        const bool vsync_before = vsync_on();
+        key(rex::ui::VirtualKey::kRight); frame("game-style-toggle-once", art); frame("game-style-toggle-once-shown", art);
+        const bool vsync_once = vsync_on();
+        key(rex::ui::VirtualKey::kRight); frame("game-style-toggle-twice", art); frame("game-style-toggle-twice-shown", art);
+        check("game-style-toggle-flips", vsync_once != vsync_before && vsync_on() == vsync_before &&
+              menu.PanelFocus() == "vsync", "{\"focus\":\"" + menu.PanelFocus() + "\"}");
+        // Keys pressed together reach the pages they were meant for, in order.
+        changing.Open(menu, 0, true, [] {}, {}, {});
+        still("game-style-keys-before", art);
+        for (auto vk : {rex::ui::VirtualKey::kNext, rex::ui::VirtualKey::kNext, rex::ui::VirtualKey::kDown,
+                        rex::ui::VirtualKey::kDown})
+          key(vk);
+        for (int i = 0; i < 12; ++i) { animation_time += std::chrono::milliseconds(50); frame("game-style-keys", art); }
+        auto* keyed = visible_document("back-label");
+        Rml::ElementList keyed_rows;
+        if (keyed) keyed->QuerySelectorAll(keyed_rows, "#options .row");
+        auto* keyed_tab = keyed ? keyed->QuerySelector(".tab.selected") : nullptr;
+        check("game-style-held-keys-in-order", keyed_tab && keyed_tab->GetAttribute<int>("tab", -1) == 2 &&
+              keyed_rows.size() > 2 && menu.PanelFocus() == keyed_rows[2]->GetId(),
+              "{\"focus\":\"" + menu.PanelFocus() + "\"}");
+        menu.HidePanel();
+      }
+      {
+        // The game's options: each change reaches the game; back closes once
+        // the out-animation ends (the game's A then).
+        narutorise::menu::Settings game;
+        game.Initialize(settings_dir);
+        std::vector<std::pair<int, int>> sent;
+        int game_closed = 0;
+        game.SetGameOptions(game_values, [&](narutorise::game_options::Option option, int value) {
+          sent.emplace_back(option, value);
+        });
+        game.Open(menu, 0, true, [] {}, {}, [&] { ++game_closed; });
+        still("game-options-before", art);
+        auto* page = visible_document("back-label");
+        auto* tab = page ? page->QuerySelector(".tab.selected") : nullptr;
+        check("game-options-first-tab", tab && tab->GetAttribute<int>("tab", -1) == 0 && menu.PanelFocus() == "game-music-volume" &&
+              page->GetElementById("game-japanese-voices") && !page->GetElementById("brightness"),
+              "{\"focus\":\"" + menu.PanelFocus() + "\"}");
+        key(rex::ui::VirtualKey::kRight); frame("game-options-music", art); frame("game-options-music-shown", art);
+        focus_id("game-subtitles");
+        key(rex::ui::VirtualKey::kRight); frame("game-options-subtitles", art); frame("game-options-subtitles-shown", art);
+        page = visible_document("back-label");
+        check("game-options-sent", sent == std::vector<std::pair<int, int>>{{0, 8}, {7, 0}} &&
+              page && page->QuerySelector("#game-subtitles .option.off.chosen") && menu.PanelFocus() == "game-subtitles",
+              "{\"sent\":" + std::to_string(sent.size()) + ",\"focus\":\"" + menu.PanelFocus() + "\"}");
+        key(rex::ui::VirtualKey::kEscape); frame("game-options-closing", art);
+        check("game-options-closing-animates", game_closed == 0 && menu.PanelShown(), "{}");
+        animation_time += std::chrono::seconds(10); frame("game-options-closed", art);
+        check("game-options-closed", game_closed == 1 && !menu.PanelShown(),
+              "{\"closed\":" + std::to_string(game_closed) + "}");
+      }
+      // BACK takes the click beside the restart legend.
+      settings_model.Open(menu, 1, true, [] {}, {}, [&] { ++closed; });
+      still("game-style-back-click", art);
+      rex::ui::MouseEvent over_back(nullptr, rex::ui::MouseEvent::Button::kNone, 260, 658);
+      rex::ui::MouseEvent press_back(nullptr, rex::ui::MouseEvent::Button::kLeft, 260, 658);
+      menu.OnMouseMove(over_back); menu.OnMouseDown(press_back); menu.OnMouseUp(press_back);
+      frame("game-style-back-click-closing", art);
+      animation_time += std::chrono::seconds(10); frame("game-style-back-click-closed", art);
+      check("game-style-back-click", closed == 3 && !menu.PanelShown(), "{\"closed\":" + std::to_string(closed) + "}");
+      menu.SetAnimationClock({});
+      menu.HideOverlay();
+    }
     {
       // Complete real filesystem work after its UI destination has closed.
       const auto source = settings_dir / "async-source";

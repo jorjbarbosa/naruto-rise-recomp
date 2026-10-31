@@ -14,7 +14,7 @@ def main():
     required = {'narutorise.exe', 'narutorise_ai2c.dll', 'rexruntime.dll', 'rexgpu-xenos.dll',
                 'defaults/narutorise.toml', 'narutorise.version', 'README.txt', 'defaults/mods/pt-br/mod.toml',
                 'defaults/mods/pt-br/texts.json', 'licenses/README.txt', 'licenses/rmlui.txt',
-                'licenses/freetype.txt', 'licenses/roboto-condensed.txt'}
+                'licenses/freetype.txt', 'licenses/roboto-condensed.txt', 'licenses/edo-sz.txt'}
     with zipfile.ZipFile(archive) as package:
         assert package.testzip() is None, 'ZIP integrity failure'
         names = {item.filename for item in package.infolist() if not item.is_dir()}

@@ -22,6 +22,9 @@
         @{ Name = 'Roboto and Roboto Condensed (Roboto 3.016)'; License = 'OFL-1.1'
            Url = 'https://github.com/googlefonts/roboto-3-classic'; File = 'app/ui/fonts/OFL.txt'; Target = 'roboto-condensed.txt'
            Usage = 'narutorise.exe (embedded menu fonts)' }
+        @{ Name = 'Edo SZ (Vic Fieger, 2008)'; License = 'Vic Fieger License (freeware)'
+           Url = 'https://www.fontsquirrel.com/fonts/edo'; File = 'app/ui/fonts/VicFiegerLicense.txt'; Target = 'edo-sz.txt'
+           Usage = 'narutorise.exe (embedded in-game menu font)' }
         @{ Name = 'ReXGlue SDK (includes code derived from Xenia)'; License = 'BSD-3-Clause'
            Url = 'https://github.com/rexglue/rexglue-sdk'; File = 'sdk/LICENSE'; Target = 'rexglue-sdk.txt'
            Usage = 'narutorise.exe, rexruntime.dll, rexgpu-xenos.dll' }

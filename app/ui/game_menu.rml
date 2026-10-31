@@ -1,0 +1,10 @@
+<rml><head><title>Settings</title><link type="text/rcss" href="theme.rcss"/><link type="text/rcss" href="game_menu.rcss"/></head>
+<body><div id="backdrop"/><div id="paper"/>
+<div id="stage-back" class="stage"><div id="tabs"/><div id="options"/></div>
+<div id="sides"><div id="side-left" class="side"><div id="curtain-left"/><div id="edge-left"/></div>
+<div id="side-right" class="side"><div id="curtain-right"/><div id="edge-right"/></div></div>
+<div id="stage" class="stage"><div id="cursor"/><div id="help"/>
+<div id="footer"><div id="back-prompt" class="prompt button-b"><span>Esc</span></div><span id="back-label"/>
+<div id="legend"><div class="star"/><span id="legend-label"/></div>
+<span id="ok-label">OK</span><div id="ok-prompt" class="prompt button-a"><span>Enter</span></div></div>
+</div></body></rml>

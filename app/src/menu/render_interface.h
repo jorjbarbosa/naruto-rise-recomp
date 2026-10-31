@@ -7,7 +7,9 @@
 // SRV for it, which comes back 0 (transparent) on some drivers. No clip mask,
 // layer, filter or shader:
 // the menus are drawn with triangles, textures and scissor rects only. Images
-// are decoded files or private procedural/local-game sources. One thread, as RmlUi.
+// are decoded files or private procedural/local-game sources: "game/<key>" are
+// the in-game menu's (game_assets.h kMenuImageKeys), "generated/<name>" the
+// shapes the game's movies draw as vectors. One thread, as RmlUi.
 #pragma once
 
 #include <memory>
@@ -27,6 +29,9 @@ class RenderInterface final : public Rml::RenderInterface {
   void End();
   // UI thread only. Invalidates the RmlUi source before replacing its pixels.
   void SetGameLogo(std::optional<game_logo::Image> image);
+  // UI thread only: the kMenuImages of the game, all of them or none.
+  void SetGameArt(std::optional<std::vector<game_assets::Image>> images);
+  bool HasGameArt() const { return game_art_.has_value(); }
 
   Rml::CompiledGeometryHandle CompileGeometry(Rml::Span<const Rml::Vertex> vertices,
                                               Rml::Span<const int> indices) override;
@@ -49,6 +54,7 @@ class RenderInterface final : public Rml::RenderInterface {
   Rml::Rectanglei scissor_region_;
   std::optional<Rml::Matrix4f> transform_;
   std::optional<game_logo::Image> game_logo_;
+  std::optional<std::vector<game_assets::Image>> game_art_;
 };
 
 }  // namespace narutorise::menu

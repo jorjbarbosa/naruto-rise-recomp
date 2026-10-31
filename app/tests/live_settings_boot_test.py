@@ -56,12 +56,12 @@ def orange_pixels(path):
 
 
 def game_tab_crc(path):
+    # The first tab's word in the title band of the in-game settings.
     width, height, pixels = png_pixels(path)
-    ratio = max(1, height / 720)
-    left = (width - min(1040 * ratio, width - 48 * ratio)) / 2
-    top = (height - min(586.667 * ratio, height - 32 * ratio)) / 2
-    x0, x1 = int(left + 35*ratio), int(left + 90*ratio)
-    y0, y1 = int(top + 12*ratio), int(top + 36*ratio)
+    scale = min(width / 1280, height / 720)
+    left, top = (width - 1280 * scale) / 2, (height - 720 * scale) / 2
+    x0, x1 = int(left + 215*scale), int(left + 330*scale)
+    y0, y1 = int(top + 52*scale), int(top + 88*scale)
     return zlib.crc32(b''.join(pixels[y*(width*3+1)+1+x0*3:y*(width*3+1)+1+x1*3] for y in range(y0,y1)))
 
 
@@ -80,7 +80,7 @@ def main():
     (product / 'data').mkdir(exist_ok=True)
     config_path = product / 'data/narutorise.toml'
     config = dict(renderer='native', native_backend=api, fullscreen=False, skip_intro_videos=True, show_startup_menu=False,
-                  check_for_updates=False, show_fps_overlay=False, custom_game_root=str(iso))
+                  check_for_updates=False, show_fps_overlay=False, custom_game_root=str(iso), crash_reporting_asked=True)
     if '--graphics' in sys.argv[5:]:
         config.update(frame_rate=60, swap_post_effect='none', present_effect='bilinear', anisotropic_override=5,
                       brightness=.5, vsync=True, resolution_scale=1, internal_resolution_scale=0.0,
@@ -148,17 +148,25 @@ def main():
         if '--graphics' in sys.argv[5:]:
             # Actual keyboard edits, acknowledged by the frame-boundary owner.
             def selected_tab():
+                # In the game the settings are the game's Options screen: the
+                # tabs are blue words in the title band, the selected one yellow.
                 path = output/'navigation.png'; win.capture(hwnd,path)
                 width, height, pixels = png_pixels(path)
-                ratio = max(1,height/720)
-                left = (width-min(1040*ratio,width-48*ratio))/2
-                top = (height-min(586.667*ratio,height-32*ratio))/2
-                widths = [80,80,126.667,126.667,120]
-                for target in range(5):
-                    x = int(left+(20+sum(widths[:target])+widths[target]/2)*ratio)
-                    at = int(top+15*ratio)*(width*3+1)+1+x*3
-                    if all(abs(a-b)<12 for a,b in zip(pixels[at:at+3],(242,112,31))): return target
-                return -1
+                scale = min(width/1280, height/720)
+                left, top = (width-1280*scale)/2, (height-720*scale)/2
+                def pixel(x, y):
+                    at = int(top+y*scale)*(width*3+1)+1+int(left+x*scale)*3
+                    return pixels[at:at+3]
+                if any(abs(a-b) > 12 for a,b in zip(pixel(165, 50), (51, 44, 29))): return -1  # No title band.
+                words, last = [], None
+                for x in range(160, 1000):
+                    colors = [pixel(x, y) for y in range(60, 82, 2)]
+                    yellow = any(r > 200 and g > 170 and b < 120 for r,g,b in colors)
+                    blue = any(b > 150 and r < 120 for r,g,b in colors)
+                    if not (yellow or blue): continue
+                    if last is None or x-last > 12: words.append(False)  # The next tab's word.
+                    words[-1] |= yellow; last = x
+                return words.index(True) if len(words) == 5 and words.count(True) == 1 else -1
             def next_tab():
                 current = selected_tab()
                 assert current >= 0, 'No selected tab visible'

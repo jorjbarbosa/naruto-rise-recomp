@@ -71,7 +71,8 @@ def main():
             config_path = data / 'narutorise.toml'
             config = dict(renderer='native', native_backend=api, graphics_device='', fullscreen=False,
                           skip_intro_videos=True, custom_game_root=str(iso), launcher_language='pt_BR',
-                          check_for_updates=False, dlc_source_path='', show_startup_menu=stage == 'setup')
+                          check_for_updates=False, dlc_source_path='', show_startup_menu=stage == 'setup',
+                          crash_reporting_asked=True)
             config_path.write_text('\n'.join(f'{k} = {json.dumps(v)}' for k, v in config.items()), encoding='utf-8')
             args = ['--setup'] if stage == 'setup' else []
             with (output / (name + '-console.log')).open('wb') as console:
@@ -157,7 +158,7 @@ def main():
                     child_hwnd = win.wait_for(lambda: win.window(child.pid), child)
                     win.wait_for(lambda: f'Renderer: native; backend: {other_api}' in text() and
                                  'Setup screen: requested' in text(), child)
-                    assert (user / 'launch.marker').exists(), 'replacement lost the user-data root'
+                    assert (data / 'launch.marker').exists(), 'replacement lost the data root'
                     assert saved()['custom_game_root'] == str(iso)
                     win.capture(child_hwnd, output / (name + '-restarted.png'))
                     win.user32.PostMessageW(child_hwnd, 0x10, 0, 0)
