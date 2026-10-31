@@ -1,0 +1,717 @@
+diff --git a/include/rex/audio/audio_driver.h b/include/rex/audio/audio_driver.h
+index 37ccbf2..8327b57 100644
+--- a/include/rex/audio/audio_driver.h
++++ b/include/rex/audio/audio_driver.h
+@@ -23,6 +23,10 @@ class AudioDriver {
+ 
+   virtual void SubmitFrame(uint32_t samples_ptr) = 0;
+ 
++  // Samples per channel submitted and not yet taken by the device, or -1 when
++  // the driver cannot tell. The audio worker paces its clients with it.
++  virtual int32_t QueuedSamples() { return -1; }
++
+  protected:
+   inline uint8_t* TranslatePhysical(uint32_t guest_address) const {
+     return memory_->TranslatePhysical(guest_address);
+diff --git a/include/rex/audio/audio_system.h b/include/rex/audio/audio_system.h
+index 33fd32c..79ad8c7 100644
+--- a/include/rex/audio/audio_system.h
++++ b/include/rex/audio/audio_system.h
+@@ -61,9 +61,9 @@ class AudioSystem : public system::IAudioSystem {
+   virtual void Initialize();
+ 
+   void WorkerThreadMain();
++  void PumpClient(size_t index);
+ 
+-  virtual X_STATUS CreateDriver(size_t index, rex::thread::Semaphore* semaphore,
+-                                AudioDriver** out_driver) = 0;
++  virtual X_STATUS CreateDriver(size_t index, AudioDriver** out_driver) = 0;
+   virtual void DestroyDriver(AudioDriver* driver) = 0;
+ 
+   static constexpr size_t kMaximumQueuedFrames = 64;
+@@ -88,10 +88,16 @@ class AudioSystem : public system::IAudioSystem {
+ 
+   int FindFreeClient();
+ 
+-  std::unique_ptr<rex::thread::Semaphore> client_semaphores_[kMaximumClientCount];
+-  // Event is always there in case we have no clients.
++  // Pacing state of each client, in samples per channel: the queue left after
++  // the last callbacks, and the largest block the device has taken at once.
++  struct ClientPacing {
++    int32_t queued = 0;
++    int32_t largest_take = 0;
++  };
++  ClientPacing pacing_[kMaximumClientCount];
++
++  // Signaled on shutdown and pause.
+   std::unique_ptr<rex::thread::Event> shutdown_event_;
+-  rex::thread::WaitHandle* wait_handles_[kMaximumClientCount + 1];
+ 
+   bool paused_ = false;
+   rex::thread::Fence pause_fence_;
+diff --git a/include/rex/audio/nop/nop_audio_system.h b/include/rex/audio/nop/nop_audio_system.h
+index e2a1fc2..6153d3d 100644
+--- a/include/rex/audio/nop/nop_audio_system.h
++++ b/include/rex/audio/nop/nop_audio_system.h
+@@ -24,8 +24,7 @@ class NopAudioSystem : public AudioSystem {
+ 
+   static std::unique_ptr<AudioSystem> Create(runtime::FunctionDispatcher* function_dispatcher);
+ 
+-  X_STATUS CreateDriver(size_t index, rex::thread::Semaphore* semaphore,
+-                        AudioDriver** out_driver) override;
++  X_STATUS CreateDriver(size_t index, AudioDriver** out_driver) override;
+   void DestroyDriver(AudioDriver* driver) override;
+ };
+ 
+diff --git a/include/rex/audio/sdl/sdl_audio_driver.h b/include/rex/audio/sdl/sdl_audio_driver.h
+index f8949ca..4f4400e 100644
+--- a/include/rex/audio/sdl/sdl_audio_driver.h
++++ b/include/rex/audio/sdl/sdl_audio_driver.h
+@@ -11,32 +11,28 @@
+ 
+ #pragma once
+ 
+-#include <mutex>
+-#include <queue>
+-#include <stack>
++#include <array>
+ 
+ #include <rex/audio/audio_driver.h>
+-#include <rex/thread.h>
+ 
+ #include <SDL3/SDL.h>
+ 
+ namespace rex::audio::sdl {
+ 
++// Pushes each frame to the SDL stream as the title submits it; the device takes
++// from the stream at its own block size. The audio worker paces the title with
++// QueuedSamples.
+ class SDLAudioDriver : public AudioDriver {
+  public:
+-  SDLAudioDriver(memory::Memory* memory, rex::thread::Semaphore* semaphore);
++  explicit SDLAudioDriver(memory::Memory* memory);
+   ~SDLAudioDriver() override;
+ 
+   bool Initialize();
+   void SubmitFrame(uint32_t frame_ptr) override;
++  int32_t QueuedSamples() override;
+   void Shutdown();
+ 
+  protected:
+-  static void SDLCallback(void* userdata, SDL_AudioStream* stream, int additional_amount,
+-                          int total_amount);
+-
+-  rex::thread::Semaphore* semaphore_ = nullptr;
+-
+   SDL_AudioStream* sdl_stream_ = nullptr;
+   bool sdl_initialized_ = false;
+   uint8_t sdl_device_channels_ = 0;
+@@ -46,9 +42,8 @@ class SDLAudioDriver : public AudioDriver {
+   static const uint32_t channel_samples_ = 256;
+   static const uint32_t frame_samples_ = frame_channels_ * channel_samples_;
+   static const uint32_t frame_size_ = sizeof(float) * frame_samples_;
+-  std::queue<float*> frames_queued_ = {};
+-  std::stack<float*> frames_unused_ = {};
+-  std::mutex frames_mutex_ = {};
++  // The device frame being converted, at most 6 channels.
++  std::array<float, frame_samples_> converted_ = {};
+ };
+ 
+ }  // namespace rex::audio::sdl
+diff --git a/include/rex/audio/sdl/sdl_audio_system.h b/include/rex/audio/sdl/sdl_audio_system.h
+index 471149c..3980408 100644
+--- a/include/rex/audio/sdl/sdl_audio_system.h
++++ b/include/rex/audio/sdl/sdl_audio_system.h
+@@ -24,8 +24,7 @@ class SDLAudioSystem : public AudioSystem {
+ 
+   static std::unique_ptr<AudioSystem> Create(runtime::FunctionDispatcher* function_dispatcher);
+ 
+-  X_STATUS CreateDriver(size_t index, rex::thread::Semaphore* semaphore,
+-                        AudioDriver** out_driver) override;
++  X_STATUS CreateDriver(size_t index, AudioDriver** out_driver) override;
+   void DestroyDriver(AudioDriver* driver) override;
+ 
+  protected:
+diff --git a/src/audio/audio_system.cpp b/src/audio/audio_system.cpp
+index 7a711a8..2578f63 100644
+--- a/src/audio/audio_system.cpp
++++ b/src/audio/audio_system.cpp
+@@ -9,6 +9,10 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include <algorithm>
++#include <chrono>
++#include <thread>
++
+ #include <rex/assert.h>
+ #include <rex/audio/audio_driver.h>
+ #include <rex/audio/audio_system.h>
+@@ -18,15 +22,24 @@
+ #include <rex/logging.h>
+ #include <rex/math.h>
+ #include <rex/memory/ring_buffer.h>
++#include <rex/platform.h>
+ #include <rex/stream.h>
+ #include <rex/string/buffer.h>
+ #include <rex/system/thread_state.h>
+ #include <rex/thread.h>
+ #include <rex/cvar.h>
+ 
++#if REX_PLATFORM_WIN32
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <windows.h>
++#endif
++
+ REXCVAR_DEFINE_INT32(
+     audio_maxqframes, 8, "Audio",
+-    "Max buffered audio frames (range 4-64). Lower reduces latency but may cause stuttering.");
++    "Audio frames kept ahead of the device (range 4-64); grows to cover the device's largest "
++    "block. Lower reduces latency but may cause stuttering.");
+ 
+ // As with normal Microsoft, there are like twelve different ways to access
+ // the audio APIs. Early games use XMA*() methods almost exclusively to touch
+@@ -44,6 +57,55 @@ namespace rex::audio {
+ 
+ namespace {
+ constexpr std::chrono::milliseconds kWorkerShutdownTimeout{500};
++
++// The console calls each client once per frame of 256 samples at 48 kHz.
++constexpr uint32_t kFrameSamples = 256;
++constexpr auto kFramePeriod = std::chrono::nanoseconds(1'000'000'000LL * kFrameSamples / 48000);
++// Below this queue the worker runs a second callback in the same period.
++constexpr int32_t kLowQueueSamples = 2 * kFrameSamples;
++// Behind the grid by more than this (a stall or a pause), start a new grid
++// instead of catching up in a burst.
++constexpr auto kMaximumLag = std::chrono::milliseconds(100);
++
++// Sleeps until an absolute time with sub-millisecond precision: Sleep on
++// Windows rounds to the millisecond and to the system timer period.
++class FrameClock {
++ public:
++  FrameClock() {
++#if REX_PLATFORM_WIN32
++    timer_ = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
++                                    TIMER_ALL_ACCESS);
++    if (!timer_) timer_ = CreateWaitableTimerW(nullptr, TRUE, nullptr);
++#endif
++  }
++  ~FrameClock() {
++#if REX_PLATFORM_WIN32
++    if (timer_) CloseHandle(timer_);
++#endif
++  }
++  FrameClock(const FrameClock&) = delete;
++  FrameClock& operator=(const FrameClock&) = delete;
++
++  void SleepUntil(std::chrono::steady_clock::time_point deadline) {
++    const auto remaining = deadline - std::chrono::steady_clock::now();
++    if (remaining <= std::chrono::steady_clock::duration::zero()) return;
++#if REX_PLATFORM_WIN32
++    LARGE_INTEGER due;
++    due.QuadPart = -std::max<LONGLONG>(
++        1, std::chrono::duration_cast<std::chrono::nanoseconds>(remaining).count() / 100);
++    if (timer_ && SetWaitableTimer(timer_, &due, 0, nullptr, nullptr, FALSE)) {
++      WaitForSingleObject(timer_, INFINITE);
++      return;
++    }
++#endif
++    std::this_thread::sleep_until(deadline);
++  }
++
++ private:
++#if REX_PLATFORM_WIN32
++  HANDLE timer_ = nullptr;
++#endif
++};
+ }  // namespace
+ 
+ AudioSystem::AudioSystem(runtime::FunctionDispatcher* function_dispatcher)
+@@ -56,14 +118,8 @@ AudioSystem::AudioSystem(runtime::FunctionDispatcher* function_dispatcher)
+       static_cast<uint32_t>(kMaximumQueuedFrames),
+       std::max(static_cast<uint32_t>(REXCVAR_GET(audio_maxqframes)), static_cast<uint32_t>(4)));
+ 
+-  for (size_t i = 0; i < kMaximumClientCount; ++i) {
+-    client_semaphores_[i] = rex::thread::Semaphore::Create(0, queued_frames_);
+-    assert_not_null(client_semaphores_[i]);
+-    wait_handles_[i] = client_semaphores_[i].get();
+-  }
+   shutdown_event_ = rex::thread::Event::CreateAutoResetEvent(false);
+   assert_not_null(shutdown_event_);
+-  wait_handles_[kMaximumClientCount] = shutdown_event_.get();
+ 
+   xma_decoder_ = std::make_unique<rex::audio::XmaDecoder>(function_dispatcher_);
+ 
+@@ -100,72 +156,36 @@ void AudioSystem::WorkerThreadMain() {
+   // Initialize driver and ringbuffer.
+   Initialize();
+ 
+-  // Main run loop.
+-  uint32_t diag_pump_count = 0;
++  // Main run loop. The clients are called on a fixed grid of frame periods,
++  // as on the console, whatever block size the device takes. A device that
++  // takes large blocks at once must not run several callbacks back to back:
++  // the title's XMA streams cannot keep up with such a burst, and its mixer
++  // replays stale blocks of them.
++  FrameClock clock;
++  auto next = std::chrono::steady_clock::now();
+   while (worker_running_) {
+-    // These handles signify the number of submitted samples. Once we reach
+-    // 64 samples, we wait until our audio backend releases a semaphore
+-    // (signaling a sample has finished playing)
+-    auto result = rex::thread::WaitAny(wait_handles_, rex::countof(wait_handles_), true,
+-                                       std::chrono::milliseconds(500));
+-    if (result.first == rex::thread::WaitResult::kFailed) {
+-      REXAPU_WARN("AudioWorker: WaitAny failed");
+-      continue;
++    {
++      SCOPE_profile_cpu_i("apu", "Sleep");
++      clock.SleepUntil(next);
+     }
+-
+-    if (result.first == rex::thread::WaitResult::kTimeout) {
+-      if (diag_pump_count < 5) {
+-        REXAPU_NOISY_DEBUG("AudioWorker: WaitAny timed out (no semaphore signals)");
+-      }
++    next += kFramePeriod;
++    if (std::chrono::steady_clock::now() - next > kMaximumLag) {
++      next = std::chrono::steady_clock::now();
+     }
+ 
+-    if (result.first == thread::WaitResult::kSuccess && result.second == kMaximumClientCount) {
+-      // Shutdown event signaled.
++    if (thread::Wait(shutdown_event_.get(), false, std::chrono::milliseconds(0)) ==
++        thread::WaitResult::kSuccess) {
++      // Shutdown or pause.
+       if (paused_) {
+         pause_fence_.Signal();
+         thread::Wait(resume_event_.get(), false);
++        next = std::chrono::steady_clock::now();
+       }
+-
+       continue;
+     }
+ 
+-    // Number of clients pumped
+-    bool pumped = false;
+-    if (result.first == rex::thread::WaitResult::kSuccess) {
+-      auto index = result.second;
+-
+-      auto global_lock = global_critical_region_.Acquire();
+-      uint32_t client_callback = clients_[index].callback;
+-      uint32_t client_callback_arg = clients_[index].wrapped_callback_arg;
+-      global_lock.unlock();
+-
+-      if (client_callback) {
+-        if (diag_pump_count < 10) {
+-          REXAPU_DEBUG("AudioWorker: dispatching callback {:08X} with arg {:08X} for client {}",
+-                       client_callback, client_callback_arg, index);
+-        }
+-        SCOPE_profile_cpu_i("apu", "rex::audio::AudioSystem->client_callback");
+-        uint64_t args[] = {client_callback_arg};
+-        function_dispatcher_->Execute(worker_thread_->thread_state(), client_callback, args,
+-                                      rex::countof(args));
+-        if (diag_pump_count < 10) {
+-          REXAPU_DEBUG("AudioWorker: callback returned for client {}", index);
+-        }
+-        diag_pump_count++;
+-      } else {
+-        REXAPU_DEBUG("AudioWorker: semaphore signaled for client {} but callback is 0", index);
+-      }
+-
+-      pumped = true;
+-    }
+-
+-    if (!worker_running_) {
+-      break;
+-    }
+-
+-    if (!pumped) {
+-      SCOPE_profile_cpu_i("apu", "Sleep");
+-      rex::thread::Sleep(std::chrono::milliseconds(500));
++    for (size_t index = 0; index < kMaximumClientCount && worker_running_; ++index) {
++      PumpClient(index);
+     }
+   }
+   worker_running_ = false;
+@@ -173,6 +193,45 @@ void AudioSystem::WorkerThreadMain() {
+   // TODO(benvanik): call module API to kill?
+ }
+ 
++void AudioSystem::PumpClient(size_t index) {
++  auto queued_samples = [&]() -> int32_t {
++    auto global_lock = global_critical_region_.Acquire();
++    auto& client = clients_[index];
++    return client.in_use && client.driver ? client.driver->QueuedSamples() : -1;
++  };
++
++  auto global_lock = global_critical_region_.Acquire();
++  const uint32_t client_callback = clients_[index].in_use ? clients_[index].callback : 0;
++  const uint32_t client_callback_arg = clients_[index].wrapped_callback_arg;
++  global_lock.unlock();
++  if (!client_callback) {
++    return;
++  }
++
++  // One callback per period. With the driver's queue known, none while the
++  // queue covers the device's largest block plus the frames to keep ahead,
++  // and two while it runs low (the device clock may be slightly faster).
++  auto& pacing = pacing_[index];
++  int callbacks = 1;
++  const int32_t queued = queued_samples();
++  if (queued >= 0) {
++    pacing.largest_take = std::max(pacing.largest_take, pacing.queued - queued);
++    const int32_t limit = std::max(static_cast<int32_t>(queued_frames_ * kFrameSamples),
++                                   pacing.largest_take + kLowQueueSamples);
++    callbacks = queued >= limit ? 0 : queued < kLowQueueSamples ? 2 : 1;
++  }
++
++  for (int i = 0; i < callbacks && worker_running_; ++i) {
++    SCOPE_profile_cpu_i("apu", "rex::audio::AudioSystem->client_callback");
++    uint64_t args[] = {client_callback_arg};
++    function_dispatcher_->Execute(worker_thread_->thread_state(), client_callback, args,
++                                  rex::countof(args));
++  }
++  if (queued >= 0) {
++    pacing.queued = std::max(queued_samples(), 0);
++  }
++}
++
+ int AudioSystem::FindFreeClient() {
+   for (size_t i = 0; i < kMaximumClientCount; i++) {
+     auto& client = clients_[i];
+@@ -214,8 +273,7 @@ void AudioSystem::Shutdown() {
+     worker_thread_.reset();
+   }
+ 
+-  // Destroy all active client drivers (closes SDL audio devices, stopping
+-  // callback threads) before the semaphores they reference are destroyed.
++  // Destroy all active client drivers (closes SDL audio devices).
+   for (size_t i = 0; i < kMaximumClientCount; i++) {
+     if (clients_[i].in_use) {
+       DestroyDriver(clients_[i].driver);
+@@ -237,12 +295,9 @@ X_STATUS AudioSystem::RegisterClient(uint32_t callback, uint32_t callback_arg, s
+   REXAPU_DEBUG("AudioSystem::RegisterClient: using client index={} queued_frames={}", index,
+                queued_frames_);
+ 
+-  auto client_semaphore = client_semaphores_[index].get();
+-  auto ret = client_semaphore->Release(queued_frames_, nullptr);
+-  assert_true(ret);
+-
++  pacing_[index] = {};
+   AudioDriver* driver;
+-  auto result = CreateDriver(index, client_semaphore, &driver);
++  auto result = CreateDriver(index, &driver);
+   if (XFAILED(result)) {
+     return result;
+   }
+@@ -284,14 +339,6 @@ void AudioSystem::UnregisterClient(size_t index) {
+   DestroyDriver(clients_[index].driver);
+   memory()->SystemHeapFree(clients_[index].wrapped_callback_arg);
+   clients_[index] = {nullptr, 0, 0, 0, false};
+-
+-  // Drain the semaphore of its count.
+-  auto client_semaphore = client_semaphores_[index].get();
+-  rex::thread::WaitResult wait_result;
+-  do {
+-    wait_result = rex::thread::Wait(client_semaphore, false, std::chrono::milliseconds(0));
+-  } while (wait_result == rex::thread::WaitResult::kSuccess);
+-  assert_true(wait_result == rex::thread::WaitResult::kTimeout);
+ }
+ 
+ bool AudioSystem::Save(stream::ByteStream* stream) {
+@@ -335,7 +382,7 @@ bool AudioSystem::Restore(stream::ByteStream* stream) {
+ 
+     auto& client = clients_[id];
+ 
+-    // Reset the semaphore and recreate the driver ourselves.
++    // Recreate the driver ourselves.
+     if (client.driver) {
+       UnregisterClient(id);
+     }
+@@ -346,12 +393,9 @@ bool AudioSystem::Restore(stream::ByteStream* stream) {
+ 
+     client.in_use = true;
+ 
+-    auto client_semaphore = client_semaphores_[id].get();
+-    auto ret = client_semaphore->Release(queued_frames_, nullptr);
+-    assert_true(ret);
+-
++    pacing_[id] = {};
+     AudioDriver* driver = nullptr;
+-    auto status = CreateDriver(id, client_semaphore, &driver);
++    auto status = CreateDriver(id, &driver);
+     if (XFAILED(status)) {
+       REXAPU_ERROR(
+           "AudioSystem::Restore - Call to CreateDriver failed with status "
+diff --git a/src/audio/nop/nop_audio_system.cpp b/src/audio/nop/nop_audio_system.cpp
+index e479311..f7e5af0 100644
+--- a/src/audio/nop/nop_audio_system.cpp
++++ b/src/audio/nop/nop_audio_system.cpp
+@@ -24,8 +24,7 @@ NopAudioSystem::NopAudioSystem(runtime::FunctionDispatcher* function_dispatcher)
+ 
+ NopAudioSystem::~NopAudioSystem() = default;
+ 
+-X_STATUS NopAudioSystem::CreateDriver(size_t /*index*/, rex::thread::Semaphore* /*semaphore*/,
+-                                      AudioDriver** /*out_driver*/) {
++X_STATUS NopAudioSystem::CreateDriver(size_t /*index*/, AudioDriver** /*out_driver*/) {
+   return X_STATUS_NOT_IMPLEMENTED;
+ }
+ 
+diff --git a/src/audio/sdl/sdl_audio_driver.cpp b/src/audio/sdl/sdl_audio_driver.cpp
+index 20a2cd8..462384b 100644
+--- a/src/audio/sdl/sdl_audio_driver.cpp
++++ b/src/audio/sdl/sdl_audio_driver.cpp
+@@ -10,7 +10,6 @@
+  */
+ 
+ #include <algorithm>
+-#include <array>
+ #include <cstring>
+ 
+ #include <rex/assert.h>
+@@ -28,12 +27,10 @@ REXCVAR_DEFINE_BOOL(audio_mute, false, "Audio", "Mute audio output");
+ 
+ namespace rex::audio::sdl {
+ 
+-SDLAudioDriver::SDLAudioDriver(memory::Memory* memory, rex::thread::Semaphore* semaphore)
+-    : AudioDriver(memory), semaphore_(semaphore) {}
++SDLAudioDriver::SDLAudioDriver(memory::Memory* memory) : AudioDriver(memory) {}
+ 
+ SDLAudioDriver::~SDLAudioDriver() {
+-  assert_true(frames_queued_.empty());
+-  assert_true(frames_unused_.empty());
++  assert_null(sdl_stream_);
+ }
+ 
+ bool SDLAudioDriver::Initialize() {
+@@ -49,6 +46,8 @@ bool SDLAudioDriver::Initialize() {
+   }
+   sdl_initialized_ = true;
+ 
++  // No callback: SubmitFrame puts each frame into the stream, and the device
++  // takes from it at its own block size.
+   SDL_AudioSpec desired_spec = {};
+   SDL_AudioSpec obtained_spec = {};
+   desired_spec.freq = frame_frequency_;
+@@ -56,7 +55,7 @@ bool SDLAudioDriver::Initialize() {
+   desired_spec.channels = frame_channels_;
+   sdl_device_channels_ = frame_channels_;
+   sdl_stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &desired_spec,
+-                                          SDLCallback, this);
++                                          nullptr, nullptr);
+   if (!sdl_stream_) {
+     REXAPU_ERROR("SDL_OpenAudioDeviceStream() failed: {}", SDL_GetError());
+     return false;
+@@ -68,7 +67,8 @@ bool SDLAudioDriver::Initialize() {
+     return false;
+   }
+ 
+-  if (!SDL_GetAudioDeviceFormat(sdl_device, &obtained_spec, NULL)) {
++  int device_samples = 0;
++  if (!SDL_GetAudioDeviceFormat(sdl_device, &obtained_spec, &device_samples)) {
+     REXAPU_WARN("SDL_GetAudioDeviceFormat() failed: {}", SDL_GetError());
+     obtained_spec = desired_spec;
+   }
+@@ -81,7 +81,7 @@ bool SDLAudioDriver::Initialize() {
+     desired_spec.channels = 2;
+     sdl_device_channels_ = 2;
+     sdl_stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &desired_spec,
+-                                            SDLCallback, this);
++                                            nullptr, nullptr);
+     if (!sdl_stream_) {
+       REXAPU_ERROR("SDL_OpenAudioDeviceStream() stereo fallback failed: {}", SDL_GetError());
+       return false;
+@@ -93,13 +93,16 @@ bool SDLAudioDriver::Initialize() {
+     }
+   }
+ 
+-  // The endpoint layout decides which mix the callback runs, and it is the
++  // The endpoint layout decides which mix the frames get, and it is the
+   // first thing worth knowing when a report says the balance is wrong on one
+-  // speaker setup and right on another.
++  // speaker setup and right on another. The block size is what the device
++  // takes at once.
+   const char* device_name = SDL_GetAudioDeviceName(sdl_device);
+-  REXAPU_INFO("audio endpoint '{}': {} ch, {} Hz, format 0x{:04X}; submitting {} ch",
++  REXAPU_INFO("audio endpoint '{}': {} ch, {} Hz, format 0x{:04X}, {} samples per block; "
++              "submitting {} ch",
+               device_name ? device_name : "?", obtained_spec.channels, obtained_spec.freq,
+-              static_cast<uint32_t>(obtained_spec.format), static_cast<int>(sdl_device_channels_));
++              static_cast<uint32_t>(obtained_spec.format), device_samples,
++              static_cast<int>(sdl_device_channels_));
+ 
+   if (!SDL_ResumeAudioDevice(sdl_device)) {
+     REXAPU_ERROR("SDL_ResumeAudioDevice() failed: {}", SDL_GetError());
+@@ -110,32 +113,46 @@ bool SDLAudioDriver::Initialize() {
+ }
+ 
+ void SDLAudioDriver::SubmitFrame(uint32_t frame_ptr) {
+-  const auto input_frame = memory_->TranslateVirtual<float*>(frame_ptr);
+-  float* output_frame;
+-  {
+-    std::unique_lock<std::mutex> guard(frames_mutex_);
+-    if (frames_unused_.empty()) {
+-      output_frame = new float[frame_samples_];
+-    } else {
+-      output_frame = frames_unused_.top();
+-      frames_unused_.pop();
++  SCOPE_profile_cpu_f("apu");
++  if (!sdl_stream_) {
++    return;
++  }
++  const auto input_frame = memory_->TranslateVirtual<const float*>(frame_ptr);
++  float* data = converted_.data();
++  const int len = static_cast<int>(sizeof(float) * channel_samples_ * sdl_device_channels_);
++  if (REXCVAR_GET(audio_mute)) {
++    std::memset(data, 0, len);
++  } else {
++    switch (sdl_device_channels_) {
++      case 2:
++        conversion::sequential_6_BE_to_interleaved_2_LE(data, input_frame, channel_samples_,
++                                                        GetStereoFold(), GetOutputGain());
++        break;
++      case 6:
++        conversion::sequential_6_BE_to_interleaved_6_LE(data, input_frame, channel_samples_,
++                                                        GetSurroundMix(), GetOutputGain());
++        break;
++      default:
++        assert_unhandled_case(sdl_device_channels_);
++        return;
+     }
+   }
+-
+-  std::memcpy(output_frame, input_frame, frame_samples_ * sizeof(float));
+-
+-  static uint32_t sdl_submit_count = 0;
+-  if (sdl_submit_count < 10) {
+-    REXAPU_DEBUG("SDLAudioDriver::SubmitFrame: frame_ptr={:08X} queued_count={}", frame_ptr,
+-                 frames_queued_.size() + 1);
+-    sdl_submit_count++;
++  if (!SDL_PutAudioStreamData(sdl_stream_, data, len)) {
++    REXAPU_ERROR("SDL_PutAudioStreamData() failed: {}", SDL_GetError());
++    return;
+   }
++  PROFILE_BUFFER_QUEUE_DEPTH(static_cast<int64_t>(QueuedSamples() / channel_samples_));
++}
+ 
+-  {
+-    std::unique_lock<std::mutex> guard(frames_mutex_);
+-    frames_queued_.push(output_frame);
+-    PROFILE_BUFFER_QUEUE_DEPTH(static_cast<int64_t>(frames_queued_.size()));
++int32_t SDLAudioDriver::QueuedSamples() {
++  if (!sdl_stream_) {
++    return -1;
++  }
++  const int bytes = SDL_GetAudioStreamQueued(sdl_stream_);
++  if (bytes < 0) {
++    return -1;
+   }
++  return bytes / static_cast<int>(sizeof(float) * std::max<uint8_t>(sdl_device_channels_, 1));
+ }
+ 
+ void SDLAudioDriver::Shutdown() {
+@@ -147,84 +164,6 @@ void SDLAudioDriver::Shutdown() {
+     SDL_QuitSubSystem(SDL_INIT_AUDIO);
+     sdl_initialized_ = false;
+   }
+-  std::unique_lock<std::mutex> guard(frames_mutex_);
+-  while (!frames_unused_.empty()) {
+-    delete[] frames_unused_.top();
+-    frames_unused_.pop();
+-  }
+-  while (!frames_queued_.empty()) {
+-    delete[] frames_queued_.front();
+-    frames_queued_.pop();
+-  }
+-}
+-
+-void SDLAudioDriver::SDLCallback(void* userdata, SDL_AudioStream* stream, int additional_amount,
+-                                 [[maybe_unused]] int total_amount) {
+-  SCOPE_profile_cpu_f("apu");
+-  if (!userdata || !stream) {
+-    REXAPU_ERROR("SDLAudioDriver::SDLCallback called with nullptr.");
+-    return;
+-  }
+-  const auto driver = static_cast<SDLAudioDriver*>(userdata);
+-  const int sample_count =
+-      static_cast<int>(channel_samples_ * std::max<uint8_t>(driver->sdl_device_channels_, 1));
+-  const int len = static_cast<int>(sizeof(float) * sample_count);
+-  float* data = SDL_stack_alloc(float, sample_count);
+-  if (!data) {
+-    REXAPU_ERROR("SDLAudioDriver::SDLCallback failed to allocate {} samples", sample_count);
+-    return;
+-  }
+-  // Snapshot once. A change mid-callback would split the frame across two mixes.
+-  const StereoFold fold = GetStereoFold();
+-  const SurroundMix mix = GetSurroundMix();
+-  const float gain = GetOutputGain();
+-  while (additional_amount > 0) {
+-    static uint32_t sdl_callback_count = 0;
+-    std::unique_lock<std::mutex> guard(driver->frames_mutex_);
+-    if (driver->frames_queued_.empty()) {
+-      if (sdl_callback_count < 10) {
+-        REXAPU_DEBUG("SDLCallback: no frames queued (silence)");
+-        sdl_callback_count++;
+-      }
+-      std::memset(data, 0, len);
+-      if (!SDL_PutAudioStreamData(stream, data, len)) {
+-        REXAPU_ERROR("SDL_PutAudioStreamData() failed while filling silence: {}", SDL_GetError());
+-        break;
+-      }
+-      additional_amount -= len;
+-    } else {
+-      auto buffer = driver->frames_queued_.front();
+-      driver->frames_queued_.pop();
+-      if (REXCVAR_GET(audio_mute)) {
+-        std::memset(data, 0, len);
+-      } else {
+-        switch (driver->sdl_device_channels_) {
+-          case 2:
+-            conversion::sequential_6_BE_to_interleaved_2_LE(data, buffer, channel_samples_, fold,
+-                                                            gain);
+-            break;
+-          case 6:
+-            conversion::sequential_6_BE_to_interleaved_6_LE(data, buffer, channel_samples_, mix,
+-                                                            gain);
+-            break;
+-          default:
+-            assert_unhandled_case(driver->sdl_device_channels_);
+-            break;
+-        }
+-      }
+-      if (!SDL_PutAudioStreamData(stream, data, len)) {
+-        REXAPU_ERROR("SDL_PutAudioStreamData() failed: {}", SDL_GetError());
+-        driver->frames_unused_.push(buffer);
+-        break;
+-      }
+-      driver->frames_unused_.push(buffer);
+-
+-      auto ret = driver->semaphore_->Release(1, nullptr);
+-      assert_true(ret);
+-      additional_amount -= len;
+-    }
+-  }
+-  SDL_stack_free(data);
+ }
+ 
+ }  // namespace rex::audio::sdl
+diff --git a/src/audio/sdl/sdl_audio_system.cpp b/src/audio/sdl/sdl_audio_system.cpp
+index 68da0cf..52afc0a 100644
+--- a/src/audio/sdl/sdl_audio_system.cpp
++++ b/src/audio/sdl/sdl_audio_system.cpp
+@@ -29,10 +29,9 @@ void SDLAudioSystem::Initialize() {
+   AudioSystem::Initialize();
+ }
+ 
+-X_STATUS SDLAudioSystem::CreateDriver([[maybe_unused]] size_t index,
+-                                      rex::thread::Semaphore* semaphore, AudioDriver** out_driver) {
++X_STATUS SDLAudioSystem::CreateDriver([[maybe_unused]] size_t index, AudioDriver** out_driver) {
+   assert_not_null(out_driver);
+-  auto driver = new SDLAudioDriver(memory_, semaphore);
++  auto driver = new SDLAudioDriver(memory_);
+   if (!driver->Initialize()) {
+     driver->Shutdown();
+     delete driver;
