@@ -47,7 +47,8 @@ set_source_files_properties(src/menu/assets.cpp PROPERTIES OBJECT_DEPENDS "${NAR
 # The host system services (gpu/common/platform.h), and what exists on
 # Windows only: the Xenos adapter and the discrete GPU exports, and Wine.
 if(WIN32)
-    list(APPEND NARUTORISE_SOURCES src/gpu/common/platform_win32.cpp src/graphics_device_win32.cpp src/wine.cpp)
+    list(APPEND NARUTORISE_SOURCES src/gpu/common/platform_win32.cpp src/graphics_device_win32.cpp src/wine.cpp
+         src/audio/attenuation_win32.cpp)
 else()
     list(APPEND NARUTORISE_SOURCES src/gpu/common/platform_posix.cpp)
 endif()
@@ -207,8 +208,8 @@ if(WIN32)
     configure_file(src/narutorise.rc.in ${CMAKE_CURRENT_BINARY_DIR}/narutorise.rc @ONLY)
     list(APPEND NARUTORISE_SOURCES ${CMAKE_CURRENT_BINARY_DIR}/narutorise.rc)
     add_executable(narutorise WIN32 ${NARUTORISE_SOURCES})
-    # graphics_device.cpp: the adapters by name.
-    target_link_libraries(narutorise PRIVATE d3d12 dxgi ole32 shell32 uuid)
+    # graphics_device.cpp: the adapters by name; audio/attenuation_win32.cpp: the media sessions (WinRT).
+    target_link_libraries(narutorise PRIVATE d3d12 dxgi ole32 shell32 uuid runtimeobject)
 else()
     add_executable(narutorise ${NARUTORISE_SOURCES})
 endif()

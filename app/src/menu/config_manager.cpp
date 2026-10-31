@@ -35,6 +35,7 @@ bool ConfigManager::Load(const std::filesystem::path& toml_path, GameConfig& con
     if (auto v = tbl["audio_layer"].value<std::string>()) loaded.audio_layer = *v == "sdk" ? "sdk" : "native";
     if (auto v = tbl["audio_channels"].value<std::string>()) loaded.audio_channels = *v == "surround" ? "surround" : "stereo";
     if (auto v = tbl["master_volume"].value<double>()) loaded.master_volume = std::clamp(*v, 0.0, 1.0);
+    if (auto v = tbl["music_attenuation"].value<bool>()) loaded.music_attenuation = *v;
     if (auto v = tbl["user_language"].value<std::uint32_t>()) loaded.user_language = *v;
     if (auto v = tbl["translation_mod"].value<std::string>()) loaded.translation_mod = *v;
     if (auto v = tbl["log_verbose"].value<bool>()) loaded.log_verbose = *v;
@@ -154,6 +155,7 @@ bool ConfigManager::Save(const std::filesystem::path& toml_path, const GameConfi
   tbl.insert_or_assign("audio_layer", config.audio_layer);
   tbl.insert_or_assign("audio_channels", config.audio_channels);
   tbl.insert_or_assign("master_volume", config.master_volume);
+  tbl.insert_or_assign("music_attenuation", config.music_attenuation);
   tbl.insert_or_assign("user_language", config.user_language);
   tbl.insert_or_assign("translation_mod", config.translation_mod);
   tbl.insert_or_assign("log_verbose", config.log_verbose);

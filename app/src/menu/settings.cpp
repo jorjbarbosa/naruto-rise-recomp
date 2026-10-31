@@ -227,6 +227,11 @@ std::vector<PanelRow> Settings::Rows(int group) {
     audio_row("audio_channels", "audio-channels", "audio-channels-help", {Text("stereo"), Text("surround")},
         config_.audio_channels == "surround" ? 1 : 0, config_.audio_channels != initial_.audio_channels,
         [](GameConfig& config, int value) { config.audio_channels = value ? "surround" : "stereo"; });
+#ifdef _WIN32
+    audio_row("music_attenuation", "music-attenuation", "music-attenuation-help", {Text("off"), Text("on")},
+        config_.music_attenuation ? 1 : 0, config_.music_attenuation != initial_.music_attenuation,
+        [](GameConfig& config, int value) { config.music_attenuation = value != 0; });
+#endif
   } else if (group == 1) {
     std::vector<std::string> apis, api_values;
 #if !defined(NARUTORISE_NATIVE_D3D12_DISABLED)

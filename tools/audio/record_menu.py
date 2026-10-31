@@ -1,6 +1,6 @@
 """The audio battery on Windows: boots a build to the main menu and records its music by loopback.
 
-Usage: python -I record_menu.py <product dir> <game root> <output dir> [--layer native|sdk] <variant>...
+Usage: python -I record_menu.py <product dir> <game root> <output dir> [--layer native|sdk] [--set key=value]... <variant>...
 Variants: wasapi | dsound (SDL_AUDIO_DRIVER=directsound)
           | dsound-2400 (+ SDL_AUDIO_DEVICE_SAMPLE_FRAMES=2400, the block of issue #86).
 
@@ -36,6 +36,12 @@ layer = "native"
 if "--layer" in args:
     at = args.index("--layer")
     layer = args[at + 1]
+    del args[at:at + 2]
+extra = {}  # --set key=value: more TOML options (JSON values), e.g. --set music_volume=0
+while "--set" in args:
+    at = args.index("--set")
+    key, value = args[at + 1].split("=", 1)
+    extra[key] = json.loads(value)
     del args[at:at + 2]
 source, game, output = (Path(a).resolve() for a in args[:3])
 variants = args[3:]
@@ -86,7 +92,8 @@ for variant in variants:
     data = Path(tempfile.mkdtemp(prefix="narutorise-audio-"))
     config = dict(renderer="native", native_backend="vulkan", fullscreen=False, skip_intro_videos=True,
                   frame_rate=120, mnk_mode=True, custom_game_root=str(game), check_for_updates=False,
-                  show_startup_menu=False, crash_reporting=False, crash_reporting_asked=True, audio_layer=layer)
+                  show_startup_menu=False, crash_reporting=False, crash_reporting_asked=True, audio_layer=layer,
+                  **extra)
     (data / "data").mkdir()
     (data / "data/narutorise.toml").write_text(
         "\n".join(f"{k} = {json.dumps(v)}" for k, v in config.items()), encoding="utf-8")

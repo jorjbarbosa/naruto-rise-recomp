@@ -34,6 +34,12 @@ void Register(const Client& client, Owner owner);
 // thread of its callback.
 void Deliver(const uint8_t* frame);
 
+// The music attenuation (attenuation.h) over the title's music group
+// (hooks.cpp): the gain of the music volume the title sets, and the fade's
+// step once a tick, true when it moved (the music volume is applied again).
+float MusicFade();
+bool StepMusicFade();
+
 // In hooks.cpp: runs the title's original registration on the current guest
 // thread, so the SDK takes the client (sdk true) or releases it; true when
 // the SDK holds it afterwards.

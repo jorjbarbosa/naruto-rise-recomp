@@ -12,9 +12,17 @@
 // Those two are the only callers of the render imports; the destructor
 // (82149728) releases the client only when +0x18 holds one. The native layer
 // keeps the client out of the SDK (+0x18 stays 0), so none is called.
+//
+// The music: the game's volumes (its Options: 0 to 10) reach the DARE through
+// 826251A0 (sound manager, group, linear volume in f1), which stores the
+// group's level (20 log10, -96 to 0 dB) and sets the group's bus under the
+// sound mutex. The music is group 0. The attenuation scales the volume the
+// game sets for it; once a tick of the DARE (821502C8, the voice categories'
+// update) a moving fade sets it again.
 #include "audio/diagnostics.h"
 #include "audio/render.h"
 #include <array>
+#include <atomic>
 #include <bit>
 #include <cstring>
 #include <mutex>
@@ -28,12 +36,19 @@
 
 extern "C" void __imp__sub_82149870(PPCContext& __restrict, uint8_t*);
 extern "C" void __imp__sub_82149800(PPCContext& __restrict, uint8_t*);
+extern "C" void __imp__sub_826251A0(PPCContext& __restrict, uint8_t*);
+extern "C" void __imp__sub_821502C8(PPCContext& __restrict, uint8_t*);
 
 namespace audio {
 namespace {
 constexpr uint32_t kSetCallback = 0x82149870;
 constexpr uint32_t kContext = 0x0C, kHandle = 0x18, kCounterSlot = 0x20;
 constexpr uint32_t kSubmitFrame = 0x70;  // The submission's stack frame: the pair at +0x50, the frame at +0x58.
+constexpr uint32_t kMusicGroup = 0;
+
+// The music volume the game last set (-1 before), and its sound manager.
+std::atomic<uint32_t> music_manager{0};
+std::atomic<float> music_volume{-1.0f};
 
 uint32_t Get32(const uint8_t* base, uint32_t address) {
   uint32_t value;
@@ -132,4 +147,35 @@ REX_HOOK_RAW(sub_82149800) {
   CallSlot(ctx, base, driver, kCounterSlot, sp, sp + 0x50);
   if (const uint32_t frame = Get32(base, sp + 0x58)) Deliver(base + frame);
   ctx.r3.u64 = 0;
+}
+
+// (sound manager, group, volume in f1): the music under the attenuation.
+REX_HOOK_RAW(sub_826251A0) {
+  using namespace audio;
+  if (ctx.r4.u32 == kMusicGroup) {
+    music_manager = ctx.r3.u32;
+    music_volume = float(ctx.f1.f64);
+    REXLOG_INFO("[narutorise] Audio: the game sets the music volume to {:.2f}", ctx.f1.f64);
+    ctx.f1.f64 *= MusicFade();
+  }
+  __imp__sub_826251A0(ctx, base);
+}
+
+// (mixer, flag): once a tick, under the sound mutex; a moving fade sets the music again.
+REX_HOOK_RAW(sub_821502C8) {
+  using namespace audio;
+  __imp__sub_821502C8(ctx, base);
+  const uint32_t manager = music_manager.load();
+  const float volume = music_volume.load();
+  if (!StepMusicFade() || !manager || volume < 0.0f) return;
+  std::array<uint8_t, sizeof(PPCContext)> saved;
+  std::memcpy(saved.data(), &ctx, sizeof(PPCContext));
+  ctx.r3.u64 = manager;
+  ctx.r4.u64 = kMusicGroup;
+  const float fade = MusicFade();
+  ctx.f1.f64 = double(volume * fade);
+  __imp__sub_826251A0(ctx, base);
+  std::memcpy(&ctx, saved.data(), sizeof(PPCContext));
+  if (fade == 0.0f || fade == 1.0f)
+    REXLOG_INFO("[narutorise] Audio: the music {} (volume {:.2f})", fade == 0.0f ? "faded out" : "is back", volume);
 }

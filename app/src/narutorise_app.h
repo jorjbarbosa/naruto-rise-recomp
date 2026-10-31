@@ -1159,9 +1159,11 @@ class NarutoriseApp : public rex::ReXApp {
         rex::cvar::SetFlagByName(key, menu_settings_.config().fullscreen ? "true" : "false");
       } else if (key == "skip_intro_videos") {
         narutorise::SetSkipIntroVideos(menu_settings_.config().skip_intro_videos);
-      } else if (key == "master_volume" || key == "audio_channels" || key == "audio_layer") {
+      } else if (key == "master_volume" || key == "music_attenuation" || key == "audio_channels" ||
+                 key == "audio_layer") {
         const auto& config = menu_settings_.config();
         rex::cvar::SetFlagByName("master_volume", fmt::format("{}", config.master_volume));
+        rex::cvar::SetFlagByName("music_attenuation", config.music_attenuation ? "true" : "false");
         rex::cvar::SetFlagByName("audio_channels", config.audio_channels);
         rex::cvar::SetFlagByName("audio_layer", config.audio_layer);
         audio::ReloadSettings();

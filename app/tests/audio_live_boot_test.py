@@ -2,10 +2,14 @@
 
 Usage: python -I app/tests/audio_live_boot_test.py <product> <game root> <new output> [d3d12|vulkan]
 
-Through F1 > Settings: the master volume from 100 to 50 (Game tab), stereo to
-5.1, then the audio layer to SDK and back to native (Advanced tab). Each step
-is checked in the saved TOML, in the log and in a loopback recording of the
-default output device (soundcard). The game takes the screen and plays audio.
+Through F1 > Settings, on the title (which plays only music):
+- Game tab: the master volume from 100 to 50; stereo to 5.1; the music
+  attenuation on, with a silent media session of another process
+  (silent_media_session.ps1);
+- Advanced tab: the audio layer to SDK and back to native.
+Each step is checked in the saved TOML, in the log and in a loopback recording
+of the default output device (soundcard). The game takes the screen and plays
+audio; no other app may play media meanwhile.
 """
 import importlib.util
 import hashlib
@@ -99,6 +103,18 @@ def main():
         def lines(text):
             return log().count(text)
 
+        def settings():
+            found = [line for line in log().splitlines() if '[narutorise] Audio settings:' in line]
+            return found[-1] if found else ''
+
+        def adjust(name, value, direction):
+            # One step per key press; a press the window drops is repeated.
+            wanted = f'{name} {value:.2f}'
+            for _ in range(130):
+                if wanted in settings(): break
+                key(direction, .15)
+            win.wait_for(lambda: wanted in settings(), process, timeout=10)
+
         for attempt in range(10):
             try:
                 focus.focus_window(hwnd)
@@ -114,13 +130,8 @@ def main():
         key(13, 1.0)
         for _ in range(4): key(0x28)
         win.capture(hwnd, output / 'game-tab-audio.png')
-        # One step per key press; a press the window drops is repeated.
-        for _ in range(80):
-            if 'master volume 0.50' in log(): break
-            key(0x25, .15)
-        win.wait_for(lambda: 'master volume 0.50' in log(), process, timeout=10)
-        check('volume-saved-and-applied', saved().get('master_volume') == 0.5 and 'master volume 0.50' in log(),
-              saved=saved().get('master_volume'))
+        adjust('master volume', .5, 0x25)
+        check('volume-saved-and-applied', saved().get('master_volume') == 0.5, saved=saved().get('master_volume'))
         half = level(6)
         check('volume-lowers-the-output', -18 < half - full < -6, full_db=round(full, 1), half_db=round(half, 1))
 
@@ -133,6 +144,29 @@ def main():
               device=device.split('] ', 4)[-1])
         surround = level(6)
         check('surround-plays', surround > -60, level_db=round(surround, 1))
+
+        # The music attenuation, with a silent media session of another process as the trigger.
+        # A dropped down key leaves Right on the output row, already at 5.1, which it does not change.
+        for _ in range(3):
+            key(0x28)
+            key(0x27, 1.0)
+            if 'music attenuation on' in settings(): break
+        win.wait_for(lambda: 'music attenuation on' in settings(), process, timeout=10)
+        check('attenuation-saved-and-applied', saved().get('music_attenuation') is True and
+              'another app plays media' not in log(), note='no other app may play media during the test')
+        media = subprocess.Popen(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                                  str(Path(__file__).with_name('silent_media_session.ps1')), '-Seconds', '14'])
+        win.wait_for(lambda: 'another app plays media' in log(), process, timeout=12)
+        time.sleep(1.5)
+        attenuated = level(4)
+        check('attenuation-fades-the-music', attenuated < surround - 30, attenuated_db=round(attenuated, 1),
+              surround_db=round(surround, 1))
+        media.wait(timeout=30)
+        win.wait_for(lambda: 'no other app plays media' in log(), process, timeout=10)
+        time.sleep(1.5)
+        returned = level(4)
+        check('attenuation-returns-the-music', abs(returned - surround) < 4, returned_db=round(returned, 1),
+              surround_db=round(surround, 1))
 
         for _ in range(4): key(0x22)
         for _ in range(7): key(0x28)
@@ -157,6 +191,10 @@ def main():
     finally:
         if process.poll() is None:
             process.kill()
+        # The game runs in a child of the launched supervisor: stop every copy of this product.
+        subprocess.run(['powershell', '-NoProfile', '-Command',
+                        f"Get-Process narutorise -ErrorAction SilentlyContinue | "
+                        f"Where-Object {{ $_.Path -like '{product}*' }} | Stop-Process -Force"], check=False)
         (output / 'narutorise.log').write_text(log(), encoding='utf-8')
         shutil.rmtree(product, ignore_errors=True)
     print(json.dumps(dict(passed=all(c['passed'] for c in checks), checks=len(checks))))

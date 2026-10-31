@@ -1,5 +1,6 @@
 // The output path of the native audio layer (render.h).
 #include "audio/render.h"
+#include "audio/attenuation.h"
 #include "audio/device.h"
 #include "audio/diagnostics.h"
 #include "audio/mix.h"
@@ -39,6 +40,9 @@ REXCVAR_DEFINE_STRING(audio_channels, "stereo", "narutorise/Audio",
 REXCVAR_DEFINE_DOUBLE(master_volume, 1.0, "narutorise/Audio", "Master volume, 0 to 1")
     .range(0.0, 1.0)
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+REXCVAR_DEFINE_BOOL(music_attenuation, false, "narutorise/Audio",
+                    "Fade the game's music out while another app plays media (Windows)")
+    .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
 namespace audio {
 namespace {
@@ -50,6 +54,15 @@ constexpr auto kStopWait = std::chrono::milliseconds(500);
 // The requested options, from the thread of the settings.
 std::atomic<bool> native_requested{true}, surround_requested{false};
 std::atomic<float> gain{1.0f};
+
+// The attenuation fades the music out and back in half a second.
+constexpr float kFadePerSecond = 2.0f;
+struct Fade {
+  std::mutex mutex;
+  float value = 1.0f;
+  Clock::time_point last{};
+};
+Fade fade;
 
 std::mutex client_mutex;
 Client client;
@@ -244,12 +257,32 @@ void ReloadSettings() {
   const bool native = REXCVAR_GET(audio_layer) != "sdk";
   const bool surround = REXCVAR_GET(audio_channels) == "surround";
   const double volume = std::clamp(REXCVAR_GET(master_volume), 0.0, 1.0);
+  const bool attenuation = REXCVAR_GET(music_attenuation);
   native_requested = native;
   surround_requested = surround;
   gain = VolumeGain(volume);
   rex::audio::SetOutputGain(VolumeGain(volume));  // The SDK layer's output.
-  REXLOG_INFO("[narutorise] Audio settings: {} layer, {}, master volume {:.2f}", native ? "native" : "SDK",
-              surround ? "5.1" : "stereo", volume);
+  attenuation::Enable(attenuation);
+  REXLOG_INFO("[narutorise] Audio settings: {} layer, {}, master volume {:.2f}, music attenuation {}",
+              native ? "native" : "SDK", surround ? "5.1" : "stereo", volume, attenuation ? "on" : "off");
+}
+
+float MusicFade() {
+  std::lock_guard lock(fade.mutex);
+  return fade.value;
+}
+
+bool StepMusicFade() {
+  std::lock_guard lock(fade.mutex);
+  const auto now = Clock::now();
+  const float elapsed = fade.last == Clock::time_point{} ? 0.0f : std::chrono::duration<float>(now - fade.last).count();
+  fade.last = now;
+  // A pause of the title does not jump the fade.
+  const float step = std::min(elapsed, 0.1f) * kFadePerSecond;
+  const float target = attenuation::OtherMediaPlaying() ? 0.0f : 1.0f;
+  const float previous = fade.value;
+  fade.value = previous < target ? std::min(target, previous + step) : std::max(target, previous - step);
+  return fade.value != previous;
 }
 
 bool NativeRequested() { return native_requested.load(); }
@@ -293,6 +326,7 @@ void Deliver(const uint8_t* frame) {
 void Shutdown() {
   if (stopped.exchange(true)) return;
   running = false;
+  attenuation::Enable(false);
   if (thread) {
     auto* host = thread->thread();
     const bool exited = host && rex::thread::Wait(host, false, kStopWait) == rex::thread::WaitResult::kSuccess;
