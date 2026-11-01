@@ -36,6 +36,7 @@
 #include "sentry_reporting.h"
 #include "diagnostics/incident.h"
 #include "diagnostics/report_context.h"
+#include "dlc_refusal.h"
 #include "menu/folders.h"
 #include "data_migration.h"
 #include "game_image.h"
@@ -287,6 +288,7 @@ class NarutoriseApp : public rex::ReXApp {
         rex::cvar::Query<int32_t>("msaa_samples"));
     narutorise::report_context::SetRuntime(narutorise::WineVersion());
     narutorise::report_context::SetContent({});
+    narutorise::report_context::OnDevkitModule([this](const std::string& module) { RecordDevkitModule(module); });
     narutorise::incident::Event("runtime-and-xex", "begin");
     for (const auto* key : {"renderer", "native_backend", "graphics_device", "resolution_scale", "msaa_samples",
                             "frame_rate", "translation_mod", "skip_intro_videos", "log_level"})
@@ -641,6 +643,26 @@ class NarutoriseApp : public rex::ReXApp {
     return files;
   }
 
+  // The DLC packages refused for a devkit module (dlc_refusal.h): the record
+  // and the folder the installed copies move into, in the data folder.
+  std::filesystem::path RefusedDlcRecord() const { return prepared_data_->paths.data_root / "dlc-refused.json"; }
+  std::filesystem::path RefusedDlcFolder() const { return prepared_data_->paths.data_root / "dlc-refused"; }
+  // The installed marketplace packages, as AutoInstallDlc lays them out.
+  std::filesystem::path InstalledDlcRoot() const {
+    return user_data_root() / "0000000000000000" / "555307E5" / "00000002";
+  }
+  // The SDK loaded a module with the devkit key (report_context.h): the
+  // installed packages that carry it are refused from the next start. This
+  // runs inside the log's sink, a few milliseconds before the abort: no logging.
+  void RecordDevkitModule(const std::string& module) {
+    std::vector<narutorise::dlc_refusal::Refused> entries;
+    for (auto& package : narutorise::dlc_refusal::PackagesWithModule(InstalledDlcRoot(), module))
+      entries.push_back({std::move(package), module});
+    const bool saved = !entries.empty() && narutorise::dlc_refusal::Add(RefusedDlcRecord(), entries);
+    narutorise::incident::Event("dlc-refusal", entries.empty() ? "no-package" : saved ? "recorded" : "not-saved",
+                                module);
+  }
+
   // Path of the .header sidecar the ContentManager uses for a marketplace
   // package, given the package root (<user_root>/<xuid>/<title>/00000002).
   // Mirrors ContentManager::ResolvePackageHeaderPath.
@@ -680,6 +702,14 @@ class NarutoriseApp : public rex::ReXApp {
     const auto content_root = user_root / xuid;
     const auto dlc_root = content_root / title_id / "00000002";
     std::error_code ec;
+
+    // The packages refused for a devkit module (dlc_refusal.h) stay out of
+    // the game: not installed here, and moved aside below if installed.
+    const auto refused = narutorise::dlc_refusal::Read(RefusedDlcRecord());
+    const auto is_refused = [&refused](std::string_view name) {
+      return std::any_of(refused.begin(), refused.end(),
+                         [name](const narutorise::dlc_refusal::Refused& entry) { return entry.package == name; });
+    };
 
     // --- Phase 1: install content from the dlc/ source folder. ---
 
@@ -755,6 +785,10 @@ class NarutoriseApp : public rex::ReXApp {
           if (rel.empty()) rel = rex::path_to_utf8(pkg.filename());
 
           const auto file_name = rex::path_to_utf8(pkg.filename());
+          if (is_refused(file_name)) {
+            REXLOG_WARN("[narutorise] DLC package not installed: {} carries a devkit module", rel);
+            continue;
+          }
           rex::system::xam::XCONTENT_AGGREGATE_DATA probe{};
           probe.content_type = rex::system::XContentType::kMarketplaceContent;
           probe.title_id = parsed_title_id;
@@ -788,6 +822,57 @@ class NarutoriseApp : public rex::ReXApp {
               new_packages, mirrored_dirs);
         }
       }
+    }
+
+    // The refused packages: an installed copy moves aside, and the player is
+    // told over the first frame while the file is still in the dlc folder (or
+    // when its copy moved now); the port deletes no DLC.
+    // The notice names a DLC by its display name: the installed header's
+    // (read before it moves), else the package file's in the dlc folder; the
+    // record keeps it for the next starts. Its file name is what to delete.
+    std::vector<std::string> notice_names, notice_files, notice_modules;
+    for (auto entry : refused) {
+      const auto source = std::find_if(packages.begin(), packages.end(), [&entry](const std::filesystem::path& p) {
+        return rex::path_to_utf8(p.filename()) == entry.package;
+      });
+      if (entry.name.empty()) {
+        rex::system::xam::XCONTENT_AGGREGATE_DATA header{};
+        if (content_manager->ReadContentHeaderFile(entry.package, 0, parsed_title_id,
+                                                   rex::system::XContentType::kMarketplaceContent,
+                                                   header) == X_ERROR_SUCCESS)
+          entry.name = rex::string::to_utf8(header.display_name());
+        if (entry.name.empty() && source != packages.end())
+          entry.name = narutorise::dlc_refusal::PackageDisplayName(*source);
+        if (!entry.name.empty()) narutorise::dlc_refusal::Add(RefusedDlcRecord(), {entry});
+      }
+      const bool moved = narutorise::dlc_refusal::MoveAside(dlc_root, DlcHeaderPath(dlc_root, entry.package),
+                                                            RefusedDlcFolder(), entry.package);
+      if (moved)
+        REXLOG_WARN("[narutorise] DLC package {} (\"{}\") moved to {}: it carries a devkit {}", entry.package,
+                    entry.name, rex::path_to_utf8(RefusedDlcFolder()), entry.module);
+      if (!moved && source == packages.end()) continue;
+      notice_names.push_back(entry.name.empty() ? entry.package : "\"" + entry.name + "\"");
+      notice_files.push_back(entry.package);
+      if (std::find(notice_modules.begin(), notice_modules.end(), entry.module) == notice_modules.end())
+        notice_modules.push_back(entry.module);
+    }
+    if (!notice_files.empty()) {
+      const auto join = [](const std::vector<std::string>& items) {
+        std::string out;
+        for (const auto& item : items) out += (out.empty() ? "" : ", ") + item;
+        return out;
+      };
+      std::string notice = narutorise::menu::Text("dlc-refused-help");
+      const auto replace = [&notice](std::string_view key, const std::string& value) {
+        for (size_t at = notice.find(key); at != std::string::npos; at = notice.find(key, at + value.size()))
+          notice.replace(at, key.size(), value);
+      };
+      replace("{packages}", join(notice_names));
+      replace("{files}", join(notice_files));
+      replace("{module}", join(notice_modules));
+      replace("{dlc}", rex::path_to_utf8(DlcSource()));
+      replace("{refused}", rex::path_to_utf8(RefusedDlcFolder()));
+      dlc_notice_ = std::move(notice);
     }
 
     // --- Phase 2: fix marketplace content in the user data tree. ---
@@ -1445,7 +1530,7 @@ class NarutoriseApp : public rex::ReXApp {
         if (closing_.load()) return;
         RemoveLaunchMarker();
         if (game_running_ && ask_crash_reporting_) AskCrashReporting();
-        else ScheduleShortcutHint();
+        else if (!ShowDlcNotice()) ScheduleShortcutHint();
       });
     });
 #endif
@@ -1472,12 +1557,26 @@ class NarutoriseApp : public rex::ReXApp {
       narutorise::reporting::SetConsent(consent);
       narutorise::menu::input_blocked = ui_.OverlayShown();
       REXLOG_INFO("[narutorise] Crash reporting answered: {}", consent ? "uploads enabled" : "local reports only");
-      ScheduleShortcutHint();
+      if (!ShowDlcNotice()) ScheduleShortcutHint();
     };
     ui_.ShowDialog(Text("crash-reporting-ask"), Text("crash-reporting-ask-help"),
                    {{Text("crash-reporting-send"), [answer] { answer(true); }},
                     {Text("crash-reporting-local"), [answer] { answer(false); }}});
     REXLOG_INFO("[narutorise] Crash reporting question shown; guest input neutral");
+  }
+  // The refused DLC notice over the first frame (AutoInstallDlc), after the
+  // crash report question; false when there is none.
+  bool ShowDlcNotice() {
+    if (!game_running_ || dlc_notice_.empty()) return false;
+    using narutorise::menu::Text;
+    narutorise::menu::input_blocked = true;
+    ui_.ShowDialog(Text("dlc-refused"), std::exchange(dlc_notice_, {}),
+                   {{Text("dlc-refused-ok"), [this] {
+                      narutorise::menu::input_blocked = ui_.OverlayShown();
+                      ScheduleShortcutHint();
+                    }}});
+    REXLOG_INFO("[narutorise] Refused DLC notice shown; guest input neutral");
+    return true;
   }
   void SetFpsVisible(bool visible) {
     ui_.SetFpsVisible(visible);
@@ -1513,6 +1612,7 @@ class NarutoriseApp : public rex::ReXApp {
   bool shortcut_hint_pending_ = false;
   std::chrono::steady_clock::time_point shortcut_hint_due_{};
   bool ask_crash_reporting_ = false;  // Shown over the first frame of the game.
+  std::string dlc_notice_;            // The refused DLC notice, over the first frame too.
   bool crash_question_open_ = false;  // The game menu waits for the answer.
   std::atomic<bool> ui_draw_pending_{false};
   std::atomic<bool> closing_{false};

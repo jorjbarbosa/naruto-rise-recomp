@@ -33,6 +33,7 @@ struct State {
   std::map<std::string, std::map<std::string, std::string>> contexts;
   std::vector<std::string> devkit_modules;
   std::string fatal;  // Normalized, for the fingerprint.
+  std::function<void(const std::string&)> devkit_handler;
 };
 State& Facts() {
   static State state;
@@ -107,10 +108,15 @@ void NoteFatal(const std::string& message) {
 
 void NoteDevkitModule(const std::string& module) {
   auto& state = Facts();
-  std::lock_guard lock(state.mutex);
-  state.devkit_modules.push_back(module);
-  Tag(state, "dlc_devkit", Join(state.devkit_modules, kTagMax));
-  Context(state, "game", {{"devkit_modules", Join(state.devkit_modules, kContextMax)}});
+  std::function<void(const std::string&)> handler;
+  {
+    std::lock_guard lock(state.mutex);
+    state.devkit_modules.push_back(module);
+    Tag(state, "dlc_devkit", Join(state.devkit_modules, kTagMax));
+    Context(state, "game", {{"devkit_modules", Join(state.devkit_modules, kContextMax)}});
+    handler = state.devkit_handler;
+  }
+  if (handler) handler(module);
 }
 
 // The SDK's log, synchronous: a FATAL line reaches the sink before its abort.
@@ -209,6 +215,12 @@ void SetThreadRole(const char* role) {
 }
 
 const char* ThreadRole() noexcept { return thread_role ? thread_role : "other"; }
+
+void OnDevkitModule(std::function<void(const std::string& module)> handler) {
+  auto& state = Facts();
+  std::lock_guard lock(state.mutex);
+  state.devkit_handler = std::move(handler);
+}
 
 void InstallLogSink() {
   static std::once_flag installed;

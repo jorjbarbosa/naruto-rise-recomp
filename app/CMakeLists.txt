@@ -21,6 +21,7 @@ set(NARUTORISE_SOURCES
     src/intro_skip.cpp
     src/ultrawide.cpp
     src/save_thumbnail.cpp
+    src/dlc_refusal.cpp
     src/engine_free.cpp
     src/input_replay.cpp
     src/graphics_device.cpp
@@ -84,6 +85,10 @@ target_link_libraries(narutorise_data_achievements_test PRIVATE rex::runtime)
 # The facts the crash reports read from the SDK's log, without the runtime.
 add_executable(narutorise_log_facts_test EXCLUDE_FROM_ALL tests/log_facts_test.cpp src/diagnostics/log_facts.cpp)
 target_include_directories(narutorise_log_facts_test PRIVATE src)
+# The DLC packages refused for a devkit module: the record, the search and the move.
+add_executable(narutorise_dlc_refusal_test EXCLUDE_FROM_ALL tests/dlc_refusal_test.cpp src/dlc_refusal.cpp)
+target_include_directories(narutorise_dlc_refusal_test PRIVATE src)
+target_link_libraries(narutorise_dlc_refusal_test PRIVATE narutorise::json)
 add_executable(narutorise_launch_arguments_test EXCLUDE_FROM_ALL tests/launch_arguments_test.cpp)
 target_link_libraries(narutorise_launch_arguments_test PRIVATE narutorise_data_paths)
 if(WIN32)

@@ -11,6 +11,7 @@
 // fingerprint of the abort that follows it, and a module loaded with the
 // devkit encryption key is listed.
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -37,6 +38,11 @@ void SetAdapter(std::string_view api, std::string_view name, uint32_t vendor_id,
 // that has none is "other". ThreadRole is safe in a crash handler.
 void SetThreadRole(const char* role);
 const char* ThreadRole() noexcept;
+
+// A module the SDK loaded with the devkit encryption key (dlc_refusal.h). The
+// handler runs inside the log's sink, a few milliseconds before the abort that
+// follows: it must not log (the sink would wait on itself).
+void OnDevkitModule(std::function<void(const std::string& module)> handler);
 
 // From reporting::Initialize: the sink on the SDK's log, and the facts set so
 // far into the new scope.
