@@ -78,6 +78,8 @@ int main(int argc, char* argv[]) {
     Require(IsNewerRelease("0.3.0-beta", "v0.4.0-beta") == true, "0.4.0-beta not newer than 0.3.0-beta");
     Require(IsNewerRelease("1.0.0", "v0.4.1-beta") == true, "Legacy migration to 0.4.1-beta missing");
     Require(IsNewerRelease("0.4.0-beta", "v0.4.1-beta") == true, "0.4.1-beta not newer than 0.4.0-beta");
+    Require(IsNewerRelease("1.0.0", "v0.4.2-beta") == true, "Legacy migration to 0.4.2-beta missing");
+    Require(IsNewerRelease("0.4.1-beta", "v0.4.2-beta") == true, "0.4.2-beta not newer than 0.4.1-beta");
     Require(IsNewerRelease("0.2.0-beta.2", "v1.0.0-beta.1") == false, "Reverse legacy migration allowed");
     Require(IsNewerRelease("2.0.0", "v0.2.0-beta.2") == false, "Downgrade offered");
     Require(IsNewerRelease("v0.2.0-beta.2", "0.2.0-beta.2") == false, "Same version offered");

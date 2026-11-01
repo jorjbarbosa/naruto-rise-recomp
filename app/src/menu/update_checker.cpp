@@ -111,7 +111,7 @@ std::optional<bool> IsNewerRelease(std::string_view installed, std::string_view 
   const auto renumbered = [](auto v) {
     return v == "0.1.0-beta.2" || v == "0.1.0-beta.3" ||
            v == "0.2.0-beta.1" || v == "0.2.0-beta.2" || v == "0.3.0-beta" || v == "0.4.0-beta" ||
-           v == "0.4.1-beta";
+           v == "0.4.1-beta" || v == "0.4.2-beta";
   };
   if (legacy(installed) && renumbered(available)) return true;
   if (renumbered(installed) && legacy(available)) return false;
