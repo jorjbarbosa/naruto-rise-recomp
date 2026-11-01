@@ -18,7 +18,12 @@
   <a href="#native-renderer-and-60-fps">Native renderer and 60 FPS</a> ·
   <a href="docs/build-and-run.md">Build and run</a> ·
   <a href="docs/configuration.md">Configuration</a> ·
-  <a href="docs/troubleshooting.md">Troubleshooting</a>
+  <a href="docs/troubleshooting.md">Troubleshooting</a> ·
+  <a href="#support">Support</a>
+</p>
+
+<p align="center">
+  <a href="https://buymeacoffee.com/jorjbarbosa"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy Me a Coffee"></a>
 </p>
 
 > [!WARNING]
@@ -135,6 +140,10 @@ Planned work, in no particular order:
 Read the [technical analysis](docs/architecture.md) before changing the runtime or code generation files. When reporting an issue, include reproduction steps, version/build, CPU, GPU, driver, the renderer and frame rate you use, your configuration, and logs from `logs/` inside the active data folder shown in Settings → Advanced. After a crash, attach the ZIP from **Settings → Advanced → Diagnostics → Export previous session**. Also mention whether you use ultrawide, DLCs, or a Title Update.
 
 Keep game files, content packages, derived shader data, and generated recompiled code out of commits. SDK changes should include reproducible patches in `patches/sdk/`.
+
+## Support
+
+If you enjoy the project, you can [buy me a coffee](https://buymeacoffee.com/jorjbarbosa). It's optional and unlocks nothing; releases stay free for everyone.
 
 ## Credits
 
