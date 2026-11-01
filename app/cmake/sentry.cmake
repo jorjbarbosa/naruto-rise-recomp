@@ -4,7 +4,10 @@ option(NARUTORISE_ENABLE_SENTRY "Build optional, opt-in Sentry crash reporting" 
 set(NARUTORISE_SENTRY_DSN "https://a63d5e2aa01f37d95830c319efe87b5a@o4512325452496896.ingest.us.sentry.io/4512325773426688"
     CACHE STRING "Public Sentry ingestion DSN (not an auth token)")
 set(NARUTORISE_SENTRY_ENVIRONMENT "production" CACHE STRING "Sentry environment for this build")
-add_library(narutorise_reporting STATIC src/sentry_reporting.cpp)
+# The reporting: the SDK, the facts of the session that the crashes carry and
+# the facts read from the SDK's log.
+add_library(narutorise_reporting STATIC src/sentry_reporting.cpp src/diagnostics/report_context.cpp
+    src/diagnostics/log_facts.cpp)
 target_link_libraries(narutorise_reporting PRIVATE rex::runtime)
 target_link_libraries(narutorise_reporting PRIVATE narutorise_incidents)
 target_link_libraries(narutorise PRIVATE narutorise_reporting)

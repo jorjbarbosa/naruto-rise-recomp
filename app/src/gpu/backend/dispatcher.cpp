@@ -2,6 +2,7 @@
 #include "gpu/backend/lifecycle.h"
 #include "gpu/backend/pipeline_set.h"
 #include "diagnostics/incident.h"
+#include "diagnostics/report_context.h"
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
@@ -72,6 +73,7 @@ struct Dispatcher::State {
     owner = std::thread([this] {
       rex::thread::set_current_thread_name("Native Engine Owner");
       sampler::RegisterThread("engine");  // REX_NATIVE_SAMPLE_PERIOD_US.
+      narutorise::report_context::SetThreadRole("engine");
       for (;;) {
         std::function<void()> task;
         {
@@ -96,6 +98,7 @@ struct Dispatcher::State {
       translator_id.store(rex::thread::current_thread_system_id());
       rex::thread::set_current_thread_name("Native Translation");
       sampler::RegisterThread("translate");
+      narutorise::report_context::SetThreadRole("translate");
       for (;;) {
         // Take only work already queued; no timer or minimum batch delays a
         // draw. A single consumer keeps captures and operations in FIFO order.

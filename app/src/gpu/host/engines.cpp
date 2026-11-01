@@ -7,9 +7,11 @@
 #include "gpu/common/guest_memory.h"
 #include "gpu/settings.h"
 #include "wine.h"
+#include "diagnostics/report_context.h"
 #include <array>
 #include <optional>
 #include <fmt/format.h>
+#include <nlohmann/json.hpp>
 #include <rex/logging.h>
 #include <rex/system/thread_state.h>
 #include <rex/system/xthread.h>
@@ -99,6 +101,22 @@ bool InitializeEngines(PPCContext& ctx) {
                       settings.graphics_device);
         REXLOG_INFO("[narutorise] Native renderer backend: {}; adapter: {}; initialization: {}",
                     ApiName(candidate->Api()), device, evidence);
+        // The adapter for the crash reports: the D3D12 user-mode driver's
+        // version, or the Vulkan driver's name and information.
+        const auto initialization = nlohmann::json::parse(evidence, nullptr, false);
+        const auto engine = initialization.is_object() ? initialization.value("engine", nlohmann::json::object())
+                                                       : nlohmann::json::object();
+        std::string driver = engine.value("driver_umd_version", std::string());
+        if (driver.empty())
+          driver = fmt::format("{} {}", engine.value("driver_name", std::string()), engine.value("driver_info", std::string()));
+        narutorise::report_context::SetAdapter(ApiName(candidate->Api()), device, engine.value("device_vendor", 0u),
+                                               engine.value("device_id", 0u), driver);
+        // The backends record a render mode only when it is not the default (1x, no MSAA).
+        const auto render_mode = engine.value("render_mode", nlohmann::json::object());
+        const auto scale = render_mode.value("scale", nlohmann::json::array());
+        const bool scaled = scale.is_array() && !scale.empty() && scale[0].is_number();
+        narutorise::report_context::SetRenderMode(scaled ? scale[0].get<double>() : 1.0,
+                                                  render_mode.value("msaa_samples", 0));
         engine_registration = {ctx.r4.u32, ctx.r5.u32, ts->thread_id(), int(thread->active_cpu()), guest_device};
         native_engine = std::move(candidate);
         active_engine.store(native_engine.get(), std::memory_order_release);

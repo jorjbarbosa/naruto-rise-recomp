@@ -35,6 +35,7 @@
 #include "crash_report.h"
 #include "sentry_reporting.h"
 #include "diagnostics/incident.h"
+#include "diagnostics/report_context.h"
 #include "menu/folders.h"
 #include "data_migration.h"
 #include "game_image.h"
@@ -84,7 +85,7 @@ REXCVAR_DEFINE_BOOL(show_startup_menu, true, "narutorise/UI",
 REXCVAR_DEFINE_BOOL(check_for_updates, true, "narutorise/UI", "Notify when a new release is available");
 REXCVAR_DEFINE_BOOL(crash_reporting, false, "narutorise/Reporting", "Allow crash reports and startup timing to be sent to Sentry");
 REXCVAR_DEFINE_BOOL(crash_reporting_asked, false, "narutorise/Reporting", "The crash report question at the first start was answered");
-REXCVAR_DEFINE_STRING(sentry_test, "", "narutorise/Internal", "Developer verification: error or crash; requires crash_reporting=true")
+REXCVAR_DEFINE_STRING(sentry_test, "", "narutorise/Internal", "Developer verification: error, crash or fatal; requires crash_reporting=true")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_STRING(incident_test, "", "narutorise/Internal", "Disposable-process local capture verification; no game data required")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
@@ -277,6 +278,15 @@ class NarutoriseApp : public rex::ReXApp {
     ask_crash_reporting_ = consent == narutorise::reporting::Consent::kPending;
     narutorise::reporting::Initialize(rex::filesystem::GetExecutableFolder(), active.cache_root,
                                     narutorise::Version(), consent);
+    // The facts a crash report carries (report_context.h); the options all
+    // need a restart, and a session without DLCs keeps the empty list. The
+    // native renderer gives its scale in use once it runs (gpu/host/engines.cpp).
+    narutorise::report_context::SetGraphics(
+        rex::cvar::GetFlagByName("renderer"), rex::cvar::GetFlagByName("native_backend"),
+        rex::cvar::Query<int32_t>("frame_rate"), rex::cvar::Query<double>("internal_resolution_scale"),
+        rex::cvar::Query<int32_t>("msaa_samples"));
+    narutorise::report_context::SetRuntime(narutorise::WineVersion());
+    narutorise::report_context::SetContent({});
     narutorise::incident::Event("runtime-and-xex", "begin");
     for (const auto* key : {"renderer", "native_backend", "graphics_device", "resolution_scale", "msaa_samples",
                             "frame_rate", "translation_mod", "skip_intro_videos", "log_level"})
@@ -305,6 +315,8 @@ class NarutoriseApp : public rex::ReXApp {
   void LogGameData(const std::filesystem::path& root) {
     using narutorise::game_image::Status;
     game_identity_ = narutorise::game_image::Identify(root);
+    narutorise::report_context::SetGameData(game_identity_.disc_image, game_identity_.title_id,
+                                            game_identity_.xex_digest);
     const auto line = fmt::format("[narutorise] Game data: {} ({}); Title ID {:08X}, default.xex {}: {}",
                                   rex::path_to_utf8(root), game_identity_.disc_image ? "disc image" : "folder",
                                   game_identity_.title_id, game_identity_.xex_digest,
@@ -920,9 +932,12 @@ class NarutoriseApp : public rex::ReXApp {
         0, 0, rex::system::XContentType::kMarketplaceContent, parsed_title_id);
     REXLOG_INFO("[narutorise] ContentManager lists {} marketplace package(s)",
                 listed.size());
+    std::vector<std::string> listed_names;
     for (const auto& item : listed) {
       REXLOG_INFO("[narutorise]   - file_name='{}'", item.file_name());
+      listed_names.push_back(item.file_name());
     }
+    narutorise::report_context::SetContent(listed_names);
 
     REXLOG_INFO("[narutorise] DLC fix-up complete: {} item(s) fixed", fixed);
   }
@@ -1386,6 +1401,8 @@ class NarutoriseApp : public rex::ReXApp {
         setup_paths_.game_data_root = result->root;
         ConfigureUpdateDataRoot(setup_paths_);
         game_identity_ = result->game;
+        narutorise::report_context::SetGameData(game_identity_.disc_image, game_identity_.title_id,
+                                                game_identity_.xex_digest);
         configured_root_ = true;
         setup_reason_ = narutorise::menu::SetupReason::kRequested;
         ui_.HidePanel();

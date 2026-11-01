@@ -81,6 +81,9 @@ add_executable(narutorise_data_logging_test EXCLUDE_FROM_ALL tests/data_logging_
 target_link_libraries(narutorise_data_logging_test PRIVATE narutorise_data_paths rex::runtime)
 add_executable(narutorise_data_achievements_test EXCLUDE_FROM_ALL tests/data_achievements_test.cpp)
 target_link_libraries(narutorise_data_achievements_test PRIVATE rex::runtime)
+# The facts the crash reports read from the SDK's log, without the runtime.
+add_executable(narutorise_log_facts_test EXCLUDE_FROM_ALL tests/log_facts_test.cpp src/diagnostics/log_facts.cpp)
+target_include_directories(narutorise_log_facts_test PRIVATE src)
 add_executable(narutorise_launch_arguments_test EXCLUDE_FROM_ALL tests/launch_arguments_test.cpp)
 target_link_libraries(narutorise_launch_arguments_test PRIVATE narutorise_data_paths)
 if(WIN32)

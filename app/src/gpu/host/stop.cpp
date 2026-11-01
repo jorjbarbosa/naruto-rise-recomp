@@ -154,7 +154,13 @@ void ReportProductStop(std::string_view name, int code, bool released, std::stri
   narutorise::incident::Event("renderer-release", "begin");
   const bool released = ReleaseEngineAndRecord(name, ctx, address, value, true, &shutdown);
   narutorise::incident::Event("renderer-release", released ? "end" : "failed", shutdown);
-  narutorise::reporting::CaptureFailure(std::string(name), posted);
+  narutorise::reporting::FailureDetails details;
+  details.lr = ctx ? ctx->lr : 0;
+  if (auto* ts = rex::runtime::ThreadState::Get()) details.guest_thread = ts->thread_id();
+  details.address = address;
+  details.value = value;
+  details.shutdown = shutdown;
+  narutorise::reporting::CaptureFailure(std::string(name), posted, details);
   if (!Journaled()) ReportProductStop(name, released ? code : 88, released, posted, shutdown);
   // Diagnostic termination. No guest return, fence, read pointer or callback.
   // The record writer stays locked, so the exit cuts no line of another thread.
