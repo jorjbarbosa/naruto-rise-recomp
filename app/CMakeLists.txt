@@ -27,6 +27,7 @@ set(NARUTORISE_SOURCES
     src/graphics_device.cpp
     src/crash_report.cpp
     src/game_image.cpp
+    src/game_files.cpp
     src/window_title.cpp
     src/mouse_camera.cpp
     src/mods/translation_data.cpp
@@ -296,6 +297,11 @@ add_executable(narutorise_game_image_test EXCLUDE_FROM_ALL
     tests/game_image_test.cpp src/game_image.cpp)
 target_include_directories(narutorise_game_image_test PRIVATE src)
 target_link_libraries(narutorise_game_image_test PRIVATE rex::runtime)
+
+add_executable(narutorise_game_files_test EXCLUDE_FROM_ALL
+    tests/game_files_test.cpp src/game_files.cpp)
+target_include_directories(narutorise_game_files_test PRIVATE src)
+target_link_libraries(narutorise_game_files_test PRIVATE rex::runtime narutorise::json)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_executable(narutorise_posix_wait_test EXCLUDE_FROM_ALL tests/posix_wait_test.cpp)

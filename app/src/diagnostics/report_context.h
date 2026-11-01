@@ -27,6 +27,9 @@ void SetRenderMode(double resolution_scale, int msaa_samples);
 // Wine's version, or null on Windows and on Linux.
 void SetRuntime(const char* wine_version);
 void SetGameData(bool disc_image, uint32_t title_id, std::string_view xex_digest);
+// The check of the game files (game_files.h): checking, then its tag (ok,
+// damaged:N, other_copy, unchecked) and the first files that differ.
+void SetGameFiles(std::string_view tag, const std::vector<std::string>& different);
 void SetContent(const std::vector<std::string>& packages);
 // The engine's adapter once the native renderer runs: its API replaces the
 // requested backend.

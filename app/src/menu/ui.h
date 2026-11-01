@@ -55,11 +55,13 @@ class Ui final : public rex::ui::UIDrawer, public rex::ui::WindowInputListener {
   // The setup screen before the game (setup_screen.h), UI thread.
   bool ShowSetup(const SetupScreen::State& state, SetupScreen::Actions actions);
   void RefreshSetup(const SetupScreen::State& state);
+  void SetSetupFilesNotice(std::string notice) { setup_.SetFilesNotice(std::move(notice)); }
   void HideSetup();
   // Modal actions run after the document event. Cancel is focused by default.
   void ShowDialog(const std::string& title, const std::string& message,
                   std::vector<std::pair<std::string, std::function<void()>>> actions = {});
   void HideDialog();
+  bool DialogShown() const { return dialog_shown_.load(); }
   void SetTick(std::function<void()> tick) { tick_ = std::move(tick); }
   void SetInputActive(std::function<bool()> active) { input_active_ = std::move(active); }
   void ShowPanel(std::string title, std::vector<std::string> tabs, int tab, std::vector<PanelRow> rows,

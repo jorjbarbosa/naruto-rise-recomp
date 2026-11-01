@@ -17,6 +17,7 @@
 // Then the close proceeds: OnClosing finds no guest thread and exits with 0.
 
 #include "gpu/d3d/close.h"
+#include "gpu/d3d/destruction_order.h"
 #include "gpu/diagnostics/diagnostics.h"
 #include "gpu/d3d/hooks.h"
 #include "gpu/d3d/device.h"
@@ -145,6 +146,7 @@ bool CloseInOrder() {
   if (SkipUncoveredDraws()) host::Record("native-d3d-guard-census", GuardCensusSummary());  // The product too.
   // The product has no journal: the session's skipped draws and operations go to the SDK log.
   if (!host::Journaled()) REXLOG_INFO("[narutorise] Native renderer skipped: {{{}}}", GuardCensusSummary());
+  REXLOG_INFO("[narutorise] Destruction order: {{{}}}", destruction_order::Summary());
   RecordPipelines();  // The list of a close boot too.
   // 3. The title terminated as the SDK does it, then each guest thread joined.
   auto* kernel = host::Kernel();

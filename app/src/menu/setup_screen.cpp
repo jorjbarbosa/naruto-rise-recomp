@@ -10,8 +10,9 @@ namespace narutorise::menu {
 namespace {
 using game_image::Status;
 
-// The state line under the menu: a title and a detail.
-std::pair<const char*, const char*> StatusText(const SetupScreen::State& state) {
+// The state line under the menu: a title and a detail. A ready game shows
+// the game files check there.
+std::pair<const char*, const char*> StatusText(const SetupScreen::State& state, const std::string& files_notice) {
   switch (state.reason) {
     case SetupReason::kFirstRun: return {Text("setup-no-game"), nullptr};
     case SetupReason::kGameMissing: return {Text("missing"), Text("missing-detail")};
@@ -20,7 +21,7 @@ std::pair<const char*, const char*> StatusText(const SetupScreen::State& state) 
       return {Text(state.game.status == Status::kOtherVersion ? "unsupported" :
                    state.game.status == Status::kUnreadable ? "unreadable" : "unrecognized"), Text("game-hint")};
     case SetupReason::kStartFailed: return {Text("start-failed"), Text("start-detail")};
-    default: return {Text("setup-ready"), nullptr};
+    default: return {Text("setup-ready"), files_notice.empty() ? nullptr : files_notice.c_str()};
   }
 }
 }  // namespace
@@ -31,6 +32,7 @@ bool SetupScreen::CreateModel(Rml::Context& context) {
   if (!constructor) return false;
   constructor.Bind("game_ready", &game_ready_);
   constructor.Bind("start_failed", &start_failed_);
+  constructor.Bind("files_warning", &files_warning_);
   constructor.Bind("logo_ready", &logo_ready_);
   constructor.Bind("first_label", &first_label_);
   constructor.Bind("status_title", &status_title_);
@@ -65,9 +67,8 @@ bool SetupScreen::Show(Rml::Context& context, const State& state, Actions action
   disc_image_ = state.game.disc_image;
   if (logo_root_ != render_root_) logo_ready_ = false;
   first_label_ = game_ready_ ? Text("setup-play") : Text("choose");
-  const auto [title, detail] = StatusText(state);
-  status_title_ = title;
-  status_detail_ = detail && state.reason != SetupReason::kFirstRun ? detail : "";
+  state_ = state;
+  UpdateStatus();
   version_ = state.version.empty() ? "" : "v" + state.version;
   model_.DirtyAllVariables();
   if (!document_) document_ = context.LoadDocument("setup.rml");
@@ -80,6 +81,20 @@ bool SetupScreen::Show(Rml::Context& context, const State& state, Actions action
   // A failed start leads to the settings; otherwise to playing or choosing the game.
   if (Rml::Element* item = document_->GetElementById(start_failed_ ? "settings" : "first")) item->Focus(true);
   return true;
+}
+
+void SetupScreen::UpdateStatus() {
+  const auto [title, detail] = StatusText(state_, files_notice_);
+  status_title_ = title;
+  status_detail_ = detail && state_.reason != SetupReason::kFirstRun ? detail : "";
+  files_warning_ = game_ready_ && !files_notice_.empty();
+}
+
+void SetupScreen::SetFilesNotice(std::string notice) {
+  files_notice_ = std::move(notice);
+  if (!model_) return;
+  UpdateStatus();
+  for (const char* name : {"status_title", "status_detail", "files_warning"}) model_.DirtyVariable(name);
 }
 
 void SetupScreen::Hide() {

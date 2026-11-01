@@ -4,6 +4,7 @@
 #include "diagnostics/log_facts.h"
 #include "sentry_reporting.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -184,6 +185,14 @@ void SetGameData(bool disc_image, uint32_t title_id, std::string_view xex_digest
   Tag(state, "game_data", disc_image ? "iso" : "folder");
   Context(state, "game", {{"title_id", fmt::format("{:08X}", title_id)}, {"xex_xxh3", std::string(xex_digest)},
                           {"data", disc_image ? "iso" : "folder"}});
+}
+
+void SetGameFiles(std::string_view tag, const std::vector<std::string>& different) {
+  auto& state = Facts();
+  std::lock_guard lock(state.mutex);
+  Tag(state, "game_files", std::string(tag));
+  const std::vector<std::string> first(different.begin(), different.begin() + std::min<size_t>(different.size(), 8));
+  Context(state, "game", {{"files_different", Join(first, kContextMax)}});
 }
 
 void SetContent(const std::vector<std::string>& packages) {

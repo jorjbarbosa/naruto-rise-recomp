@@ -41,6 +41,9 @@ class SetupScreen {
     return Show(context, state, std::move(actions));
   }
   void Hide();
+  // The line of the game files check under a ready game (game_files.h);
+  // empty when they are the disc's or not checked yet.
+  void SetFilesNotice(std::string notice);
   void SetControlsOpen(bool open);
   void SetGamepadHints(bool gamepad);
   void UpdateLogo(RenderInterface& render);
@@ -48,11 +51,14 @@ class SetupScreen {
 
  private:
   bool CreateModel(Rml::Context& context);
+  void UpdateStatus();
   void Run(const std::function<void()>& action);
   Rml::ElementDocument* document_ = nullptr;
   Rml::DataModelHandle model_;
   Actions actions_;
-  bool game_ready_ = false, start_failed_ = false;
+  State state_;
+  std::string files_notice_;
+  bool game_ready_ = false, start_failed_ = false, files_warning_ = false;
   bool logo_ready_ = false, logo_complete_ = false, disc_image_ = false;
   bool gamepad_hints_ = false;
   std::filesystem::path logo_root_, render_root_, pending_root_;

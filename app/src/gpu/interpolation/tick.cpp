@@ -36,6 +36,12 @@ constexpr uint32_t kViewsOff = 0x82C0EBB4;   // Set while a world is replaced: n
 constexpr uint32_t kWorldEffects = 0x82C0EB04;  // The argument of 826AC2E8.
 
 const bool by_variable = [] { const char* v = std::getenv("REX_NATIVE_STATE_INTERPOLATION"); return v && *v; }();
+// REX_NATIVE_VIEW_SECTOR_SWITCH=1: the view block of a frame without a tick
+// also runs the sector switch (ViewBlock), as before.
+const bool switch_between_ticks = [] {
+  const char* v = std::getenv("REX_NATIVE_VIEW_SECTOR_SWITCH");
+  return v && std::string_view(v) == "1";
+}();
 std::atomic<bool> switched_off{false};
 bool f8_down = false;
 std::atomic<uint32_t> configured_rate{0};  // Accepted only at the start of a complete logic iteration.
@@ -177,7 +183,13 @@ void Decide(uint8_t* base) {
 
 // The view block of 82684518 (8268479C to 82684868) without the sound
 // (82668A78 advances by the dt; 82532328 and 8227AC30 after the delivery):
-// the arguments and stores of the original, in its order.
+// the arguments and stores of the original, in its order, except the
+// delivery's second argument. With 1 the delivery runs the sector switch
+// (8267DA90) before handing the lists over, once per tick on the console;
+// between ticks it would switch the world's sectors at the frame rate, freeing
+// objects the render thread may still be drawing and showing new sectors
+// before the world change (826843D8) and the logic. The tick's own delivery,
+// or else the end of its frame (8267DDC0), runs the switch.
 void ViewBlock(PPCContext& ctx, uint8_t* base) {
   const uint32_t view = Get32(base, kViews + 12);
   if (!view || Get32(base, kViewsOff)) return;
@@ -195,7 +207,7 @@ void ViewBlock(PPCContext& ctx, uint8_t* base) {
     call(sub_8265A058, Get32(base, view + 2248), view);
   }
   call(sub_826AC2E8, Get32(base, kWorldEffects), view);
-  call(sub_8259FF40, view, 1);
+  call(sub_8259FF40, view, switch_between_ticks ? 1 : 0);
 }
 
 bool Gating() { return gpu::Active() && Enabled(); }
