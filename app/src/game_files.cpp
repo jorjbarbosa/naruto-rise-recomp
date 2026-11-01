@@ -7,6 +7,7 @@
 #include <rex/filesystem.h>
 #include <rex/filesystem/devices/disc_image_device.h>
 #include <rex/filesystem/devices/host_path_device.h>
+#include <rex/filesystem/devices/host_path_entry.h>
 #include <rex/filesystem/entry.h>
 #include <rex/filesystem/file.h>
 #include <rex/hash.h>
@@ -209,9 +210,17 @@ std::string Fingerprint(const std::filesystem::path& root, std::span<const File>
   } else {
     const auto mounted = Mount(path);
     if (!mounted) return {};
+    // The write time from the host's file: the device's entries keep whole
+    // seconds outside Windows, where a copy written within the same second
+    // would keep the fingerprint.
     for (const auto& file : manifest) {
-      const auto* entry = FileEntry(*mounted, file.path);
-      text += entry ? fmt::format("{} {}\n", entry->size(), entry->write_timestamp()) : "-\n";
+      const auto* entry = static_cast<const rex::filesystem::HostPathEntry*>(FileEntry(*mounted, file.path));
+      if (!entry) {
+        text += "-\n";
+        continue;
+      }
+      const auto time = std::filesystem::last_write_time(entry->host_path(), ec);
+      text += fmt::format("{} {}\n", entry->size(), ec ? 0 : time.time_since_epoch().count());
     }
   }
   return rex::hash_bytes(text);
