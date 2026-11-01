@@ -304,6 +304,7 @@ std::vector<PanelRow> Settings::Rows(int group) {
         [this](int value) { Change("show_startup_menu", [value](GameConfig& c) { c.show_startup_menu = value != 0; }); }, {}});
     if (updates_) rows.push_back({"updates", Tr(TextId::UpdatesCheck), "", Text("update-hint"), false, false, {}, 0, {}, updates_});
     if (shortcut_) rows.push_back({"shortcut", Text("shortcut"), "", Text("shortcut"), false, false, {}, 0, {}, shortcut_});
+    if (game_files_) rows.push_back({"game_files", Text("game-files"), "", Text("game-files-help"), false, false, {}, 0, {}, game_files_});
     toggle("show_fps_overlay", TextId::FpsOverlayLabel, TextId::FpsOverlayDescription, &GameConfig::show_fps_overlay, false);
     rows.push_back({"show_shader_indicator", Text("shader-option"), Bool(menu_options_.shaders), Text("shader-option"),
         menu_options_.shaders != initial_menu_options_.shaders, false, {Text("off"), Text("on")}, menu_options_.shaders ? 1 : 0,

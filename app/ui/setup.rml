@@ -28,7 +28,7 @@
       <div class="plate"/><span class="label">@quit</span>
     </div>
   </div>
-  <div id="status" data-class-warning="!game_ready || start_failed">
+  <div id="status" data-class-warning="!game_ready || start_failed || files_warning">
     <span class="dot"/><span class="title">{{status_title}}</span>
     <div class="detail">{{status_detail}}</div>
   </div>

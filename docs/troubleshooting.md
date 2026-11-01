@@ -27,6 +27,10 @@
 
 Select the original ISO, or `default.xex` in the folder that directly contains it. A folder that merely contains another folder with the game is not the correct root. In a distribution, `game/` beside the executable or AppImage is also found; the checkout manifest uses `game_root/`. You can also set `custom_game_root` in the TOML file or pass `--game_data_root` to the executable. Hold **Shift** while opening, or pass `--setup`, to return to the setup screen.
 
+### The game always crashes at the same point of the story
+
+A copy of the disc with a damaged or modified file makes the game crash when it uses that file, often in a video. At the first start with a copy, the game reads every file in the background and compares it with the original disc (USA, Europe); a copy with files that differ shows a notice over the game with their names, and the setup screen lists them under **Game ready**. **Settings → Advanced → Check game files** checks again and shows the result: a few seconds on an SSD, up to a minute on a hard drive. Make a new copy of the disc or download the image again, then check it. Many files of another size mean another release or a modified copy; test with an original copy before reporting a crash. The result is kept in `game-files.json` in the data folder and the game reads the copy again only when its files change.
+
 ### Missing DLL at startup
 
 Keep the runtime and module binaries alongside the game, as the ZIP extracts them. Install the Visual C++ x64 Redistributable. For character DLCs, check the matching `narutorise_ai2c1.dll` (Shikamaru), `narutorise_ai2c2.dll` (Jiraiya & Sarutobi), or `narutorise_ai2c3.dll` (Choji & Temari). Importing content through the DLC menu does not compile these modules.

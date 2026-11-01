@@ -14,8 +14,8 @@ class Settings {
  public:
   struct MenuOptions { std::string key = "F1", chord = "Back+Start"; bool shaders = true; };
   const MenuOptions& menu_options() const { return menu_options_; }
-  void SetUtilities(std::function<void()> shortcut, std::function<void()> updates) {
-    shortcut_ = std::move(shortcut); updates_ = std::move(updates);
+  void SetUtilities(std::function<void()> shortcut, std::function<void()> updates, std::function<void()> game_files = {}) {
+    shortcut_ = std::move(shortcut); updates_ = std::move(updates); game_files_ = std::move(game_files);
   }
   void Initialize(std::filesystem::path directory, bool native_controls = true,
                   std::filesystem::path config_path = {});
@@ -54,7 +54,7 @@ class Settings {
   GameConfig config_, initial_;
   std::unordered_set<std::string> edited_flags_;
   MenuOptions menu_options_, initial_menu_options_;
-  std::function<void()> shortcut_, updates_;
+  std::function<void()> shortcut_, updates_, game_files_;
   Ui* ui_ = nullptr;
   int group_ = 0;
   bool in_game_ = false;

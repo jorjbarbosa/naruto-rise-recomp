@@ -39,6 +39,7 @@
 #include "dlc_refusal.h"
 #include "menu/folders.h"
 #include "data_migration.h"
+#include "game_files.h"
 #include "game_image.h"
 #include "graphics_device.h"
 #include "input_replay.h"
@@ -327,6 +328,21 @@ class NarutoriseApp : public rex::ReXApp {
       REXLOG_INFO("{}", line);
     else
       REXLOG_WARN("{}", line);
+    if (game_identity_.status == Status::kReady) StartGameFilesCheck(root);
+  }
+  // The check of the game files (game_files.h) in the background: its tag in
+  // the crash reports, its line on the setup screen and its notice over the
+  // game (PollGameFiles). manual: the player's own, from Settings > Advanced.
+  void StartGameFilesCheck(const std::filesystem::path& root, bool manual = false) {
+    narutorise::report_context::SetGameFiles("checking", {});
+    ui_.SetSetupFilesNotice({});
+    game_files_manual_ = manual;
+    const auto& data_root = prepared_data_->paths.data_root;
+    game_files_.Start(root, data_root.empty() ? std::filesystem::path{} : data_root / "game-files.json", manual,
+                      [](const narutorise::game_files::Report& report) {
+                        narutorise::report_context::SetGameFiles(narutorise::game_files::Tag(report),
+                                                                 report.Different());
+                      });
   }
 
   // The initial menu follows the saved startup preference and recovery rules
@@ -1114,7 +1130,8 @@ class NarutoriseApp : public rex::ReXApp {
     }
     if (NativeRenderer()) {
       ui_.SetTick([this] { ServiceMenu(); });
-      menu_settings_.SetUtilities([this] { CreateDesktopShortcut(); }, [this] { CheckUpdates(); });
+      menu_settings_.SetUtilities([this] { CreateDesktopShortcut(); }, [this] { CheckUpdates(); },
+                                  [this] { CheckGameFiles(); });
       if (REXCVAR_GET(check_for_updates))
         updates_ = std::make_unique<launcher_updates::Checker>(narutorise::Version(), prepared_data_->paths.data_root / "menu-updates.json");
     }
@@ -1423,7 +1440,7 @@ class NarutoriseApp : public rex::ReXApp {
     }
   }
   void ServiceMenu() {
-    PollGameChoice(); menu_dlc_.Poll();
+    PollGameChoice(); menu_dlc_.Poll(); PollGameFiles();
     menu_settings_.PollLive();
 #ifdef NARUTORISE_NATIVE_RENDERER_BOOTSTRAP
     if (shortcut_hint_pending_ && ui_.OverlayShown()) shortcut_hint_pending_ = false;
@@ -1490,6 +1507,7 @@ class NarutoriseApp : public rex::ReXApp {
                                                 game_identity_.xex_digest);
         configured_root_ = true;
         setup_reason_ = narutorise::menu::SetupReason::kRequested;
+        StartGameFilesCheck(result->root);
         ui_.HidePanel();
         // Reuse the current callbacks and refresh the ready state without
         // replacing the screen's engine or its resume continuation.
@@ -1530,13 +1548,20 @@ class NarutoriseApp : public rex::ReXApp {
         if (closing_.load()) return;
         RemoveLaunchMarker();
         if (game_running_ && ask_crash_reporting_) AskCrashReporting();
-        else if (!ShowDlcNotice()) ScheduleShortcutHint();
+        else ShowNextNotice();
       });
     });
 #endif
   }
+  // The notices over the first frames, one after the other (the refused DLC,
+  // then the game files), then the shortcut hint.
+  void ShowNextNotice() {
+    if (ShowDlcNotice() || ShowGameFilesNotice()) return;
+    notices_done_ = true;
+    ScheduleShortcutHint();
+  }
   void ScheduleShortcutHint() {
-    if (game_running_ && !shortcut_hint_.empty()) {
+    if (game_running_ && !shortcut_hint_.empty() && !std::exchange(shortcut_hint_scheduled_, true)) {
       shortcut_hint_pending_ = true;
       shortcut_hint_due_ = std::chrono::steady_clock::now() + std::chrono::seconds(4);
     }
@@ -1557,7 +1582,7 @@ class NarutoriseApp : public rex::ReXApp {
       narutorise::reporting::SetConsent(consent);
       narutorise::menu::input_blocked = ui_.OverlayShown();
       REXLOG_INFO("[narutorise] Crash reporting answered: {}", consent ? "uploads enabled" : "local reports only");
-      if (!ShowDlcNotice()) ScheduleShortcutHint();
+      ShowNextNotice();
     };
     ui_.ShowDialog(Text("crash-reporting-ask"), Text("crash-reporting-ask-help"),
                    {{Text("crash-reporting-send"), [answer] { answer(true); }},
@@ -1573,10 +1598,92 @@ class NarutoriseApp : public rex::ReXApp {
     ui_.ShowDialog(Text("dlc-refused"), std::exchange(dlc_notice_, {}),
                    {{Text("dlc-refused-ok"), [this] {
                       narutorise::menu::input_blocked = ui_.OverlayShown();
-                      ScheduleShortcutHint();
+                      ShowNextNotice();
                     }}});
     REXLOG_INFO("[narutorise] Refused DLC notice shown; guest input neutral");
     return true;
+  }
+  // A text of a game files report: {files} (the first `names`, then "(+N)")
+  // and {count} in the text of key.
+  static std::string GameFilesText(const narutorise::game_files::Report& report, const char* key, size_t names) {
+    const auto files = report.Different();
+    std::string list;
+    for (size_t i = 0; i < files.size() && i < names; ++i) list += (i ? ", " : "") + files[i];
+    if (files.size() > names) list += fmt::format(" (+{})", files.size() - names);
+    std::string text = narutorise::menu::Text(key);
+    for (const auto& [placeholder, value] : {std::pair<std::string_view, std::string>{"{files}", list},
+                                             {"{count}", std::to_string(report.checked)}})
+      if (const auto at = text.find(placeholder); at != std::string::npos) text.replace(at, placeholder.size(), value);
+    return text;
+  }
+  // A new report of the game files check: the setup screen's line, the result
+  // of the player's check, or the notice over the game, once per copy (after
+  // the first frame's notices, or as soon as no dialog shows).
+  void PollGameFiles() {
+    using narutorise::game_files::Verdict;
+    if (game_files_.Generation() != game_files_seen_) {
+      game_files_seen_ = game_files_.Generation();
+      if (const auto report = game_files_.Result()) {
+        ui_.SetSetupFilesNotice(report->verdict == Verdict::kDamaged ? GameFilesText(*report, "game-files-setup", 3)
+                                : report->verdict == Verdict::kOtherCopy ? narutorise::menu::Text("game-files-setup-other")
+                                                                         : std::string());
+        if (std::exchange(game_files_manual_, false))
+          ShowGameFilesResult(*report);
+        else
+          game_files_notice_ = !report->notified &&
+                               (report->verdict == Verdict::kDamaged || report->verdict == Verdict::kOtherCopy);
+      }
+    }
+    if (game_files_notice_ && notices_done_ && !crash_question_open_ && !ui_.DialogShown() && !ui_.OverlayShown())
+      ShowGameFilesNotice();
+  }
+  // The game files notice over the game; false when there is none.
+  bool ShowGameFilesNotice() {
+    if (!game_running_ || !std::exchange(game_files_notice_, false)) return false;
+    const auto report = game_files_.Result();
+    if (!report) return false;
+    using narutorise::menu::Text;
+    const bool other = report->verdict == narutorise::game_files::Verdict::kOtherCopy;
+    narutorise::menu::input_blocked = true;
+    ui_.ShowDialog(Text(other ? "game-files-other" : "game-files-damaged"),
+                   GameFilesText(*report, other ? "game-files-other-help" : "game-files-damaged-help", 8),
+                   {{Text("ok"), [this] {
+                      narutorise::menu::input_blocked = ui_.OverlayShown();
+                      ShowNextNotice();
+                    }}});
+    game_files_.MarkNotified();
+    REXLOG_INFO("[narutorise] Game files notice shown; guest input neutral");
+    return true;
+  }
+  // Settings > Advanced: the check again, its result in a dialog when it ends.
+  void CheckGameFiles() {
+    using narutorise::menu::Text;
+    ui_.Notify(Text("game-files-checking"));
+    if (game_files_.Running()) {
+      game_files_manual_ = true;
+      return;
+    }
+    StartGameFilesCheck(setup_resume_ ? setup_paths_.game_data_root : game_data_root(), true);
+  }
+  void ShowGameFilesResult(const narutorise::game_files::Report& report) {
+    using narutorise::game_files::Verdict;
+    using narutorise::menu::Text;
+    const auto verdict = report.verdict;
+    const char* title = verdict == Verdict::kOk          ? "game-files-intact"
+                        : verdict == Verdict::kDamaged   ? "game-files-damaged"
+                        : verdict == Verdict::kOtherCopy ? "game-files-other"
+                                                         : "game-files";
+    const char* text = verdict == Verdict::kOk          ? "game-files-intact-help"
+                       : verdict == Verdict::kDamaged   ? "game-files-damaged-help"
+                       : verdict == Verdict::kOtherCopy ? "game-files-other-help"
+                                                        : "game-files-unread";
+    game_files_.MarkNotified();
+    // Over the game when its menu has closed meanwhile: the guest waits too.
+    const bool over_game = game_running_ && !ui_.OverlayShown();
+    if (over_game) narutorise::menu::input_blocked = true;
+    ui_.ShowDialog(Text(title), GameFilesText(report, text, 8), {{Text("ok"), [this, over_game] {
+                     if (over_game) narutorise::menu::input_blocked = ui_.OverlayShown();
+                   }}});
   }
   void SetFpsVisible(bool visible) {
     ui_.SetFpsVisible(visible);
@@ -1609,11 +1716,16 @@ class NarutoriseApp : public rex::ReXApp {
   std::unique_ptr<launcher_updates::Checker> updates_;
   bool game_running_ = false, update_notified_ = false, manual_update_check_ = false;
   std::string shortcut_hint_;
-  bool shortcut_hint_pending_ = false;
+  bool shortcut_hint_pending_ = false, shortcut_hint_scheduled_ = false;
   std::chrono::steady_clock::time_point shortcut_hint_due_{};
   bool ask_crash_reporting_ = false;  // Shown over the first frame of the game.
   std::string dlc_notice_;            // The refused DLC notice, over the first frame too.
   bool crash_question_open_ = false;  // The game menu waits for the answer.
+  bool notices_done_ = false;         // The first frame's notices have all shown.
+  // The game files check (StartGameFilesCheck) and its notice.
+  narutorise::game_files::Checker game_files_;
+  uint64_t game_files_seen_ = 0;
+  bool game_files_manual_ = false, game_files_notice_ = false;
   std::atomic<bool> ui_draw_pending_{false};
   std::atomic<bool> closing_{false};
   rex::RuntimeConfig* runtime_config_ = nullptr;  // ReXApp's, from OnPreSetup on.
