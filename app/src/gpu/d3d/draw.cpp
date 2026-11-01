@@ -23,6 +23,7 @@
 // inline EndVertices keeps every other inline writer on the guarded F608.
 #include "gpu/d3d/draw.h"
 #include "diagnostics/incident.h"
+#include "diagnostics/report_context.h"
 #include "gpu/d3d/draw_capture.h"
 #include "gpu/d3d/d3d.h"
 #include "gpu/diagnostics/diagnostics.h"
@@ -671,6 +672,7 @@ void OwnDrawBody(PPCContext& ctx, uint8_t* base, bool indexed, std::shared_ptr<I
   TakeStopRequest(ctx);  // The watchdog stop, in order on this thread.
   if (!quad) TakePendingDraw(&ctx, base, name);  // A pending quad goes first.
   sampler::RegisterThread("draw");  // REX_NATIVE_SAMPLE_PERIOD_US.
+  narutorise::report_context::SetThreadRole("render");
   profile::Timer draw_time(profile::kDraw);
   const uint32_t dev = ctx.r3.u32;
   PPCContext saved;

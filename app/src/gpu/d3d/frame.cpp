@@ -28,6 +28,7 @@
 
 #include "gpu/d3d/frame.h"
 #include "diagnostics/incident.h"
+#include "diagnostics/report_context.h"
 #include "gpu/diagnostics/diagnostics.h"
 #include "gpu/d3d/hooks.h"
 #include "gpu/d3d/device.h"
@@ -244,6 +245,7 @@ struct TimeStepProbe {
 } time_step_probe;  // Main thread only.
 void TimeStepHook(PPCContext& ctx, uint8_t* base) {
   sampler::RegisterThread("main");  // REX_NATIVE_SAMPLE_PERIOD_US.
+  narutorise::report_context::SetThreadRole("main");
   auto& p = time_step_probe;
   if (p.enabled < 0) {
     const char* text = std::getenv("REX_NATIVE_FIXED_STEP_REWRITE");
@@ -414,6 +416,7 @@ REX_HOOK_RAW(sub_82138A20) {
   TakeStopRequest(ctx);  // The watchdog stop, in order on this thread.
   TakePendingDraw(&ctx, base, "Swap");  // A pending BeginVertices quad goes into this frame.
   gpu::sampler::RegisterThread("swap");  // The frames of the samples.
+  narutorise::report_context::SetThreadRole("render");  // The draws' thread.
   gpu::sampler::NoteSwap(own_draws.load());
   PacingAtSwap(ctx, base, ctx.r3.u32, true);  // The frame that just ended.
   StateAtSwap(ctx, base, ctx.r3.u32, true, ctx.r4.u32);  // Its state and front buffer.

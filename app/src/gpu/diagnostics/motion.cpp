@@ -1,5 +1,6 @@
 // The motion record of the frames the title builds (motion.h).
 #include "gpu/common/platform.h"
+#include "diagnostics/report_context.h"
 #include "gpu/d3d/destruction_order.h"
 #include "gpu/diagnostics/motion.h"
 #include "gpu/diagnostics/diagnostics.h"
@@ -537,6 +538,7 @@ REX_HOOK_RAW(sub_820FC008) {
 }
 REX_HOOK_RAW(sub_826AB438) {
   gpu::sampler::RegisterThread("effects");  // The effects' work thread (82650708); REX_NATIVE_SAMPLE_PERIOD_US.
+  narutorise::report_context::SetThreadRole("effects");
   if (Enabled()) EffectsUpdate(ctx, base);
   else __imp__sub_826AB438(ctx, base);
 }

@@ -1,5 +1,6 @@
 #include "sentry_reporting.h"
 #include "diagnostics/incident.h"
+#include "diagnostics/report_context.h"
 
 #include <cstdlib>
 #include <chrono>
@@ -9,6 +10,11 @@
 #include <cstring>
 #include <stdexcept>
 #include <rex/logging.h>
+#include <rex/logging/assert.h>
+#include <rex/ppc/context.h>
+#include <rex/system/thread_state.h>
+#include <rex/system/xmemory.h>
+#include <rex/thread.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 
 #ifdef NARUTORISE_ENABLE_SENTRY
@@ -32,12 +38,81 @@ const char* Override(const char* name, const char* fallback) {
   const char* value = std::getenv(name);
   return value && *value ? value : fallback;
 }
+
+// Hexadecimal text for an event, without fmt's heap: the crash path uses it.
+sentry_value_t Hex(uint64_t value) {
+  char text[24];
+  std::snprintf(text, sizeof(text), "0x%llX", static_cast<unsigned long long>(value));
+  return sentry_value_new_string(text);
+}
+
+// The object under key, created when the event has none.
+sentry_value_t Member(sentry_value_t parent, const char* key) {
+  sentry_value_t value = sentry_value_get_by_key(parent, key);
+  if (sentry_value_is_null(value)) {
+    value = sentry_value_new_object();
+    sentry_value_set_by_key(parent, key, value);
+  }
+  return value;
+}
+
+// In the crashing process, before the dump (the abort of a FATAL as well):
+// the thread's role and the guest state the thread published. No guest memory
+// is read and no logger runs; the values are allocations of the same kind the
+// SDK makes on this path. The scope (report_context.h) is merged afterwards.
+sentry_value_t OnCrash(const sentry_ucontext_t* uctx, sentry_value_t event, sentry_hint_t*, void*) {
+  const char* role = report_context::ThreadRole();
+  sentry_value_set_by_key(Member(event, "tags"), "thread_role", sentry_value_new_string(role));
+  sentry_value_t guest = sentry_value_new_object();
+  sentry_value_set_by_key(guest, "role", sentry_value_new_string(role));
+  uint64_t fault = 0;
+#ifdef _WIN32
+  if (const EXCEPTION_RECORD* record = uctx ? uctx->exception_ptrs.ExceptionRecord : nullptr) {
+    sentry_value_set_by_key(guest, "host_pc", Hex(reinterpret_cast<uint64_t>(record->ExceptionAddress)));
+    if (record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2) {
+      fault = record->ExceptionInformation[1];
+      const ULONG_PTR operation = record->ExceptionInformation[0];
+      sentry_value_set_by_key(guest, "access", sentry_value_new_string(
+          operation == 0 ? "read" : operation == 1 ? "write" : operation == 8 ? "execute" : "other"));
+    }
+  }
+#else
+  if (uctx && uctx->siginfo) {
+    fault = reinterpret_cast<uint64_t>(uctx->siginfo->si_addr);
+    sentry_value_set_by_key(guest, "signal", sentry_value_new_int32(uctx->signum));
+  }
+#endif
+  if (fault) sentry_value_set_by_key(guest, "fault_address", Hex(fault));
+  if (auto* state = rex::runtime::ThreadState::Get()) {
+    sentry_value_set_by_key(guest, "thread", Hex(state->thread_id()));
+    // r14-r31 and CTR are locals of the recompiled functions (crash_report.cpp).
+    if (const auto* ctx = state->context()) {
+      sentry_value_set_by_key(guest, "lr", Hex(ctx->lr));
+      const uint64_t gpr[] = {ctx->r0.u64, ctx->r1.u64, ctx->r2.u64, ctx->r3.u64, ctx->r4.u64,
+                              ctx->r5.u64, ctx->r6.u64, ctx->r7.u64, ctx->r8.u64, ctx->r9.u64,
+                              ctx->r10.u64, ctx->r11.u64, ctx->r12.u64, ctx->r13.u64};
+      char key[4];
+      for (int i = 0; i < 14; ++i) {
+        std::snprintf(key, sizeof(key), "r%d", i);
+        sentry_value_set_by_key(guest, key, Hex(gpr[i]));
+      }
+    }
+    if (const auto* memory = state->memory()) {
+      const auto base = reinterpret_cast<uint64_t>(memory->virtual_membase());
+      if (fault >= base && fault - base < (uint64_t(1) << 32)) sentry_value_set_by_key(guest, "fault_guest", Hex(fault - base));
+    }
+  }
+  sentry_value_set_by_key(Member(event, "contexts"), "guest", guest);
+  return event;
+}
 #endif
 }  // namespace
 
 bool Initialize(const std::filesystem::path& executable_dir,
                 const std::filesystem::path& cache_root, const std::string& version,
                 Consent consent) {
+  // The SDK's FATAL and devkit loads reach the incident's metadata without Sentry too.
+  report_context::InstallLogSink();
 #ifdef NARUTORISE_ENABLE_SENTRY
   if (initialized) return consent == Consent::kPending || SetConsent(consent == Consent::kGiven);
   // A pending answer keeps the destination: the SDK holds uploads until consent.
@@ -78,6 +153,7 @@ bool Initialize(const std::filesystem::path& executable_dir,
     // TEB limits, a crash dump is ~250 MB, over the upload limit (rejected as
     // invalid multipart) and the local incident quota.
     sentry_options_set_crashpad_limit_stack_capture_to_sp(options, 1);
+    sentry_options_set_on_crash(options, OnCrash, nullptr);
     if (destination && !local.empty()) {
 #ifdef _WIN32
       sentry_options_add_attachmentw(options, (local / "channel.bin").c_str());
@@ -130,6 +206,7 @@ bool Initialize(const std::filesystem::path& executable_dir,
     sentry_set_tag("application", "narutorise");
     sentry_set_tag("build_revision", NARUTORISE_BUILD_REVISION);
     sentry_set_tag("session_id", incident::SessionId().c_str());
+    report_context::Publish();
     auto* context = sentry_transaction_context_new("Application startup", "app.start");
     startup = sentry_transaction_start(context, sentry_value_new_null());
     REXLOG_INFO("[sentry] Local capture ready; uploads {}; release {}; incident {}",
@@ -180,7 +257,9 @@ void Close() {
 #endif
 }
 
-bool CaptureFailure(const std::string& operation, const std::string& evidence) {
+bool Ready() { return initialized.load(); }
+
+bool CaptureFailure(const std::string& operation, const std::string& evidence, const FailureDetails& details) {
 #ifdef NARUTORISE_ENABLE_SENTRY
   if (!initialized || revoked || sentry_user_consent_get() != SENTRY_USER_CONSENT_GIVEN) return false;
   auto event = sentry_value_new_event();
@@ -190,8 +269,23 @@ bool CaptureFailure(const std::string& operation, const std::string& evidence) {
   auto context = sentry_value_new_object();
   sentry_value_set_by_key(context, "operation", sentry_value_new_string(operation.c_str()));
   sentry_value_set_by_key(context, "evidence", sentry_value_new_string(evidence.substr(0, 4096).c_str()));
+  if (details.lr) sentry_value_set_by_key(context, "lr", Hex(details.lr));
+  if (details.guest_thread) sentry_value_set_by_key(context, "guest_thread", Hex(details.guest_thread));
+  if (details.address) sentry_value_set_by_key(context, "address", Hex(details.address));
+  if (details.value) sentry_value_set_by_key(context, "value", Hex(details.value));
+  if (!details.shutdown.empty())
+    sentry_value_set_by_key(context, "shutdown", sentry_value_new_string(details.shutdown.substr(0, 4096).c_str()));
   auto contexts = sentry_value_new_object(); sentry_value_set_by_key(contexts, "renderer_failure", context);
   sentry_value_set_by_key(event, "contexts", contexts);
+  // The detecting thread's stack: the guest functions and the hooks that led
+  // to the stop. A stack would also change the grouping, which stays by operation.
+  auto thread = sentry_value_new_thread(rex::thread::current_thread_system_id(), report_context::ThreadRole());
+  sentry_value_set_stacktrace(thread, nullptr, 0);
+  sentry_event_add_thread(event, thread);
+  auto fingerprint = sentry_value_new_list();
+  sentry_value_append(fingerprint, sentry_value_new_string("renderer-failure"));
+  sentry_value_append(fingerprint, sentry_value_new_string(operation.c_str()));
+  sentry_value_set_by_key(event, "fingerprint", fingerprint);
   const auto id = sentry_capture_event(event);
   char uuid[37]{}; sentry_uuid_as_string(&id, uuid);
   incident::SetMetadata("remote_event_id", uuid);
@@ -200,7 +294,7 @@ bool CaptureFailure(const std::string& operation, const std::string& evidence) {
   sentry_flush(500);
   return !sentry_uuid_is_nil(&id);
 #else
-  (void)operation; (void)evidence; return false;
+  (void)operation; (void)evidence; (void)details; return false;
 #endif
 }
 
@@ -211,6 +305,12 @@ bool Verify(const std::string& mode) {
     REXLOG_ERROR("[sentry] Triggering requested verification crash (abort)");
     rex::FlushLogging();
     std::abort();
+  }
+  if (mode == "fatal") {
+    // Through the SDK's FATAL (the log sink of report_context.h), as the
+    // runtime's own aborts go; the address shows the normalization.
+    sentry_set_tag("setup_verification", "true");
+    REX_FATAL("Naruto Rise Sentry verification fatal at guest address 0x{:08X}", 0x82000000u);
   }
   if (mode != "error") return false;
   try {
