@@ -6,3 +6,16 @@ body {
 	font-size: 16dp;
 	color: #ffffff;
 }
+/* A button of a hint (menu/prompts.h): a glyph of prompts.rcss, as tall as
+   the hint's line. */
+img.glyph {
+	width: 1.8em;
+	height: 1.8em;
+	vertical-align: middle;
+	margin: 0 0.1em;
+}
+img.glyph.key {
+	width: 2.4em;
+	height: 2.4em;
+	margin: -0.3em 0;
+}

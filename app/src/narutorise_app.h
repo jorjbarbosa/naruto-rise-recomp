@@ -37,6 +37,7 @@
 #include "diagnostics/incident.h"
 #include "diagnostics/report_context.h"
 #include "dlc_refusal.h"
+#include "controls/glyphs.h"
 #include "menu/folders.h"
 #include "data_migration.h"
 #include "game_files.h"
@@ -84,6 +85,8 @@ REXCVAR_DEFINE_BOOL(setup, false, "narutorise/UI",
                     "Open the setup screen before the game (also Shift held at the start)");
 REXCVAR_DEFINE_BOOL(show_startup_menu, true, "narutorise/UI",
                     "Show the initial menu before the game (Settings > Advanced)");
+REXCVAR_DEFINE_STRING(button_glyphs, "auto", "narutorise/UI",
+                      "Buttons the prompts show: auto, xbox, playstation, nintendo or steamdeck (Settings > Controls)");
 REXCVAR_DEFINE_BOOL(check_for_updates, true, "narutorise/UI", "Notify when a new release is available");
 REXCVAR_DEFINE_BOOL(crash_reporting, false, "narutorise/Reporting", "Allow crash reports and startup timing to be sent to Sentry");
 REXCVAR_DEFINE_BOOL(crash_reporting_asked, false, "narutorise/Reporting", "The crash report question at the first start was answered");
@@ -1136,6 +1139,7 @@ class NarutoriseApp : public rex::ReXApp {
         updates_ = std::make_unique<launcher_updates::Checker>(narutorise::Version(), prepared_data_->paths.data_root / "menu-updates.json");
     }
     SetFpsVisible(REXCVAR_GET(show_fps_overlay));
+    narutorise::controls::SetGlyphPreference(REXCVAR_GET(button_glyphs));
   }
 
   bool NativeRenderer() const {
@@ -1274,6 +1278,9 @@ class NarutoriseApp : public rex::ReXApp {
         narutorise::SetSkipIntroVideos(menu_settings_.config().skip_intro_videos);
       } else if (key == "native_backend" || key == "graphics_device") {
         app_context().CallInUIThreadDeferred([this] { OfferSettingsRestart(); });
+      } else if (key == "button_glyphs") {
+        rex::cvar::SetFlagByName(key, menu_settings_.config().button_glyphs);
+        narutorise::controls::SetGlyphPreference(menu_settings_.config().button_glyphs);
       } else if (key == "bind_game_menu" || key == "game_menu_chord") {
         if (game_running_) UpdateMenuShortcut();
       }

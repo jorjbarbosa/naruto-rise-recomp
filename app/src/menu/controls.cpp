@@ -1,5 +1,6 @@
 #include "menu/controls.h"
 #include "menu/text.h"
+#include "menu/prompts.h"
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <fmt/format.h>
@@ -171,7 +172,7 @@ void Controls::Tick(bool focused) {
     const bool was_blocking = capture_.BlocksNavigation();
     capture_.Poll(neutral, std::move(input));
     if (was_armed != capture_.Armed() || was_blocking != capture_.BlocksNavigation())
-      SetGamepadHints(gamepad_);
+      SetGlyphs(glyphs_);
     if (auto result = capture_.TakeResult()) {
       if (result->outcome != controls::Capture::Outcome::Canceled) {
         auto next = config_;
@@ -226,22 +227,16 @@ void Controls::Layout(int width, int height, float ratio) {
   const auto dimensions = context_->GetDimensions();
   (void)dimensions;
 }
-void Controls::SetGamepadHints(bool gamepad) {
-  gamepad_ = gamepad;
+void Controls::SetGlyphs(controls::Glyphs glyphs) {
+  glyphs_ = glyphs;
   if (document_) {
+    const bool pad = glyphs != controls::Glyphs::Keyboard;
     const char* hint = capture_.Active()
                            ? (capture_.Armed() ? "c-capture-footer" : "c-capture-waiting")
                        : capture_.BlocksNavigation() ? "c-capture-release"
-                       : gamepad ? (page_ == Deadzones ? "c-preview-pad-hints" : "c-pad-hints")
-                                                     : "c-key-hints";
-    std::string footer = Escape(Text(hint));
-    for (const auto& [symbol, direction] : {std::pair{"←", "left"}, std::pair{"→", "right"}})
-      for (auto at = footer.find(symbol); at != std::string::npos; at = footer.find(symbol, at + 1))
-        footer.replace(
-            at, std::string(symbol).size(),
-            "<span class='key-arrow " + std::string(direction) +
-                "'><span class='shaft'/><span class='tip-a'/><span class='tip-b'/></span>");
-    document_->GetElementById("controls-footer")->SetInnerRML(footer);
+                       : pad && page_ == Deadzones ? "c-preview-hints"
+                                                   : "c-hints";
+    document_->GetElementById("controls-footer")->SetInnerRML(PromptRml(Text(hint), glyphs));
   }
 }
 std::string Controls::Bindings(const std::vector<size_t>& actions) {
@@ -481,7 +476,7 @@ void Controls::Render(std::string focus) {
   document_->GetElementById("controls-status")
       ->SetClass("error", message_ == Text("save-failed") || message_ == Text("c-rumble-failed") ||
                               message_ == Text("c-reserved"));
-  SetGamepadHints(gamepad_);
+  SetGlyphs(glyphs_);
   auto size = context_->GetDimensions();
   Layout(size.x, size.y, context_->GetDensityIndependentPixelRatio());
   if (auto* selected = document_->GetElementById(focus))
@@ -771,7 +766,7 @@ void Controls::CaptureVisual() {
     if (auto* row = value->GetParentNode()->GetParentNode())
       row->SetClass("editing", capture_.Active());
   }
-  SetGamepadHints(gamepad_);
+  SetGlyphs(glyphs_);
   document_->GetElementById("controls-status")
       ->SetInnerRML(Escape(message_.empty() ? Text("c-autosave") : message_));
   document_->GetElementById("controls-status")

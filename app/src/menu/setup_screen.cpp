@@ -1,6 +1,7 @@
 // The first page of the setup screen (setup_screen.h).
 #include "menu/setup_screen.h"
 #include "menu/text.h"
+#include "menu/prompts.h"
 #include "menu/render_interface.h"
 #include <utility>
 #include <RmlUi/Core.h>
@@ -77,7 +78,7 @@ bool SetupScreen::Show(Rml::Context& context, const State& state, Actions action
     return false;
   }
   document_->Show(Rml::ModalFlag::None, Rml::FocusFlag::Document);
-  SetGamepadHints(gamepad_hints_);
+  SetGlyphs(glyphs_);
   // A failed start leads to the settings; otherwise to playing or choosing the game.
   if (Rml::Element* item = document_->GetElementById(start_failed_ ? "settings" : "first")) item->Focus(true);
   return true;
@@ -106,11 +107,11 @@ void SetupScreen::Hide() {
 }
 void SetupScreen::SetControlsOpen(bool open) { if(document_)document_->SetClass("controls-open",open); }
 
-void SetupScreen::SetGamepadHints(bool gamepad) {
-  gamepad_hints_ = gamepad;
+void SetupScreen::SetGlyphs(controls::Glyphs glyphs) {
+  glyphs_ = glyphs;
   if (document_) {
     if (auto* hints = document_->GetElementById("setup-hints"))
-      hints->SetInnerRML(Text(gamepad ? "setup-pad-hints" : "setup-key-hints"));
+      hints->SetInnerRML(PromptRml(Text("setup-hints"), glyphs));
   }
 }
 

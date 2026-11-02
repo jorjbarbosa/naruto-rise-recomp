@@ -26,6 +26,7 @@
 // only with the texture verification (TextureVerify).
 #include "gpu/textures/textures.h"
 #include "gpu/textures/layout.h"
+#include "gpu/textures/button_icons.h"
 #include "gpu/d3d/d3d.h"
 #include "gpu/diagnostics/diagnostics.h"
 #include "gpu/textures/write_watch.h"
@@ -428,6 +429,9 @@ struct TextureEntry {
   uint64_t integral = 0;                   // Content hash at the last read (verification only).
   bool header = false;             // Registered from a header (D210 or Unlock).
   std::atomic<bool> bound{false};
+  // A button icon of the game (button_icons.h), replaced at icon_revision.
+  std::atomic<int32_t> icon{-1};
+  std::atomic<uint64_t> icon_revision{0};
 };
 std::atomic<uint64_t> texture_versions{0};
 struct TextureKey {
@@ -526,6 +530,9 @@ bool UploadTexture(uint8_t* base, TextureEntry& e, bool force, std::string& reas
   const uint64_t epoch = write_watch::epoch.load(std::memory_order_acquire);
   uint64_t version = e.version.load();
   bool read = force || !version;
+  // An icon drawn for another device or profile: read and replaced again.
+  const uint64_t icons = button_icons::Revision();
+  if (e.icon.load() >= 0 && e.icon_revision.load() != icons) read = true;
   if (!read && e.checked_epoch.load() != epoch) {
     const uint64_t chunks = write_watch::Sum(e.desc.ranges, false);
     if (chunks != e.chunk_sum.load()) {
@@ -545,6 +552,11 @@ bool UploadTexture(uint8_t* base, TextureEntry& e, bool force, std::string& reas
     write_watch::Arm(e.desc.ranges);
   }
   if (!ReadTextureLevels(base, e.t, e.desc, t.data, reason)) return false;
+  if (read) e.icon.store(button_icons::Identify(t));
+  if (const int32_t icon = e.icon.load(); icon >= 0) {
+    button_icons::Replace(icon, t);
+    e.icon_revision.store(icons);
+  }
   if (read) {
     e.chunk_sum.store(chunks);
     e.page_sum = pages;
@@ -742,6 +754,9 @@ bool BindTexture(uint8_t* base, const ShaderSampler& sampler, bool vertex, bool 
   // and no write reached its chunks since the last read.
   uint64_t version = e.version.load(std::memory_order_acquire);
   bool current = version && e.slot->posted_version.load(std::memory_order_acquire) == version;
+  if (current && e.icon.load(std::memory_order_acquire) >= 0 &&
+      e.icon_revision.load(std::memory_order_acquire) != button_icons::Revision())
+    current = false;
   if (current) {
     const uint64_t epoch = write_watch::epoch.load(std::memory_order_acquire);
     if (e.checked_epoch.load(std::memory_order_acquire) != epoch) {

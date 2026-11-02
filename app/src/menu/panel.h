@@ -1,5 +1,6 @@
 // Shared tabbed window: options on the left, description/values on the right.
 #pragma once
+#include "controls/glyphs.h"
 #include <RmlUi/Core/EventListener.h>
 #include <functional>
 #include <string>
@@ -28,7 +29,8 @@ class Panel final : public Rml::EventListener {
   const std::string& FocusId() const { return focus_id_; }
   void Tick();
   void Layout(int width, int height, float ratio);
-  void SetGamepadHints(bool gamepad);
+  // The footer's buttons: the device last used in the menus.
+  void SetGlyphs(controls::Glyphs glyphs);
   bool RevealSelection();
   void ProcessEvent(Rml::Event& event) override;
  private:
@@ -39,7 +41,7 @@ class Panel final : public Rml::EventListener {
   std::function<void()> close_, pending_;
   int tab_ = 0, tabs_ = 0;
   float row_width_ = 536.0f, detail_width_ = 421.333f;
-  bool gamepad_ = false;
+  controls::Glyphs glyphs_ = controls::Glyphs::Keyboard;
   Rml::Element* reveal_ = nullptr;
   std::string focus_id_;
 };

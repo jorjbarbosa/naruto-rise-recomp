@@ -47,6 +47,9 @@ struct GameConfig {
   bool protect_zero = false;
 
   std::string input_backend = "sdl";
+  // The buttons prompts show: "auto" (each controller's own), "xbox",
+  // "playstation", "nintendo" or "steamdeck" (controls/glyphs.h).
+  std::string button_glyphs = "auto";
   // Keyboard and mouse mode, next to the controller: the mouse moves the
   // camera (the right stick) at mnk_sensitivity (1.0 = 100%), and each
   // controller input has its keys.

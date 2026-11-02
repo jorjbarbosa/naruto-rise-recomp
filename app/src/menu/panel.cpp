@@ -1,6 +1,7 @@
 // Window interactions are queued until after RmlUi finishes dispatching events.
 #include "menu/panel.h"
 #include "menu/text.h"
+#include "menu/prompts.h"
 #include <RmlUi/Core.h>
 #include <utility>
 #include <algorithm>
@@ -61,7 +62,7 @@ bool Panel::Show(Rml::Context& context, std::string title, std::vector<std::stri
   document_->AddEventListener("mousedown", this);
   const auto dimensions = context.GetDimensions();
   Layout(dimensions.x, dimensions.y, context.GetDensityIndependentPixelRatio());
-  SetGamepadHints(gamepad_);
+  SetGlyphs(glyphs_);
   document_->Show(Rml::ModalFlag::Modal, Rml::FocusFlag::Document);
   auto* focused = document_->GetElementById(focus.empty() && !rows_.empty() ? rows_.front().id : focus);
   if (!rows_.empty()) Describe(0, false);
@@ -104,17 +105,12 @@ void Panel::Layout(int width, int height, float ratio) {
     tabs->GetChild(i)->SetProperty("min-width", dp(scale * (tabs_ == 5 ? sizes[i] : 72)));
   }
 }
-void Panel::SetGamepadHints(bool gamepad) {
-  gamepad_ = gamepad;
+void Panel::SetGlyphs(controls::Glyphs glyphs) {
+  glyphs_ = glyphs;
   if (!document_) return;
   bool mapping = std::any_of(rows_.begin(), rows_.end(), [](const PanelRow& row) { return bool(row.clear); });
-  std::string footer = Escape(Text(mapping ? (gamepad ? "mapping-pad-hints" : "mapping-key-hints") : tabs_ == 5 ?
-      (gamepad ? "panel-pad-hints" : "panel-key-hints") : (gamepad ? "list-pad-hints" : "list-key-hints")));
-  for (const auto& [symbol, direction] : {std::pair{"←", "left"}, std::pair{"→", "right"}}) {
-    for (size_t at = footer.find(symbol); at != std::string::npos; at = footer.find(symbol, at + 1))
-      footer.replace(at, std::string(symbol).size(), "<span class='key-arrow " + std::string(direction) + "'><span class='shaft'/><span class='tip-a'/><span class='tip-b'/></span>");
-  }
-  document_->GetElementById("footer")->SetInnerRML(footer);
+  const char* hints = mapping ? "mapping-hints" : tabs_ == 5 ? "panel-hints" : "list-hints";
+  document_->GetElementById("footer")->SetInnerRML(PromptRml(Text(hints), glyphs));
 }
 void Panel::Hide() {
   reveal_ = nullptr;

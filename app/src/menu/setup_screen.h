@@ -8,6 +8,7 @@
 #include "game_image.h"
 #include "menu/setup_gate.h"
 #include "menu/game_logo.h"
+#include "controls/glyphs.h"
 #include <future>
 #include <functional>
 #include <string>
@@ -45,7 +46,7 @@ class SetupScreen {
   // empty when they are the disc's or not checked yet.
   void SetFilesNotice(std::string notice);
   void SetControlsOpen(bool open);
-  void SetGamepadHints(bool gamepad);
+  void SetGlyphs(controls::Glyphs glyphs);
   void UpdateLogo(RenderInterface& render);
   bool Shown() const { return document_ != nullptr; }
 
@@ -60,7 +61,7 @@ class SetupScreen {
   std::string files_notice_;
   bool game_ready_ = false, start_failed_ = false, files_warning_ = false;
   bool logo_ready_ = false, logo_complete_ = false, disc_image_ = false;
-  bool gamepad_hints_ = false;
+  controls::Glyphs glyphs_ = controls::Glyphs::Keyboard;
   std::filesystem::path logo_root_, render_root_, pending_root_;
   std::future<std::optional<game_logo::Image>> logo_task_;
   std::string first_label_, status_title_, status_detail_, version_;

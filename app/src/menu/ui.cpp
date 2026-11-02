@@ -1,5 +1,6 @@
 // The RmlUi of the game (ui.h).
 #include "menu/ui.h"
+#include "menu/prompts.h"
 #include "diagnostics/incident.h"
 #include "menu/assets.h"
 #include "menu/render_interface.h"
@@ -175,7 +176,7 @@ bool Ui::ShowSetup(const SetupScreen::State& state, SetupScreen::Actions actions
   if (context_) context_->ProcessMouseMove(-1, -1, 0);
   if (!context_ || !setup_.Show(*context_, state, std::move(actions))) return false;
   setup_shown_ = true;
-  setup_.SetGamepadHints(gamepad_input_);
+  setup_.SetGlyphs(menu_glyphs_);
   ++view_revision_;
   UpdateDocuments();
   return true;
@@ -204,7 +205,7 @@ void Ui::ShowPanel(std::string title, std::vector<std::string> tabs, int tab, st
   context_->ProcessMouseMove(-1, -1, 0);
   panel_shown_ = panel_.Show(*context_, std::move(title), std::move(tabs), tab, std::move(rows),
                               std::move(select_tab), std::move(close), std::move(focus), setup_.Shown());
-  panel_.SetGamepadHints(gamepad_input_);
+  panel_.SetGlyphs(menu_glyphs_);
   UpdateDocuments();
 }
 void Ui::HidePanel() { ++view_revision_; controls_.Hide(); controls_shown_ = false; setup_.SetControlsOpen(false); panel_.Hide(); panel_shown_ = false; UpdateDocuments(); }
@@ -215,7 +216,7 @@ void Ui::ShowControls(controls::Config config,std::function<bool(const controls:
   CancelKeyCapture(); panel_.Hide(); panel_shown_ = false;
   controls_shown_ = controls_.Show(*context_, std::move(config), std::move(save), std::move(close), std::move(menu_key), setup_.Shown());
   setup_.SetControlsOpen(controls_shown_.load());
-  controls_.SetGamepadHints(gamepad_input_); UpdateDocuments();
+  controls_.SetGlyphs(menu_glyphs_); UpdateDocuments();
 }
 
 void Ui::EnableGameMenu(std::string key, std::string chord, std::function<void()> toggle) {
@@ -238,7 +239,7 @@ void Ui::ShowOverlay(std::function<void()> settings, std::function<void()> dlc,
     const std::string label = Text(std::string(id) == "overlay-settings" ? "settings" : std::string(id) == "overlay-dlc" ? "dlc" : "exit-game");
     button->SetInnerRML("<div class='tab-plate'/><span class='tab-label'>" + Rml::StringUtilities::EncodeRml(label) + "</span>");
   }
-  overlay_->GetElementById("overlay-close-hint")->SetInnerRML(Text(gamepad_input_ ? "close-pad" : "close-key"));
+  overlay_->GetElementById("overlay-close-hint")->SetInnerRML(PromptRml(Text("close-hint"), menu_glyphs_));
   for (const char* event : {"click", "keydown", "mouseover"}) overlay_->AddEventListener(event, overlay_events_.get());
   overlay_->Show(Rml::ModalFlag::None, Rml::FocusFlag::Document);
   overlay_->GetElementById("overlay-settings")->Focus();
@@ -252,12 +253,13 @@ void Ui::HideOverlay() {
   overlay_->Close(); overlay_ = nullptr; overlay_events_.reset();
   overlay_shown_ = false; UpdateDocuments();
 }
-void Ui::UseGamepad(bool gamepad) {
-  if (gamepad_input_ == gamepad) return;
-  gamepad_input_ = gamepad; panel_.SetGamepadHints(gamepad);
-  controls_.SetGamepadHints(gamepad);
-  setup_.SetGamepadHints(gamepad);
-  if (overlay_) overlay_->GetElementById("overlay-close-hint")->SetInnerRML(Text(gamepad ? "close-pad" : "close-key"));
+void Ui::UseGlyphs(controls::Glyphs glyphs) {
+  if (menu_glyphs_ == glyphs) return;
+  menu_glyphs_ = glyphs;
+  panel_.SetGlyphs(glyphs);
+  controls_.SetGlyphs(glyphs);
+  setup_.SetGlyphs(glyphs);
+  if (overlay_) overlay_->GetElementById("overlay-close-hint")->SetInnerRML(PromptRml(Text("close-hint"), glyphs));
 }
 void Ui::Notify(std::string message, std::string action_label, std::function<void()> action, std::string title) {
   notices_.push_back({std::move(message), std::move(action_label), std::move(action), std::move(title)}); UpdateStatus();
@@ -310,11 +312,23 @@ void Ui::PollInput() {
   if (tick_) tick_();
   const bool focused = !input_active_ || input_active_();
   controls::Hardware().Poll(controls::Backend(), focused);
+  const auto devices = controls::Hardware().Devices();
+  const auto config = controls::Current();
+  const auto preference = controls::GlyphPreference();
+  player_input_.ObservePads(*devices, *config);
+  // A choice made in the settings shows at once, not at the next press.
+  if (menu_glyphs_ != controls::Glyphs::Keyboard) UseGlyphs(controls::ForPad(menu_pad_, preference));
+  controls::PublishGlyphs(player_input_.Current(*devices, *config, preference));
   controls_.Tick(focused);
   UpdateStatus();
   if (controls_.BlocksNavigation()) return;
-  pad_.PollDevices(*controls::Hardware().Devices(), TakesInput() && focused, [this](rex::ui::VirtualKey key) {
-    UseGamepad(true); dispatching_gamepad_ = true;
+  pad_.PollDevices(*devices, TakesInput() && focused, [this, devices, &preference](rex::ui::VirtualKey key) {
+    // The menus answer every pad: the hints show the one pressed now.
+    controls::Glyphs pressed = controls::Glyphs::Xbox;
+    for (const auto& device : devices->devices)
+      if (!device.keyboard && !device.raw.Neutral()) { pressed = device.glyphs; break; }
+    menu_pad_ = pressed;
+    UseGlyphs(controls::ForPad(pressed, preference)); dispatching_gamepad_ = true;
     rex::ui::KeyEvent down(nullptr, key, 1, false, false, false, false, false);
     rex::ui::KeyEvent up(nullptr, key, 1, true, false, false, false, false);
     OnKeyDown(down); OnKeyUp(up);
@@ -462,7 +476,10 @@ void Ui::Draw(rex::ui::UIDrawContext& context) {
 void Ui::OnKeyDown(rex::ui::KeyEvent& e) {
   if (controls_.Shown() && !dispatching_gamepad_) controls_.Key(e.virtual_key(), true, e.prev_state());
   if (controls_.BlocksNavigation()) { e.set_handled(true); return; }
-  if (!dispatching_gamepad_) UseGamepad(false);
+  if (!dispatching_gamepad_) {
+    UseKeyboard();
+    player_input_.ObserveKeyboard(*controls::Current());
+  }
   if (key_capture_) {
     e.set_handled(true);
     if (!e.prev_state()) {
@@ -495,6 +512,7 @@ void Ui::OnKeyUp(rex::ui::KeyEvent& e) {
 }
 
 void Ui::OnMouseDown(rex::ui::MouseEvent& e) {
+  player_input_.ObserveKeyboard(*controls::Current());
   if (controls_.Shown()) controls_.MouseButton(int(e.button()), true);
   if (controls_.BlocksNavigation()) { e.set_handled(true); return; }
   if (key_capture_) {
@@ -525,7 +543,8 @@ void Ui::OnMouseDown(rex::ui::MouseEvent& e) {
 void Ui::OnMouseMove(rex::ui::MouseEvent& e) {
   if (controls_.Shown()) controls_.MouseMove(e.x(), e.y(), e.dx(), e.dy());
   if (controls_.BlocksNavigation()) { e.set_handled(true); return; }
-  UseGamepad(false);
+  player_input_.ObserveMouseMotion(e.dx(), e.dy(), *controls::Current());
+  UseKeyboard();
   if (!TakesInput() && !status_shown_.load()) return;
   if (TakesInput()) e.set_handled(true);
   context_->ProcessMouseMove(e.x(), e.y(), 0);
@@ -541,6 +560,7 @@ void Ui::OnMouseUp(rex::ui::MouseEvent& e) {
 }
 
 void Ui::OnMouseWheel(rex::ui::MouseEvent& e) {
+  player_input_.ObserveKeyboard(*controls::Current());
   if (controls_.BlocksNavigation()) { e.set_handled(true); return; }
   if (!TakesInput()) return;
   e.set_handled(true);

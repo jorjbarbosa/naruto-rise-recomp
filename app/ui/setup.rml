@@ -2,6 +2,7 @@
 <head>
   <title>Setup</title>
   <link type="text/rcss" href="theme.rcss"/>
+  <link type="text/rcss" href="prompts.rcss"/>
   <link type="text/rcss" href="setup.rcss"/>
 </head>
 <body data-model="setup">
@@ -33,7 +34,7 @@
     <div class="detail">{{status_detail}}</div>
   </div>
   <div id="footer">
-    <div id="setup-hints">@setup-key-hints</div>
+    <div id="setup-hints">@setup-hints</div>
     <div id="version">{{version}}</div>
   </div>
 </body>

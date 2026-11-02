@@ -167,7 +167,7 @@ if(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP)
          src/gpu/d3d/destruction_order.cpp
          src/gpu/shaders/shaders.cpp src/gpu/shaders/package.cpp src/gpu/shaders/pipelines.cpp
          src/gpu/textures/textures.cpp src/gpu/textures/write_watch.cpp src/gpu/textures/formats.cpp
-         src/gpu/textures/layout.cpp
+         src/gpu/textures/layout.cpp src/gpu/textures/button_icons.cpp
          src/gpu/buffers/buffers.cpp src/gpu/buffers/vertex_layout.cpp
          src/gpu/diagnostics/frame_state.cpp src/gpu/diagnostics/census.cpp
          src/gpu/diagnostics/frame_trace.cpp src/gpu/diagnostics/start_evidence.cpp
@@ -219,6 +219,8 @@ target_link_libraries(narutorise PRIVATE narutorise::json RmlUi::Core narutorise
 add_library(narutorise_menu_components STATIC src/menu/text.cpp src/menu/panel.cpp src/menu/pad_input.cpp
             src/controls/config.cpp
             src/controls/service.cpp
+            src/controls/glyphs.cpp
+            src/menu/prompts.cpp
             src/controls/runtime.cpp
             src/controls/capture.cpp
             src/menu/controls.cpp src/menu/controls_text.cpp
@@ -257,6 +259,8 @@ if(WIN32)
     # instance; virtual devices cannot cross two static SDL copies.
     target_sources(narutorise_controls_service_test PRIVATE ../sdk/src/input/sdl/sdl_input_driver.cpp)
 endif()
+add_executable(narutorise_controls_glyphs_test EXCLUDE_FROM_ALL tests/controls_glyphs_test.cpp)
+target_link_libraries(narutorise_controls_glyphs_test PRIVATE narutorise_menu_components)
 add_executable(narutorise_controls_runtime_test EXCLUDE_FROM_ALL tests/controls_runtime_test.cpp)
 target_link_libraries(narutorise_controls_runtime_test PRIVATE narutorise_menu_components)
 add_executable(narutorise_controls_capture_test EXCLUDE_FROM_ALL tests/controls_capture_test.cpp)

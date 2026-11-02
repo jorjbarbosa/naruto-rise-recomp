@@ -263,6 +263,44 @@ int main(int argc, char** argv) {
     check("long-values-clipped-before-divider", escaped == 0, "{\"pixels\":" + std::to_string(escaped) + "}");
     std::ofstream(std::string(argv[1]) + ".panel-1280x720.bgra", std::ios::binary)
         .write(reinterpret_cast<const char*>(modal.data()), std::streamsize(modal.size()));
+    {
+      // A DualSense moving the menus: the footer shows its buttons instead of the keys.
+      const auto keyboard_footer = modal;
+      SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+      SDL_VirtualJoystickDesc dualsense;
+      SDL_INIT_INTERFACE(&dualsense);
+      dualsense.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+      dualsense.vendor_id = 0x054c;
+      dualsense.product_id = 0x0ce6;
+      dualsense.naxes = SDL_GAMEPAD_AXIS_COUNT;
+      dualsense.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+      dualsense.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1;
+      dualsense.name = "Menu glyphs test";
+      const auto id = SDL_AttachVirtualJoystick(&dualsense);
+      auto* pad = id ? SDL_OpenJoystick(id) : nullptr;
+      check("glyphs-virtual-dualsense", pad != nullptr, "{}");
+      if (pad) {
+        // West clears a mapping row only: nothing changes on this panel.
+        SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_WEST, true);
+        menu.PollInput();
+        SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_WEST, false);
+        menu.PollInput();
+        frame("panel-dualsense", modal);
+        // The cross of "Select", where the Enter key was: Kenney's purple cross.
+        uint32_t cross = 0, changed_pixels = 0;
+        for (uint32_t y = 615; y < 645; ++y) for (uint32_t x = 135; x < 170; ++x) {
+          const auto p = at(modal, x, y);
+          cross += p[2] > 180 && p[0] > 90 && p[0] < 160 && p[1] < 140;
+          changed_pixels += p != at(keyboard_footer, x, y);
+        }
+        check("glyphs-dualsense-footer", cross > 20 && changed_pixels > 20,
+              "{\"purple\":" + std::to_string(cross) + ",\"changed\":" + std::to_string(changed_pixels) + "}");
+        std::ofstream(std::string(argv[1]) + ".panel-dualsense-1280x720.bgra", std::ios::binary)
+            .write(reinterpret_cast<const char*>(modal.data()), std::streamsize(modal.size()));
+        SDL_CloseJoystick(pad); SDL_DetachVirtualJoystick(id);
+        menu.PollInput();
+      }
+    }
     key(rex::ui::VirtualKey::kRight);
     frame("panel-change", modal);
     check("panel-arrow-changes-value", changed == 1, "{}");

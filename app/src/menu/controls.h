@@ -1,6 +1,7 @@
 #pragma once
 #include "controls/runtime.h"
 #include "controls/capture.h"
+#include "controls/glyphs.h"
 #include <rex/ui/virtual_key.h>
 #include <set>
 #include <RmlUi/Core/EventListener.h>
@@ -20,7 +21,7 @@ class Controls final : public Rml::EventListener {
   bool Shown() const { return document_ != nullptr; }
   void Tick(bool focused);
   void Layout(int width, int height, float ratio);
-  void SetGamepadHints(bool gamepad);
+  void SetGlyphs(controls::Glyphs glyphs);
   bool BlocksNavigation() const { return capture_.BlocksNavigation(); }
   bool UseStickNavigation() const { return !Shown() || page_ != Deadzones; }
   void Key(rex::ui::VirtualKey key, bool down, bool repeat = false);
@@ -63,7 +64,7 @@ class Controls final : public Rml::EventListener {
   std::shared_ptr<const controls::Inventory> inventory_;
   size_t player_ = 0;
   Page page_ = Devices;
-  bool gamepad_ = false;
+  controls::Glyphs glyphs_ = controls::Glyphs::Keyboard;
   std::string menu_key_, message_;
   std::function<bool(const controls::Config&)> save_;
   std::function<void()> close_, pending_;

@@ -38,6 +38,7 @@ bool ConfigManager::Load(const std::filesystem::path& toml_path, GameConfig& con
     if (auto v = tbl["log_level"].value<std::string>()) loaded.log_level = *v;
     if (auto v = tbl["protect_zero"].value<bool>()) loaded.protect_zero = *v;
     if (auto v = tbl["input_backend"].value<std::string>()) loaded.input_backend = *v;
+    if (auto v = tbl["button_glyphs"].value<std::string>()) loaded.button_glyphs = *v;
     if (auto v = tbl["mnk_mode"].value<bool>()) loaded.mnk_mode = *v;
     if (auto v = tbl["mnk_mouse"].value<bool>()) loaded.mnk_mouse = *v;
     if (auto v = tbl["mnk_sensitivity"].value<double>()) loaded.mnk_sensitivity = *v;
@@ -154,6 +155,7 @@ bool ConfigManager::Save(const std::filesystem::path& toml_path, const GameConfi
   tbl.insert_or_assign("log_level", config.log_level);
   tbl.insert_or_assign("protect_zero", config.protect_zero);
   tbl.insert_or_assign("input_backend", config.input_backend);
+  tbl.insert_or_assign("button_glyphs", config.button_glyphs);
   tbl.insert_or_assign("mnk_mode", config.mnk_mode);
   tbl.insert_or_assign("mnk_mouse", config.mnk_mouse);
   tbl.insert_or_assign("mnk_sensitivity", config.mnk_sensitivity);

@@ -1,6 +1,7 @@
 // UI-thread hardware polling, immutable snapshots for consumers on other threads.
 #pragma once
 #include "controls/config.h"
+#include "controls/glyphs.h"
 #include <SDL3/SDL.h>
 #include <array>
 #include <chrono>
@@ -17,6 +18,7 @@ struct Device {
   std::string key, name;
   uint64_t generation = 0;
   bool keyboard = false, rumble = false, transient = false;
+  Glyphs glyphs = Glyphs::Xbox;  // the family its buttons are labelled in
   std::array<bool, 6> axes{};
   RawState raw;
   SDL_Gamepad* pad = nullptr;  // UI thread only, never dereference from guest
@@ -29,6 +31,9 @@ struct Inventory {
 // Ambiguous identities are deliberately not resolved by connection order.
 const Device* FindDevice(const Inventory& inventory, const std::string& key);
 const Device* SelectedDevice(const Config& config, size_t port, const Inventory& inventory);
+// The port the keyboard and mouse play for: the one assigned the keyboard, else
+// the first automatic one; kPorts for none.
+size_t KeyboardPort(const Config& config);
 class Service {
  public:
   void Initialize();

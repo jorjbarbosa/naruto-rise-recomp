@@ -60,6 +60,12 @@ constexpr uint8_t kOverlay[] = {
 constexpr uint8_t kOverlayStyle[] = {
 #embed "../../ui/overlay.rcss"
 };
+constexpr uint8_t kPrompts[] = {
+#embed "../../ui/prompts.rcss"
+};
+constexpr uint8_t kPromptsImage[] = {
+#embed "../../ui/images/prompts.png"
+};
 constexpr uint8_t kStatus[] = {
 #embed "../../ui/status.rml"
 };
@@ -89,6 +95,8 @@ constexpr std::array kAssets{
     Entry{"controls.rcss", kControlsStyle},
     Entry{"overlay.rml", kOverlay},
     Entry{"overlay.rcss", kOverlayStyle},
+    Entry{"prompts.rcss", kPrompts},
+    Entry{"images/prompts.png", kPromptsImage},
     Entry{"status.rml", kStatus},
     Entry{"status.rcss", kStatusStyle},
 };

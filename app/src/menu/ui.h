@@ -14,6 +14,7 @@
 #include "menu/pad_input.h"
 #include "menu/controls.h"
 #include "menu/text.h"
+#include "controls/glyphs.h"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -125,8 +126,14 @@ class Ui final : public rex::ui::UIDrawer, public rex::ui::WindowInputListener {
   uint32_t shader_pending_ = 0;
   float shader_progress_ = -1;
   std::string shaders_text_;
-  bool gamepad_input_ = false, dispatching_gamepad_ = false;
-  void UseGamepad(bool gamepad);
+  // The menus' hints follow the device that last moved them; the game's
+  // prompts follow player one's (controls/glyphs.h), published every poll.
+  controls::Glyphs menu_glyphs_ = controls::Glyphs::Keyboard;
+  controls::Glyphs menu_pad_ = controls::Glyphs::Xbox;  // the family of the last pad that moved them
+  controls::ActiveInput player_input_;
+  bool dispatching_gamepad_ = false;
+  void UseGlyphs(controls::Glyphs glyphs);
+  void UseKeyboard() { UseGlyphs(controls::Glyphs::Keyboard); }
   void UpdateStatus();
   struct DialogEvents;
   std::unique_ptr<DialogEvents> dialog_events_;

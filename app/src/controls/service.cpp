@@ -41,6 +41,16 @@ const Device* SelectedDevice(const Config& config, size_t port, const Inventory&
     return FindDevice(inventory, selected);
   return AvailableForAutomatic(config, "keyboard") ? FindDevice(inventory, "keyboard") : nullptr;
 }
+size_t KeyboardPort(const Config& config) {
+  if (!config.version) return kPorts;
+  size_t owner = kPorts;
+  for (size_t i = 0; i < kPorts; ++i)
+    if (config.ports[i].device == "keyboard") owner = i;
+  if (owner == kPorts)
+    for (size_t i = 0; i < kPorts; ++i)
+      if (config.ports[i].device == kAutomaticDevice) owner = i;
+  return owner;
+}
 std::shared_ptr<const Config> Current() {
   return current.load();
 }
@@ -48,18 +58,13 @@ void Publish(const Config& config) {
   if (!Valid(config))
     return;
   current.store(std::make_shared<const Config>(config));
+  InvalidateGlyphs();
   if (!config.version) {
     rex::input::mnk::SetProfile({});
     return;
   }
   auto profile = std::make_shared<rex::input::mnk::Profile>();
-  size_t owner = kPorts;
-  for (size_t i = 0; i < kPorts; ++i)
-    if (config.ports[i].device == "keyboard") owner = i;
-  if (owner == kPorts)
-    for (size_t i = 0; i < kPorts; ++i)
-      if (config.ports[i].device == kAutomaticDevice) owner = i;
-  if (owner < kPorts) {
+  if (const size_t owner = KeyboardPort(config); owner < kPorts) {
     const auto& port = config.ports[owner];
     profile->enabled = true;
     profile->user = uint32_t(owner);
@@ -150,6 +155,7 @@ void Service::Poll(const std::string& backend, bool focused) {
         d.pad = pad;
         const char* name = SDL_GetGamepadName(pad);
         d.name = name ? name : "SDL Gamepad";
+        d.glyphs = PadGlyphs(SDL_GetGamepadType(pad), SDL_GetGamepadVendor(pad), SDL_GetGamepadProduct(pad));
         d.generation = SDL_GetGamepadID(pad);
         d.transient = d.key.starts_with("sdl:session:");
         d.rumble = SDL_GetBooleanProperty(SDL_GetGamepadProperties(pad),

@@ -4,6 +4,7 @@
 #include "menu/text.h"
 #include "diagnostics/incident.h"
 #include "controls/runtime.h"
+#include "controls/glyphs.h"
 #include "wine.h"
 #include "../menu/game_languages.h"
 #include "../menu/graphics_devices.h"
@@ -53,6 +54,7 @@ void Settings::Reload() {
   const bool loaded=ConfigManager::Load(path, config_);
   load_failed_=std::filesystem::exists(path)&&!loaded;
   if (controls_enabled_ && config_.controls.version) controls::Publish(config_.controls);
+  controls::SetGlyphPreference(config_.button_glyphs);
   Localization::SetLanguageCode(config_.launcher_language);
   try {
     std::ifstream input(config_path_, std::ios::binary);
@@ -279,6 +281,16 @@ std::vector<PanelRow> Settings::Rows(int group) {
     choice("input_backend", TextId::SdlInputLabel, TextId::SdlInputDescription, {"XInput", "SDL"},
         config_.input_backend == "xinput" ? 0 : 1, config_.input_backend != initial_.input_backend, true,
         [](GameConfig& config, int value) { config.input_backend = value ? "sdl" : "xinput"; });
+    {
+      const auto& choices = controls::kGlyphPreferences;
+      const auto found = std::find(std::begin(choices), std::end(choices), config_.button_glyphs);
+      const int glyphs = found == std::end(choices) ? 0 : int(found - std::begin(choices));
+      const std::vector<std::string> names = {Text("c-automatic"), "Xbox", "PlayStation", "Nintendo", "Steam Deck"};
+      rows.push_back({"button_glyphs", Text("button-glyphs"), names[size_t(glyphs)], Text("button-glyphs-help"),
+          config_.button_glyphs != initial_.button_glyphs, false, names, glyphs,
+          [this](int value) { Change("button_glyphs", [value](GameConfig& c) {
+            c.button_glyphs = controls::kGlyphPreferences[std::clamp(value, 0, 4)]; }); }, {}});
+    }
     rows.push_back({"bind_game_menu", Text("menu-key"), menu_options_.key, Text("menu-key"),
         menu_options_.key != initial_menu_options_.key, false, {}, 0, {}, [this] {
       ui_->ShowDialog(Text("menu-key"), Tr(TextId::KeysHint), {{Text("cancel"), [this] { ui_->CancelKeyCapture(); }}});
