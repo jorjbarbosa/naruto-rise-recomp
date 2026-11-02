@@ -373,6 +373,9 @@ int main(int argc, char** argv) {
     settings_model.Initialize(settings_dir);
     check("first-run-controls-automatic", settings_model.config().controls.ports[0].device ==
         narutorise::controls::kAutomaticDevice, "{}");
+    // The data folder rows, as in the product, make Advanced taller than the panel.
+    narutorise::data::DataPaths data_paths; data_paths.data_root = settings_dir;
+    settings_model.SetDataFolder(data_paths, {}, {});
     settings_model.Open(menu, 0, false, {}, [](const std::string&) {}, [] {});
     frame("settings-game", modal);
     key(rex::ui::VirtualKey::kDown); key(rex::ui::VirtualKey::kRight);
@@ -399,6 +402,24 @@ int main(int argc, char** argv) {
     check("numeric-arrow-adjustment-saved", std::abs(saved["brightness"].value_or(0.0) - .51) < .0001, "{}");
     for (int i = 0; i < 3; ++i) { key(rex::ui::VirtualKey::kNext); frame("settings-next-" + std::to_string(i), modal); }
     key(rex::ui::VirtualKey::kLeft); frame("settings-startup-menu-off", modal);
+    {
+      // Advanced scrolls: its rows stay beside the scrollbar instead of over it.
+      Rml::Element* options = nullptr;
+      for (int i = 0; i < Rml::GetContext("game")->GetNumDocuments(); ++i) {
+        auto* document = Rml::GetContext("game")->GetDocument(i);
+        if (document->IsVisible() && document->GetElementById("options")) options = document->GetElementById("options");
+      }
+      float widest = 0;
+      for (int i = 0; options && i < options->GetNumChildren(); ++i)
+        widest = std::max(widest, options->GetChild(i)->GetBox().GetSize(Rml::BoxArea::Border).x);
+      const bool scrolls = options && options->GetScrollHeight() > options->GetClientHeight() + 1;
+      const float client = options ? options->GetClientWidth() : 0;
+      check("advanced-rows-beside-scrollbar", scrolls && widest > 0 && widest <= client + .5f,
+            "{\"scrolls\":" + std::string(scrolls ? "true" : "false") + ",\"widest\":" + std::to_string(widest) +
+            ",\"client\":" + std::to_string(client) + "}");
+      std::ofstream(std::string(argv[1]) + ".advanced-1280x720.bgra", std::ios::binary)
+          .write(reinterpret_cast<const char*>(modal.data()), std::streamsize(modal.size()));
+    }
     saved = toml::parse_file(settings_path.string());
     check("startup-menu-disabled-in-advanced", saved["show_startup_menu"].value<bool>() == false, "{}");
     key(rex::ui::VirtualKey::kRight); frame("settings-startup-menu-on", modal);
