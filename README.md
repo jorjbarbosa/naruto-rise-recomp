@@ -23,6 +23,11 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/jorjbarbosa/naruto-rise-recomp/releases/latest"><img src="https://img.shields.io/github/v/release/jorjbarbosa/naruto-rise-recomp?label=release" alt="Latest release"></a>
+  <a href="https://github.com/jorjbarbosa/naruto-rise-recomp/releases"><img src="https://img.shields.io/github/downloads/jorjbarbosa/naruto-rise-recomp/total" alt="Downloads"></a>
+  <a href="https://github.com/jorjbarbosa/naruto-rise-recomp/stargazers"><img src="https://img.shields.io/github/stars/jorjbarbosa/naruto-rise-recomp" alt="Stars"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/jorjbarbosa/naruto-rise-recomp" alt="License"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue" alt="Platforms">
   <a href="https://buymeacoffee.com/jorjbarbosa"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy Me a Coffee"></a>
 </p>
 
