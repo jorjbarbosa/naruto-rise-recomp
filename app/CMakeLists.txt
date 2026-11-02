@@ -359,7 +359,8 @@ if(NARUTORISE_NATIVE_RENDERER_BOOTSTRAP)
         add_library(native_engine_test_units STATIC src/gpu/backend/engine.cpp
                     ${NARUTORISE_NATIVE_VULKAN_SOURCES} src/gpu/backend/failure_channel.cpp
                     src/gpu/backend/pipeline_keys.cpp src/gpu/backend/pipeline_set.cpp src/gpu/backend/dispatcher.cpp
-                    src/gpu/shaders/package.cpp src/gpu/shaders/shader_cache_data.cpp)
+                    src/gpu/shaders/package.cpp src/gpu/shaders/shader_cache_data.cpp
+                    src/gpu/backend/tests/thread_role_stub.cpp)
         target_include_directories(native_engine_test_units PUBLIC src)
         # The frame events and the host services of the engine (gpu/common).
         if(WIN32)
