@@ -13,13 +13,16 @@ namespace narutorise::controls {
 struct Inventory;
 
 // The families of app/ui/images/prompts.png (tools/input-prompts/build-atlas.py).
-enum class Glyphs : uint8_t { Xbox, PlayStation, Nintendo, SteamDeck, Keyboard };
-// The atlas prefix of a family: "xbox", "ps", "switch", "deck" or "key".
+// PlayStation is the 5's (DualSense), PlayStation4 the 4's and 3's.
+enum class Glyphs : uint8_t { Xbox, PlayStation, PlayStation4, Nintendo, SteamDeck, Keyboard };
+// The atlas prefix of a family: "xbox", "ps", "ps4", "switch", "deck" or "key".
 const char* GlyphPrefix(Glyphs glyphs);
 
 // The settings' choice: "auto" keeps each controller's own family; the others
 // show that family for every controller (a virtual pad hides the real one).
-inline constexpr const char* kGlyphPreferences[] = {"auto", "xbox", "playstation", "nintendo", "steamdeck"};
+// "playstation" is the PlayStation 5.
+inline constexpr const char* kGlyphPreferences[] = {"auto",         "xbox",     "playstation",
+                                                    "playstation4", "nintendo", "steamdeck"};
 // The family SDL reports. The Steam Deck reports a generic pad.
 Glyphs PadGlyphs(SDL_GamepadType type, uint16_t vendor, uint16_t product);
 // detected, or the family the preference names.

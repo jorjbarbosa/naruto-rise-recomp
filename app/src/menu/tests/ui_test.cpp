@@ -286,15 +286,15 @@ int main(int argc, char** argv) {
         SDL_SetJoystickVirtualButton(pad, SDL_GAMEPAD_BUTTON_WEST, false);
         menu.PollInput();
         frame("panel-dualsense", modal);
-        // The cross of "Select", where the Enter key was: Kenney's purple cross.
+        // The cross of "Select", where the Enter key was: lavender strokes.
         uint32_t cross = 0, changed_pixels = 0;
         for (uint32_t y = 615; y < 645; ++y) for (uint32_t x = 135; x < 170; ++x) {
           const auto p = at(modal, x, y);
-          cross += p[2] > 180 && p[0] > 90 && p[0] < 160 && p[1] < 140;
+          cross += p[2] > 150 && p[2] > p[1] + 25 && p[2] > p[0] + 40;
           changed_pixels += p != at(keyboard_footer, x, y);
         }
-        check("glyphs-dualsense-footer", cross > 20 && changed_pixels > 20,
-              "{\"purple\":" + std::to_string(cross) + ",\"changed\":" + std::to_string(changed_pixels) + "}");
+        check("glyphs-dualsense-footer", cross > 10 && changed_pixels > 20,
+              "{\"lavender\":" + std::to_string(cross) + ",\"changed\":" + std::to_string(changed_pixels) + "}");
         std::ofstream(std::string(argv[1]) + ".panel-dualsense-1280x720.bgra", std::ios::binary)
             .write(reinterpret_cast<const char*>(modal.data()), std::streamsize(modal.size()));
         SDL_CloseJoystick(pad); SDL_DetachVirtualJoystick(id);

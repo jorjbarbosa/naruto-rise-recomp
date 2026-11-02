@@ -43,7 +43,8 @@ size_t Count(const std::string& text, const std::string& part) {
 int main() {
   try {
     Check(PadGlyphs(SDL_GAMEPAD_TYPE_PS5, 0x054c, 0x0ce6) == Glyphs::PlayStation, "DualSense");
-    Check(PadGlyphs(SDL_GAMEPAD_TYPE_PS3, 0x054c, 0x0268) == Glyphs::PlayStation, "DualShock 3");
+    Check(PadGlyphs(SDL_GAMEPAD_TYPE_PS4, 0x054c, 0x09cc) == Glyphs::PlayStation4, "DualShock 4");
+    Check(PadGlyphs(SDL_GAMEPAD_TYPE_PS3, 0x054c, 0x0268) == Glyphs::PlayStation4, "DualShock 3");
     Check(PadGlyphs(SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO, 0x057e, 0x2009) == Glyphs::Nintendo, "Switch Pro");
     Check(PadGlyphs(SDL_GAMEPAD_TYPE_STANDARD, 0x28de, 0x1205) == Glyphs::SteamDeck, "Steam Deck");
     Check(PadGlyphs(SDL_GAMEPAD_TYPE_XBOX360, 0x045e, 0x028e) == Glyphs::Xbox, "Xbox 360");
@@ -52,6 +53,7 @@ int main() {
     Check(ForPad(Glyphs::PlayStation, "auto") == Glyphs::PlayStation, "automatic keeps the family");
     Check(ForPad(Glyphs::Xbox, "playstation") == Glyphs::PlayStation, "a choice replaces it");
     Check(ForPad(Glyphs::PlayStation, "steamdeck") == Glyphs::SteamDeck, "Steam Deck choice");
+    Check(ForPad(Glyphs::Xbox, "playstation4") == Glyphs::PlayStation4, "PlayStation 4 choice");
     Check(ForPad(Glyphs::PlayStation, "unknown") == Glyphs::PlayStation, "an unknown choice is automatic");
 
     // Automatic player one with a DualSense and the keyboard: the last used wins.
@@ -103,6 +105,7 @@ int main() {
     Port port;
     Check(GlyphSprite("south", Glyphs::Xbox, port) == "xbox-south", "A on Xbox");
     Check(GlyphSprite("south", Glyphs::PlayStation, port) == "ps-south", "A is the cross");
+    Check(GlyphSprite("back", Glyphs::PlayStation4, port) == "ps4-back", "Back is the 4's Share");
     Check(GlyphSprite("lt", Glyphs::Nintendo, port) == "switch-lt", "LT is ZL");
     Check(GlyphSprite("dpad", Glyphs::Xbox, port) == "xbox-dpad", "the whole D-pad");
     Check(GlyphSprite("lstick", Glyphs::SteamDeck, port) == "deck-lstick", "the whole left stick");

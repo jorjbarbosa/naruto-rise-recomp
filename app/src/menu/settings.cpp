@@ -285,11 +285,12 @@ std::vector<PanelRow> Settings::Rows(int group) {
       const auto& choices = controls::kGlyphPreferences;
       const auto found = std::find(std::begin(choices), std::end(choices), config_.button_glyphs);
       const int glyphs = found == std::end(choices) ? 0 : int(found - std::begin(choices));
-      const std::vector<std::string> names = {Text("c-automatic"), "Xbox", "PlayStation", "Nintendo", "Steam Deck"};
+      const std::vector<std::string> names = {Text("c-automatic"), "Xbox", "PlayStation 5", "PlayStation 4",
+                                              "Nintendo", "Steam Deck"};
       rows.push_back({"button_glyphs", Text("button-glyphs"), names[size_t(glyphs)], Text("button-glyphs-help"),
           config_.button_glyphs != initial_.button_glyphs, false, names, glyphs,
           [this](int value) { Change("button_glyphs", [value](GameConfig& c) {
-            c.button_glyphs = controls::kGlyphPreferences[std::clamp(value, 0, 4)]; }); }, {}});
+            c.button_glyphs = controls::kGlyphPreferences[std::clamp(value, 0, int(std::size(choices)) - 1)]; }); }, {}});
     }
     rows.push_back({"bind_game_menu", Text("menu-key"), menu_options_.key, Text("menu-key"),
         menu_options_.key != initial_menu_options_.key, false, {}, 0, {}, [this] {

@@ -86,7 +86,7 @@ REXCVAR_DEFINE_BOOL(setup, false, "narutorise/UI",
 REXCVAR_DEFINE_BOOL(show_startup_menu, true, "narutorise/UI",
                     "Show the initial menu before the game (Settings > Advanced)");
 REXCVAR_DEFINE_STRING(button_glyphs, "auto", "narutorise/UI",
-                      "Buttons the prompts show: auto, xbox, playstation, nintendo or steamdeck (Settings > Controls)");
+                      "Buttons the prompts show: auto, xbox, playstation (5), playstation4, nintendo or steamdeck (Settings > Controls)");
 REXCVAR_DEFINE_BOOL(check_for_updates, true, "narutorise/UI", "Notify when a new release is available");
 REXCVAR_DEFINE_BOOL(crash_reporting, false, "narutorise/Reporting", "Allow crash reports and startup timing to be sent to Sentry");
 REXCVAR_DEFINE_BOOL(crash_reporting_asked, false, "narutorise/Reporting", "The crash report question at the first start was answered");

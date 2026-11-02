@@ -45,7 +45,8 @@ protect_zero = false
 
 input_backend = "sdl"
 # Buttons the prompts show: "auto" (the controller in use), "xbox",
-# "playstation", "nintendo" or "steamdeck". The keyboard shows its keys.
+# "playstation" (5), "playstation4", "nintendo" or "steamdeck". The keyboard
+# shows its keys.
 button_glyphs = "auto"
 # Keyboard and mouse as a controller, next to a connected one. While exploring,
 # the mouse turns the camera itself at mnk_sensitivity (1.0 = 100%, about one

@@ -1,13 +1,16 @@
-"""Builds the button glyph atlas from Kenney's Input Prompts (CC0).
+"""Builds the button glyph atlas from CC0 prompt packs.
 
-usage: python -I tools/input-prompts/build-atlas.py <extracted Kenney "Input Prompts" folder>
+usage: python -I tools/input-prompts/build-atlas.py <Kenney "Input Prompts" folder> <juliocacko "Source" folder>
 
-Writes, from the 128 px ("Double") images:
+Kenney's Input Prompts (www.kenney.nl), from its 128 px ("Double") images,
+for Nintendo, Steam Deck and the keyboard and mouse; juliocacko's Free Input
+Prompts (juliocacko.itch.io/free-input-prompts), from the "Default" styles with
+coloured faces, for Xbox and the PlayStation 5 and 4. Writes:
   app/ui/images/prompts.png    the atlas, one 128 px cell per glyph
   app/ui/prompts.rcss          an RmlUi @spritesheet naming each cell
   app/src/controls/glyph_atlas.inc   the same names and cells for C++
 
-Only the standard library: the Kenney PNGs are indexed or RGBA, 8 bits or less.
+Only the standard library: the PNGs are indexed or RGBA, 8 bits or less.
 """
 import struct
 import sys
@@ -42,6 +45,14 @@ GLYPHS += pad_family('ps', 'PlayStation Series', [
     'playstation_button_color_triangle', 'playstation_trigger_l1', 'playstation_trigger_r1',
     'playstation_trigger_l2', 'playstation_trigger_r2', 'playstation_button_l3', 'playstation_button_r3',
     'playstation5_button_create', 'playstation5_button_options'],
+    'playstation_dpad', 'playstation_stick_l', 'playstation_stick_r')
+# The PlayStation 4's, Kenney's PlayStation with its own Share and Options,
+# replaced below like the 5's when juliocacko's pack provides them.
+GLYPHS += pad_family('ps4', 'PlayStation Series', [
+    'playstation_button_color_cross', 'playstation_button_color_circle', 'playstation_button_color_square',
+    'playstation_button_color_triangle', 'playstation_trigger_l1', 'playstation_trigger_r1',
+    'playstation_trigger_l2', 'playstation_trigger_r2', 'playstation_button_l3', 'playstation_button_r3',
+    'playstation4_button_share', 'playstation4_button_options'],
     'playstation_dpad', 'playstation_stick_l', 'playstation_stick_r')
 GLYPHS += pad_family('switch', 'Nintendo Switch', [
     'switch_button_b', 'switch_button_a', 'switch_button_y', 'switch_button_x',
@@ -81,6 +92,31 @@ KEYS.update({
     'ArrowsVertical': 'keyboard_arrows_vertical',
 })
 GLYPHS += [(f'key-{name.lower()}', 'Keyboard & Mouse', stem) for name, stem in KEYS.items()]
+
+
+def juliocacko_glyphs():
+    """juliocacko's file of each Xbox and PlayStation atlas name, relative to its
+    folder. Its Xbox set has no Menu button: Start is drawn from its View
+    button (menu_from_view)."""
+    out = {}
+    suffix = {'': '', '-up': '_UP', '-down': '_Down', '-left': '_Left', '-right': '_Right',
+              '-horizontal': '_X', '-vertical': '_Y'}
+    playstation = ['Cross_Color', 'Circle_Color', 'Square_Color', 'Triangle_Color', 'L1', 'R1', 'L2', 'R2',
+                   'L3', 'R3', 'Share', 'Options']
+    xbox = ['A_Color', 'B_Color', 'X_Color', 'Y_Color', 'LB', 'RB', 'LT', 'RT', 'Left_Stick_Click',
+            'Right_Stick_Click', 'Share', 'Share']
+    for prefix, folder, model, files, dpad_up in (('ps', 'P5Gamepad', 'P5', playstation, '_UP'),
+                                                  ('ps4', 'P4Gamepad', 'P4', playstation, '_UP'),
+                                                  ('xbox', 'XGamepad', 'X', xbox, '_Up')):
+        folder = f'{folder}/Default/T_{model}_'
+        for name, file in zip(PAD_INPUTS, files):
+            if file:
+                out[f'{prefix}-{name}'] = f'{folder}{file}.png'
+        for d, end in suffix.items():
+            out[f'{prefix}-dpad{d}'] = f'{folder}Dpad{dpad_up if d == "-up" else end}.png'
+            out[f'{prefix}-lstick{d}'] = f'{folder}L{end}.png'
+            out[f'{prefix}-rstick{d}'] = f'{folder}R{end}.png'
+    return out
 
 
 def read_png(path):
@@ -143,6 +179,32 @@ def read_png(path):
 FILL = (30, 30, 34)
 
 
+def menu_from_view(width, height, rgba):
+    """The Menu button in the View button's disc: its light symbol painted over
+    in the disc's colour, then the three bars of Menu in that symbol's colour."""
+    disc = rgba[(height // 2 * width + width // 6) * 4:(height // 2 * width + width // 6) * 4 + 3]
+    level = sum(disc)
+    light = max((tuple(rgba[i * 4:i * 4 + 3]) for i in range(width * height) if rgba[i * 4 + 3] == 255), key=sum)
+    for i in range(width * height):
+        x, y = i % width, i // width
+        inside = (x + .5 - width / 2) ** 2 + (y + .5 - height / 2) ** 2 < (width * .36) ** 2
+        if inside and rgba[i * 4 + 3] and sum(rgba[i * 4:i * 4 + 3]) > level + 24:
+            rgba[i * 4:i * 4 + 3] = disc
+    bar_w, bar_h, gap = width * .36, height * .055, height * .12
+    for row in (-1, 0, 1):
+        cy = height / 2 + row * gap
+        for y in range(height):
+            for x in range(width):
+                # A rounded bar, anti-aliased by its distance to the centre segment.
+                dx = max(abs(x + .5 - width / 2) - (bar_w / 2 - bar_h / 2), 0)
+                dy = y + .5 - cy
+                cover = min(max(bar_h / 2 + .5 - (dx * dx + dy * dy) ** .5, 0), 1)
+                if cover:
+                    o = (y * width + x) * 4
+                    for c in range(3):
+                        rgba[o + c] = round(rgba[o + c] * (1 - cover) + light[c] * cover)
+
+
 def fill_holes(width, height, rgba):
     """Kenney's legends are cut out of the glyph. Fill what the outline encloses
     in a dark tone, so a legend stays legible over any background."""
@@ -178,14 +240,21 @@ def write_png(path, width, height, rgba):
 
 def main():
     kenney = Path(sys.argv[1])
+    playstation_root = Path(sys.argv[2])
+    playstation = juliocacko_glyphs()
     rows = (len(GLYPHS) + COLUMNS - 1) // COLUMNS
     width, height = COLUMNS * CELL, rows * CELL
     atlas = bytearray(width * height * 4)
     sprites, cells = [], []
     for index, (name, folder, stem) in enumerate(GLYPHS):
-        w, h, rgba = read_png(kenney / folder / 'Double' / f'{stem}.png')
-        assert (w, h) == (CELL, CELL), (stem, w, h)
-        fill_holes(w, h, rgba)
+        if name in playstation:
+            w, h, rgba = read_png(playstation_root / playstation[name])
+            if name == 'xbox-start':
+                menu_from_view(w, h, rgba)
+        else:
+            w, h, rgba = read_png(kenney / folder / 'Double' / f'{stem}.png')
+            fill_holes(w, h, rgba)
+        assert (w, h) == (CELL, CELL), (name, w, h)
         x, y = index % COLUMNS * CELL, index // COLUMNS * CELL
         for row in range(CELL):
             o = ((y + row) * width + x) * 4
@@ -193,7 +262,8 @@ def main():
         sprites.append(f'  {name}: {x}px {y}px {CELL}px {CELL}px;')
         cells.append(f'{{"{name}", {x}, {y}}},')
     write_png(ROOT / 'app/ui/images/prompts.png', width, height, bytes(atlas))
-    header = 'Generated by tools/input-prompts/build-atlas.py from Kenney Input Prompts (CC0, www.kenney.nl).'
+    header = ('Generated by tools/input-prompts/build-atlas.py from Kenney Input Prompts (CC0, www.kenney.nl) '
+              'and juliocacko Free Input Prompts (CC0, juliocacko.itch.io).')
     (ROOT / 'app/ui/prompts.rcss').write_text(
         f'/* {header} */\n@spritesheet prompts {{\n  src: images/prompts.png;\n  resolution: 1x;\n' +
         '\n'.join(sprites) + '\n}\n', encoding='utf8', newline='\n')

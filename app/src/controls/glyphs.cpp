@@ -24,6 +24,7 @@ bool KeyboardPlaysFirst(const Config& config) { return KeyboardPort(config) == 0
 const char* GlyphPrefix(Glyphs glyphs) {
   switch (glyphs) {
     case Glyphs::PlayStation: return "ps";
+    case Glyphs::PlayStation4: return "ps4";
     case Glyphs::Nintendo: return "switch";
     case Glyphs::SteamDeck: return "deck";
     case Glyphs::Keyboard: return "key";
@@ -36,7 +37,7 @@ Glyphs PadGlyphs(SDL_GamepadType type, uint16_t vendor, uint16_t product) {
   if (vendor == kValve && product == kSteamDeck) return Glyphs::SteamDeck;
   switch (type) {
     case SDL_GAMEPAD_TYPE_PS3:
-    case SDL_GAMEPAD_TYPE_PS4:
+    case SDL_GAMEPAD_TYPE_PS4: return Glyphs::PlayStation4;
     case SDL_GAMEPAD_TYPE_PS5: return Glyphs::PlayStation;
     case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO:
     case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
@@ -50,6 +51,7 @@ Glyphs PadGlyphs(SDL_GamepadType type, uint16_t vendor, uint16_t product) {
 Glyphs ForPad(Glyphs detected, std::string_view choice) {
   if (choice == "xbox") return Glyphs::Xbox;
   if (choice == "playstation") return Glyphs::PlayStation;
+  if (choice == "playstation4") return Glyphs::PlayStation4;
   if (choice == "nintendo") return Glyphs::Nintendo;
   if (choice == "steamdeck") return Glyphs::SteamDeck;
   return detected == Glyphs::Keyboard ? Glyphs::Xbox : detected;
