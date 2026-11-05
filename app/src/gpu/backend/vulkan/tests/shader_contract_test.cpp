@@ -53,7 +53,9 @@ int main(int argc, char** argv) {
   const ShaderPackage* package = EmbeddedShaderPackage(ShaderFormat::kSpirv, error);
   ShaderContract contract;
   const bool read = package && ReadShaderContract(package->index, contract, error);
-  line("embedded-contract-read", read && contract.capabilities.size() == 7 && contract.bindings.size() == 14,
+  // Eight capabilities since the translated getGradients (ddx_coarse and
+  // ddy_coarse) declares DerivativeControl.
+  line("embedded-contract-read", read && contract.capabilities.size() == 8 && contract.bindings.size() == 14,
        "{\"sha256\":\"" + contract.sha256 + "\",\"error\":\"" + error + "\"}");
   const auto missing = MissingFromDevice(contract, vulkan);
   line("embedded-contract-met", read && missing.empty(), "{\"missing\":" + Json(missing) + "}");

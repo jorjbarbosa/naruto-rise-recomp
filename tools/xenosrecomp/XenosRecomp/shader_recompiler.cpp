@@ -239,7 +239,11 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
 
 void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicubic)
 {
-    if (instr.opcode != FetchOpcode::TextureFetch && instr.opcode != FetchOpcode::GetTextureWeights)
+    if (instr.opcode != FetchOpcode::TextureFetch && instr.opcode != FetchOpcode::GetTextureWeights
+#ifdef NARUTO_RECOMP
+        && instr.opcode != FetchOpcode::GetTextureGradients
+#endif
+        )
         return;
 
     if (instr.isPredicated)
@@ -259,6 +263,44 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
             for (size_t i = 0; i < componentCount; i++)
                 out += SWIZZLES[((instr.srcSwizzle >> (i * 2))) & 0x3];
         };
+
+#ifdef NARUTO_RECOMP
+    // getGradients reads no texture: the derivatives of two source components
+    // (getGradients of shader_common.h). Dropped, it left the destination with
+    // its previous value, which the cel shaders took as the width of their
+    // light step.
+    if (instr.opcode == FetchOpcode::GetTextureGradients)
+    {
+        bool written = false;
+        for (uint32_t i = 0; i < 4; i++)
+        {
+            const auto swizzle = getDestSwizzle(instr.dstSwizzle, i);
+            written = written || (swizzle >= FetchDestinationSwizzle::X && swizzle <= FetchDestinationSwizzle::W);
+        }
+
+        if (written)
+        {
+            indent();
+            print("r{}.", instr.dstRegister);
+            printDstSwizzle(instr.dstSwizzle, false);
+            out += " = getGradients(";
+            printSrcRegister(2);
+            out += ").";
+            printDstSwizzle(instr.dstSwizzle, true);
+            out += ";\n";
+        }
+
+        printDstSwizzle01(instr.dstRegister, instr.dstSwizzle);
+
+        if (instr.isPredicated)
+        {
+            --indentation;
+            indent();
+            out += "}\n";
+        }
+        return;
+    }
+#endif
 
     std::string constName;
     const char* constNamePtr = nullptr;
