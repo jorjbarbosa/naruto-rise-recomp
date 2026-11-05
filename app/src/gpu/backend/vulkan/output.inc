@@ -91,8 +91,10 @@ bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, u
   }
   if (!s.acquire_fence) {
     VkFenceCreateInfo info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-    if ((result = vkCreateFence(s.vulkan->vk, &info, nullptr, &s.acquire_fence)) != VK_SUCCESS)
+    VkFence fence = VK_NULL_HANDLE;
+    if ((result = vkCreateFence(s.vulkan->vk, &info, nullptr, &fence)) != VK_SUCCESS)
       return GraphicsError(evidence, "native-vulkan-acquire-fence", result);
+    s.acquire_fence = fence;
   }
   if ((result = vkResetFences(s.vulkan->vk, 1, &s.acquire_fence)) != VK_SUCCESS)
     return GraphicsError(evidence, "native-vulkan-acquire-reset", result);
@@ -104,6 +106,10 @@ bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, u
   bool renewed = false, surface_renewed = false;
   for (;;) {
     if (!platform::ClientSize(s.window, width_now, height_now)) return skipped("window-closed-or-minimized");
+#if defined(NATIVE_RENDERER_ENGINE_FAULT_TEST)
+    result = s.test_acquire_result;
+    if (result == VK_SUCCESS)
+#endif
     result = vkAcquireNextImageKHR(s.vulkan->vk, s.swapchain, 20'000'000, VK_NULL_HANDLE, s.acquire_fence, &index);
     acquire_results.push_back(int32_t(result));
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
@@ -116,7 +122,9 @@ bool Backend::Present(uint32_t slot, bool capture, std::vector<uint8_t>& bgra, u
     if (!s.swapchain) return skipped("window-empty");
     if (s.failures->Failed()) break;
     if (std::chrono::steady_clock::now() < deadline) continue;
-    if (result != VK_TIMEOUT && result != VK_NOT_READY) break;  // Out of date up to the deadline.
+    // Out of date up to the deadline (a window still being resized): the
+    // swapchain is new, and the next frame asks again.
+    if (result != VK_TIMEOUT && result != VK_NOT_READY) return skipped("acquire-out-of-date");
     // No image within the budget: a compositor that stopped releasing them (a
     // hidden window, a monitor turned off). One new swapchain, as for an out of
     // date one; still none and this frame is skipped.

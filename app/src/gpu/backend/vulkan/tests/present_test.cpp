@@ -1,3 +1,4 @@
+#include "gpu/backend/backend.h"
 #include "gpu/backend/engine.h"
 #include "gpu/backend/tests/test_backend.h"
 #include <windows.h>
@@ -74,6 +75,33 @@ int main(int argc, char** argv) {
     check("release", engine.ReleaseRemaining(evidence), evidence);
     check("detach", engine.DetachWindow(evidence), evidence);
     check("shutdown", engine.Shutdown(evidence), evidence);
+  }
+  // An image that stays out of date skips the frame, and a failed swapchain
+  // creation leaves nothing for the shutdown to destroy.
+  {
+    constexpr int32_t kOutOfDate = -1000001004, kInitializationFailed = -3;
+    Engine engine; std::string evidence;
+    if (!engine.Initialize(evidence, TestRenderMode())) check("faults-initialize", false, evidence);
+    else if (auto* hooks = engine.CompletionHooksForTest()) {  // Vulkan only.
+      check("faults-attach", engine.AttachWindow(platform::WindowHandles(window), evidence, PresentMode{}), evidence);
+      SurfaceDesc surface{0x1234, 64, 48};
+      check("faults-surface", engine.CreateSurface(surface, evidence), evidence);
+      ClearRequest clear; clear.color_keys[0] = surface.key; clear.clear_color = true; clear.color = {1, 0, 0, 1};
+      uint64_t fence = 0;
+      check("faults-clear", engine.ClearSurfaces(clear, fence, evidence), evidence);
+      auto present = [&] {
+        uint32_t slot{}, w{}, h{}; std::vector<uint8_t> pixels;
+        return engine.StageFront(surface.key, slot, evidence) && engine.Present(slot, false, pixels, w, h, evidence);
+      };
+      hooks->InjectSwapchainResults(0, kOutOfDate);
+      check("out-of-date-skips", present() && evidence.find("acquire-out-of-date") != std::string::npos, evidence);
+      hooks->InjectSwapchainResults(0, 0);
+      check("out-of-date-recovers", present() && evidence.find("\"presented\":true") != std::string::npos, evidence);
+      hooks->InjectSwapchainResults(kInitializationFailed, 0);
+      SetWindowPos(window, nullptr, 0, 0, 160, 128, SWP_NOMOVE | SWP_NOZORDER); pump();
+      check("failed-create-reported", !present() && evidence.find("native-vulkan-create-swapchain") != std::string::npos, evidence);
+      check("failed-create-shutdown", engine.Shutdown(evidence), evidence);
+    }
   }
   DestroyWindow(window);
   out << "{\"kind\":\"verdict\",\"passed\":" << (passed ? "true" : "false") << "}\n";

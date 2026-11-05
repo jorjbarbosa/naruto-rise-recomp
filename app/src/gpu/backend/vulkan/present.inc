@@ -102,8 +102,18 @@ bool Backend::State::CreateSwapchain(uint32_t width, uint32_t height, std::strin
                        VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR})
       if (caps.supportedCompositeAlpha & alpha) { info.compositeAlpha = alpha; break; }
   info.presentMode = swap_mode; info.clipped = VK_TRUE;
-  if ((result = vkCreateSwapchainKHR(vulkan->vk, &info, nullptr, &swapchain)) != VK_SUCCESS)
-    return GraphicsError(evidence, "native-vulkan-create-swapchain", result);
+  // The handles are kept only on success: what a failed creation leaves in its
+  // output is undefined, and the retirement destroys whatever is not null.
+  VkSwapchainKHR made = VK_NULL_HANDLE;
+#if defined(NATIVE_RENDERER_ENGINE_FAULT_TEST)
+  if (test_create_result != VK_SUCCESS) {
+    made = reinterpret_cast<VkSwapchainKHR>(uintptr_t(0xBAD0BAD0));
+    result = test_create_result;
+  } else
+#endif
+  result = vkCreateSwapchainKHR(vulkan->vk, &info, nullptr, &made);
+  if (result != VK_SUCCESS) return GraphicsError(evidence, "native-vulkan-create-swapchain", result);
+  swapchain = made;
   if ((result = vkGetSwapchainImagesKHR(vulkan->vk, swapchain, &count, nullptr)) != VK_SUCCESS)
     return GraphicsError(evidence, "native-vulkan-swapchain-images", result);
   std::vector<VkImage> images(count);
@@ -114,9 +124,14 @@ bool Backend::State::CreateSwapchain(uint32_t width, uint32_t height, std::strin
     auto& back = back_images[i]; back.image = images[i];
     VkSemaphoreCreateInfo sem{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-    if ((result = vkCreateSemaphore(vulkan->vk, &sem, nullptr, &back.rendered)) != VK_SUCCESS ||
-        (result = vkCreateFence(vulkan->vk, &fence, nullptr, &back.presented)) != VK_SUCCESS)
+    VkSemaphore rendered = VK_NULL_HANDLE;
+    if ((result = vkCreateSemaphore(vulkan->vk, &sem, nullptr, &rendered)) != VK_SUCCESS)
       return GraphicsError(evidence, "native-vulkan-present-sync", result);
+    back.rendered = rendered;
+    VkFence presented = VK_NULL_HANDLE;
+    if ((result = vkCreateFence(vulkan->vk, &fence, nullptr, &presented)) != VK_SUCCESS)
+      return GraphicsError(evidence, "native-vulkan-present-sync", result);
+    back.presented = presented;
   }
   ++swap_generation; recreate_swapchain = false;
   return true;
@@ -177,8 +192,10 @@ bool Backend::State::RecreateSurface(uint32_t width, uint32_t height, std::strin
   const VkInstance instance = static_cast<plume::VulkanInterface*>(render.get())->instance;
   if (window_surface) vkDestroySurfaceKHR(instance, window_surface, nullptr);
   window_surface = VK_NULL_HANDLE;
-  VkResult result = CreateWindowSurface(instance, window, window_surface);
+  VkSurfaceKHR made = VK_NULL_HANDLE;
+  VkResult result = CreateWindowSurface(instance, window, made);
   if (result != VK_SUCCESS) return GraphicsError(evidence, "native-vulkan-window-surface", result);
+  window_surface = made;
   VkBool32 supported = VK_FALSE;
   result = vkGetPhysicalDeviceSurfaceSupportKHR(vulkan->physicalDevice, vulkan->queueFamilyIndices[0], window_surface,
                                                 &supported);
@@ -202,9 +219,10 @@ bool Backend::AttachWindow(const platform::NativeWindow& window, std::string& ev
   vkGetPhysicalDeviceFeatures2(s.vulkan->physicalDevice, &features);
   const char* fences_option = std::getenv("REX_NATIVE_VULKAN_PRESENT_FENCES");
   s.present_fences = maintenance.swapchainMaintenance1 && !(fences_option && std::string_view(fences_option) == "0");
-  VkResult result = CreateWindowSurface(static_cast<plume::VulkanInterface*>(s.render.get())->instance, window,
-                                        s.window_surface);
+  VkSurfaceKHR surface = VK_NULL_HANDLE;
+  VkResult result = CreateWindowSurface(static_cast<plume::VulkanInterface*>(s.render.get())->instance, window, surface);
   if (result != VK_SUCCESS) return GraphicsError(evidence, "native-vulkan-window-surface", result);
+  s.window_surface = surface;
   VkBool32 supported = VK_FALSE;
   result = vkGetPhysicalDeviceSurfaceSupportKHR(s.vulkan->physicalDevice, s.vulkan->queueFamilyIndices[0], s.window_surface, &supported);
   if (result != VK_SUCCESS || !supported) return GraphicsError(evidence, "native-vulkan-window-present-support", result);

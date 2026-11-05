@@ -645,6 +645,8 @@ struct Backend::State {
   std::unique_ptr<Hooks> hooks;
   VkSemaphore hold = VK_NULL_HANDLE;
   std::atomic<uint64_t> hold_value{0}, hold_signaled{0};
+  // The results the swapchain's creation and the acquire answer instead of the driver's.
+  VkResult test_create_result = VK_SUCCESS, test_acquire_result = VK_SUCCESS;
 #endif
 };
 
@@ -697,6 +699,10 @@ class Backend::State::Hooks final : public CompletionTestHooks {
     state_.completion->SetDeadlineForTest(std::chrono::milliseconds(milliseconds));
   }
   uint64_t Submissions() const override { return state_.completion->Submissions(); }
+  void InjectSwapchainResults(int32_t create, int32_t acquire) override {
+    state_.test_create_result = VkResult(create);
+    state_.test_acquire_result = VkResult(acquire);
+  }
 
  private:
   State& state_;

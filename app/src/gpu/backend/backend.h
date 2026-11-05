@@ -34,6 +34,9 @@ class CompletionTestHooks {
   virtual void InjectResult(int32_t result) = 0;
   virtual void SetDeadline(uint32_t milliseconds) = 0;
   virtual uint64_t Submissions() const = 0;
+  // Owner: the results of the swapchain's creation and of the acquire from now
+  // on (0: the driver's). A failed creation also leaves a bad handle in its output.
+  virtual void InjectSwapchainResults(int32_t create, int32_t acquire) = 0;
 };
 #endif
 
