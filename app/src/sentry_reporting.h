@@ -24,6 +24,9 @@ struct FailureDetails {
   uint32_t guest_thread = 0, address = 0, value = 0;
   std::string shutdown;
 };
+// A renderer stop that started: its operation goes to the scope, so a crash
+// while the engine is released still names it.
+void NoteFailure(const std::string& operation, const std::string& evidence);
 // A renderer stop: grouped by its operation, with the detecting thread's stack.
 bool CaptureFailure(const std::string& operation, const std::string& evidence,
                     const FailureDetails& details = {});

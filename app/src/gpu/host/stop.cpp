@@ -5,8 +5,12 @@
 #include "sentry_reporting.h"
 #include "gpu/backend/dispatcher.h"
 #include "gpu/common/platform.h"
+#include <chrono>
+#include <condition_variable>
 #include <cstdlib>
+#include <mutex>
 #include <optional>
+#include <thread>
 #include <fmt/format.h>
 #include <rex/logging.h>
 #include <rex/string.h>
@@ -61,7 +65,10 @@ bool ReleaseEngineAndRecord(std::string_view name, PPCContext* ctx, uint32_t add
       shutdown_ok = native_engine->Shutdown(shutdown);
       if (shutdown_ok) {
         active_engine.store(nullptr, std::memory_order_release);
-        native_engine.reset();
+        // Not destroyed: a thread that read ActiveDispatcher before the store
+        // may still be calling it, and a shut down dispatcher refuses its
+        // calls. The process ends after a stop or a close.
+        (void)native_engine.release();
       }
     }
     if (shutdown_evidence) *shutdown_evidence = shutdown;
@@ -136,6 +143,41 @@ void ReportProductStop(std::string_view name, int code, bool released, std::stri
 #endif
   platform::ShowError("narutorise", message);
 }
+
+// The limit of a stop's quiesce and release, which can hang in a driver: past
+// it the failure is reported without the release, and the process exits.
+constexpr auto kStopBudget = std::chrono::seconds(30);
+struct StopWatch {
+  std::mutex mutex;
+  std::condition_variable wake;
+  bool finished = false, expired = false;
+  std::string name, posted;
+  narutorise::reporting::FailureDetails details;
+} stop_watch;
+void WatchStop() {
+  std::thread([] {
+    std::unique_lock lock(stop_watch.mutex);
+    if (stop_watch.wake.wait_for(lock, kStopBudget, [] { return stop_watch.finished; })) return;
+    stop_watch.expired = true;
+    const std::string posted = stop_watch.posted;
+    lock.unlock();
+    const std::string shutdown = "{\"released\":false,\"reason\":\"native-stop-budget-exceeded\"}";
+    narutorise::incident::Event("renderer-release", "timeout", shutdown);
+    auto details = stop_watch.details;
+    details.shutdown = shutdown;
+    narutorise::reporting::CaptureFailure(stop_watch.name, posted, details);
+    if (!Journaled()) ReportProductStop(stop_watch.name, 88, false, posted, shutdown);
+    std::_Exit(88);
+  }).detach();
+}
+// False when the budget ran out first: the watch reports and exits.
+bool FinishStopWatch() {
+  std::lock_guard lock(stop_watch.mutex);
+  if (stop_watch.expired) return false;
+  stop_watch.finished = true;
+  stop_watch.wake.notify_all();
+  return true;
+}
 }  // namespace
 
 [[noreturn]] void Stop(std::string_view name, PPCContext* ctx,
@@ -144,6 +186,14 @@ void ReportProductStop(std::string_view name, int code, bool released, std::stri
   narutorise::incident::FirstFailure(name);
   narutorise::incident::Event("renderer-stop", "begin", name);
   ClaimStop(name, ctx);
+  narutorise::reporting::FailureDetails details;
+  details.lr = ctx ? ctx->lr : 0;
+  if (auto* ts = rex::runtime::ThreadState::Get()) details.guest_thread = ts->thread_id();
+  details.address = address;
+  details.value = value;
+  stop_watch.name = name;
+  stop_watch.details = details;
+  WatchStop();
   narutorise::incident::Event("renderer-quiesce", "begin");
   frame_completion::Quiesce();
   narutorise::incident::Event("renderer-quiesce", "end");
@@ -151,14 +201,16 @@ void ReportProductStop(std::string_view name, int code, bool released, std::stri
   std::string posted, shutdown;
   if (!Journaled())
     if (auto* dispatcher = ActiveDispatcher()) dispatcher->PostedFailure(posted);
+  {
+    std::lock_guard lock(stop_watch.mutex);
+    stop_watch.posted = posted;
+  }
+  narutorise::reporting::NoteFailure(std::string(name), posted);
   narutorise::incident::Event("renderer-release", "begin");
   const bool released = ReleaseEngineAndRecord(name, ctx, address, value, true, &shutdown);
+  if (!FinishStopWatch())
+    for (;;) std::this_thread::sleep_for(std::chrono::hours(1));
   narutorise::incident::Event("renderer-release", released ? "end" : "failed", shutdown);
-  narutorise::reporting::FailureDetails details;
-  details.lr = ctx ? ctx->lr : 0;
-  if (auto* ts = rex::runtime::ThreadState::Get()) details.guest_thread = ts->thread_id();
-  details.address = address;
-  details.value = value;
   details.shutdown = shutdown;
   narutorise::reporting::CaptureFailure(std::string(name), posted, details);
   if (!Journaled()) ReportProductStop(name, released ? code : 88, released, posted, shutdown);

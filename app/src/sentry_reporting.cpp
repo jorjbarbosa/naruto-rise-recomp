@@ -259,6 +259,19 @@ void Close() {
 
 bool Ready() { return initialized.load(); }
 
+void NoteFailure(const std::string& operation, const std::string& evidence) {
+#ifdef NARUTORISE_ENABLE_SENTRY
+  if (!initialized || revoked || sentry_user_consent_get() != SENTRY_USER_CONSENT_GIVEN) return;
+  auto context = sentry_value_new_object();
+  sentry_value_set_by_key(context, "operation", sentry_value_new_string(operation.c_str()));
+  sentry_value_set_by_key(context, "evidence", sentry_value_new_string(evidence.substr(0, 4096).c_str()));
+  sentry_set_context("renderer_failure", context);
+  sentry_set_tag("renderer_failure", operation.c_str());
+#else
+  (void)operation; (void)evidence;
+#endif
+}
+
 bool CaptureFailure(const std::string& operation, const std::string& evidence, const FailureDetails& details) {
 #ifdef NARUTORISE_ENABLE_SENTRY
   if (!initialized || revoked || sentry_user_consent_get() != SENTRY_USER_CONSENT_GIVEN) return false;
