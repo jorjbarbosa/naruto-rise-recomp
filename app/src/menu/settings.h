@@ -3,7 +3,9 @@
 #pragma once
 #include "menu/panel.h"
 #include "data_paths.h"
+#include "game_options.h"
 #include "../menu/config_manager.h"
+#include <array>
 #include <filesystem>
 #include <functional>
 #include <unordered_set>
@@ -22,6 +24,12 @@ class Settings {
   void Open(Ui& ui, int tab, bool in_game, std::function<void()> choose_game,
             std::function<void(const std::string&)> changed, std::function<void()> closed);
   void Reload();
+  // The game's own options while its Options screen opened the settings
+  // (game_options.h): their tab comes first, and set sends each change to the
+  // game. Empty after the settings close.
+  void SetGameOptions(std::optional<game_options::Values> values, std::function<void(game_options::Option, int)> set) {
+    game_options_ = values; initial_game_options_ = std::move(values); set_game_option_ = std::move(set);
+  }
   void SetDataFolder(data::DataPaths active, std::optional<std::filesystem::path> pending,
                      std::function<void(data::Mode)> select) {
     data_paths_ = std::move(active); pending_data_root_ = std::move(pending);
@@ -30,6 +38,12 @@ class Settings {
   void SetPendingDataLocation(std::optional<std::filesystem::path> pending);
   const GameConfig& config() const { return config_; }
   struct LiveResult { uint64_t revision = 0; bool applied = false; };
+  // The game's own volumes (audio/game_volumes.h: music, voices, effects, 0 to
+  // 10), read at each drawing and set at each change; none before the game
+  // read its options. Their rows stay out while the game's options have a tab.
+  void SetGameVolumes(std::function<std::optional<std::array<int, 3>>()> read, std::function<bool(int, int)> set) {
+    read_game_volumes_ = std::move(read); set_game_volume_ = std::move(set);
+  }
   void SetLiveSettings(std::function<uint64_t(const std::string&, const GameConfig&)> request,
                        std::function<LiveResult()> result) { request_live_ = std::move(request); result_live_ = std::move(result); }
   void PollLive();
@@ -39,7 +53,10 @@ class Settings {
   // Before runtime creation only; runtime edits use the frame-boundary queue.
   bool ApplyBeforeGame() const;
  private:
+  std::vector<std::string> Tabs() const;
   std::vector<PanelRow> Rows(int group);
+  std::vector<PanelRow> GameOptionRows();
+  void SetGameOption(game_options::Option option, const std::string& id, int value);
   void Change(const std::string& key, std::function<void(GameConfig&)> change);
   void CommitChange(const std::string& key, GameConfig next, std::string focus = {});
   bool Save(const GameConfig& config);
@@ -64,6 +81,10 @@ class Settings {
   std::function<void(const std::string&)> changed_;
   std::function<uint64_t(const std::string&, const GameConfig&)> request_live_;
   std::function<LiveResult()> result_live_;
+  std::optional<game_options::Values> game_options_, initial_game_options_;
+  std::function<void(game_options::Option, int)> set_game_option_;
+  std::function<std::optional<std::array<int, 3>>()> read_game_volumes_;
+  std::function<bool(int, int)> set_game_volume_;
   std::optional<GameConfig> pending_config_;
   std::string pending_key_;
   uint64_t pending_ticket_ = 0, panel_revision_ = 0;

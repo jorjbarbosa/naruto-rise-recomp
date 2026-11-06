@@ -11,6 +11,8 @@
 
 #include "menu/setup_screen.h"
 #include "menu/panel.h"
+#include "menu/game_assets.h"
+#include "menu/game_style_panel.h"
 #include "menu/pad_input.h"
 #include "menu/controls.h"
 #include "menu/text.h"
@@ -23,6 +25,9 @@
 #include <string>
 #include <vector>
 #include <deque>
+#include <filesystem>
+#include <future>
+#include <optional>
 #include <rex/ui/ui_drawer.h>
 #include <rex/ui/window_listener.h>
 
@@ -65,11 +70,24 @@ class Ui final : public rex::ui::UIDrawer, public rex::ui::WindowInputListener {
   bool DialogShown() const { return dialog_shown_.load(); }
   void SetTick(std::function<void()> tick) { tick_ = std::move(tick); }
   void SetInputActive(std::function<bool()> active) { input_active_ = std::move(active); }
+  // game_style: the in-game settings, drawn as the game's Options screen when
+  // the game's art is loaded (LoadGameArt); otherwise, and for the other
+  // windows, the menus' own panel.
   void ShowPanel(std::string title, std::vector<std::string> tabs, int tab, std::vector<PanelRow> rows,
-                 std::function<void(int)> select_tab, std::function<void()> close, std::string focus = {});
+                 std::function<void(int)> select_tab, std::function<void()> close, std::string focus = {},
+                 bool game_style = false);
   void HidePanel();
-  std::string PanelFocus() const { return panel_.FocusId(); }
-  bool PanelShown() const { return panel_.Shown() || controls_.Shown(); }
+  std::string PanelFocus() const { return game_panel_.Shown() ? game_panel_.FocusId() : panel_.FocusId(); }
+  bool PanelShown() const { return panel_.Shown() || game_panel_.Shown() || controls_.Shown(); }
+  // UI thread: reads the art of the game's menus (game_assets.h) on a worker
+  // for the in-game settings. Until it arrives, or if it fails, they use the
+  // menus' own panel.
+  void LoadGameArt(std::filesystem::path game_root, bool disc_image);
+  bool GameArtReady() const;
+  // The game's interface sounds for the in-game settings' actions.
+  void SetPanelSound(std::function<void(GameStylePanel::Sound)> sound) { game_panel_.SetSound(std::move(sound)); }
+  // Tests step the in-game settings' animations with their own clock.
+  void SetAnimationClock(std::function<std::chrono::steady_clock::time_point()> now) { game_panel_.SetClock(std::move(now)); }
   // UI thread: asynchronous results belong to the view that started them.
   uint64_t ViewRevision() const { return view_revision_; }
   void ShowControls(controls::Config config, std::function<bool(const controls::Config&)> save,
@@ -106,7 +124,10 @@ class Ui final : public rex::ui::UIDrawer, public rex::ui::WindowInputListener {
  private:
   void UpdateDocuments();
   void UpdateRate();
-  bool TakesInput() const { return context_ && (setup_.Shown() || panel_.Shown() || controls_.Shown() || dialog_ || overlay_); }
+  bool TakesInput() const {
+    return context_ && (setup_.Shown() || panel_.Shown() || game_panel_.Shown() || controls_.Shown() || dialog_ || overlay_);
+  }
+  void ReceiveGameArt();
   struct MenuEvents;
   std::unique_ptr<MenuEvents> overlay_events_, status_events_;
   Rml::ElementDocument* overlay_ = nullptr;
@@ -151,6 +172,8 @@ class Ui final : public rex::ui::UIDrawer, public rex::ui::WindowInputListener {
   Rml::ElementDocument* fps_ = nullptr;
   SetupScreen setup_;
   Panel panel_;
+  GameStylePanel game_panel_;
+  std::future<std::optional<std::vector<game_assets::Image>>> game_art_;
   Controls controls_;
   std::atomic<bool> controls_shown_{false};
   PadInput pad_;

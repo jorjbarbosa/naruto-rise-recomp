@@ -36,6 +36,15 @@ struct GameConfig {
   bool d3d12_readback_resolve = true;
   bool skip_intro_videos = true;
 
+  // The native audio layer (audio/render.h): its output, stereo or 5.1
+  // ("surround"), and the master volume from 0 to 1. "sdk" keeps the SDK's
+  // output. The music attenuation fades the music out while another app plays
+  // media.
+  std::string audio_layer = "native";
+  std::string audio_channels = "stereo";
+  double master_volume = 1.0;
+  bool music_attenuation = false;
+
   // Game language: 1 = English, 4 = French, 3 = German, 5 = Spanish, 6 = Italian.
   std::uint32_t user_language = 1;
   // Selected translation package under mods/; empty selects an official language.

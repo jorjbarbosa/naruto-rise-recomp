@@ -1,6 +1,7 @@
 // Connected devices stay connected; packet numbers change on neutralization
 // and restoration even when the underlying driver kept the same held button.
 #include "menu/input_gate.h"
+#include "game_options.h"
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -40,6 +41,11 @@ class GatedDriver final : public InputDriver {
         std::abs(int(int16_t(pad.thumb_rx))) < 8000 && std::abs(int(int16_t(pad.thumb_ry))) < 8000;
     if (!blocked && released) previous.latch = false;
     if (blocked || previous.latch) state->gamepad = {};
+    // The settings standing in for the game's Options screen close with its A.
+    if (const uint16_t pressed = game_options::Shared().PressedButtons()) {
+      state->gamepad = {};
+      state->gamepad.buttons = pressed;
+    }
     if (!previous.packet || std::memcmp(&previous.pad, &state->gamepad, sizeof(previous.pad))) {
       previous.pad = state->gamepad; ++previous.packet;
     }

@@ -38,6 +38,11 @@ set(NARUTORISE_SOURCES
     src/menu/setup_gate.cpp src/menu/setup_screen.cpp
     src/menu/game_choice.cpp
     src/menu/dlc.cpp
+    # The native audio layer: the hooks on the title's XAudio driver, the render
+    # grid, the mix, the SDL3 device and the diagnostics; the game's volumes and
+    # its interface sounds in our menus.
+    src/audio/hooks.cpp src/audio/render.cpp src/audio/mix.cpp src/audio/device.cpp src/audio/diagnostics.cpp
+    src/audio/game_volumes.cpp src/audio/ui_sounds.cpp
 )
 # The files that menu/assets.cpp embeds (#embed): a change rebuilds it.
 file(GLOB_RECURSE NARUTORISE_UI_FILES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/ui/*)
@@ -46,7 +51,8 @@ set_source_files_properties(src/menu/assets.cpp PROPERTIES OBJECT_DEPENDS "${NAR
 # The host system services (gpu/common/platform.h), and what exists on
 # Windows only: the Xenos adapter and the discrete GPU exports, and Wine.
 if(WIN32)
-    list(APPEND NARUTORISE_SOURCES src/gpu/common/platform_win32.cpp src/graphics_device_win32.cpp src/wine.cpp)
+    list(APPEND NARUTORISE_SOURCES src/gpu/common/platform_win32.cpp src/graphics_device_win32.cpp src/wine.cpp
+         src/audio/attenuation_win32.cpp)
 else()
     list(APPEND NARUTORISE_SOURCES src/gpu/common/platform_posix.cpp)
 endif()
@@ -97,6 +103,9 @@ if(WIN32)
 endif()
 add_executable(narutorise_data_paths_test EXCLUDE_FROM_ALL tests/data_paths_test.cpp)
 target_link_libraries(narutorise_data_paths_test PRIVATE narutorise_data_paths narutorise::json)
+# The pacing and the mix of the native audio layer, without the runtime.
+add_executable(narutorise_audio_test EXCLUDE_FROM_ALL tests/audio_test.cpp src/audio/mix.cpp)
+target_include_directories(narutorise_audio_test PRIVATE src)
 if(WIN32)
     target_link_libraries(narutorise_data_paths_test PRIVATE advapi32)
     target_link_libraries(narutorise_data_migration_test PRIVATE advapi32)
@@ -210,13 +219,17 @@ if(WIN32)
     configure_file(src/narutorise.rc.in ${CMAKE_CURRENT_BINARY_DIR}/narutorise.rc @ONLY)
     list(APPEND NARUTORISE_SOURCES ${CMAKE_CURRENT_BINARY_DIR}/narutorise.rc)
     add_executable(narutorise WIN32 ${NARUTORISE_SOURCES})
-    # graphics_device.cpp: the adapters by name.
-    target_link_libraries(narutorise PRIVATE d3d12 dxgi ole32 shell32 uuid)
+    # graphics_device.cpp: the adapters by name; audio/attenuation_win32.cpp: the media sessions (WinRT).
+    target_link_libraries(narutorise PRIVATE d3d12 dxgi ole32 shell32 uuid runtimeobject)
 else()
     add_executable(narutorise ${NARUTORISE_SOURCES})
 endif()
 target_link_libraries(narutorise PRIVATE narutorise::json RmlUi::Core narutorise_data_migration)
-add_library(narutorise_menu_components STATIC src/menu/text.cpp src/menu/panel.cpp src/menu/pad_input.cpp
+if(UNIX AND NOT APPLE)
+    # The script modules find the session of the game's options by name (game_options.h).
+    target_link_options(narutorise PRIVATE "LINKER:--export-dynamic-symbol=narutorise_game_options")
+endif()
+add_library(narutorise_menu_components STATIC src/menu/text.cpp src/menu/panel.cpp src/menu/game_style_panel.cpp src/menu/game_style_motion.cpp src/menu/pad_input.cpp
             src/controls/config.cpp
             src/controls/service.cpp
             src/controls/glyphs.cpp
@@ -224,14 +237,14 @@ add_library(narutorise_menu_components STATIC src/menu/text.cpp src/menu/panel.c
             src/controls/runtime.cpp
             src/controls/capture.cpp
             src/menu/controls.cpp src/menu/controls_text.cpp
-            src/menu/input_gate.cpp src/menu/shortcut.cpp
+            src/menu/input_gate.cpp src/menu/shortcut.cpp src/game_options.cpp
             src/menu/settings.cpp
             src/menu/localization.cpp src/menu/config_manager.cpp
             src/menu/key_bindings.cpp src/menu/key_names.cpp
             src/menu/game_languages.cpp src/menu/graphics_devices.cpp src/mods/translation_data.cpp)
 target_sources(narutorise_menu_components PRIVATE src/menu/content_manager.cpp src/menu/folders.cpp)
 target_sources(narutorise_menu_components PRIVATE src/menu/update_checker.cpp)
-target_sources(narutorise_menu_components PRIVATE src/menu/game_logo.cpp)
+target_sources(narutorise_menu_components PRIVATE src/menu/game_assets.cpp src/menu/game_logo.cpp)
 target_include_directories(narutorise_menu_components PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/thirdparty/stb)
 target_include_directories(narutorise_menu_components PUBLIC src)
 target_link_libraries(narutorise_menu_components PUBLIC rex::runtime RmlUi::Core narutorise::json narutorise_data_paths narutorise_incidents)
@@ -314,6 +327,8 @@ endif()
 
 add_executable(narutorise_game_logo_test EXCLUDE_FROM_ALL tests/game_logo_test.cpp)
 target_link_libraries(narutorise_game_logo_test PRIVATE narutorise_menu_components)
+add_executable(narutorise_game_assets_test EXCLUDE_FROM_ALL tests/game_assets_test.cpp)
+target_link_libraries(narutorise_game_assets_test PRIVATE narutorise_menu_components)
 
 add_executable(narutorise_setup_gate_test EXCLUDE_FROM_ALL
     tests/setup_gate_test.cpp src/menu/setup_gate.cpp)
@@ -472,16 +487,28 @@ else()
     rexglue_setup_target(narutorise ${NARUTORISE_GPU_PLUGINS})
 endif()
 
-# The mouse camera inside each script module, the base game's and the DLCs':
-# the orbit routine of the exploration camera in each (mouse_camera_script.cpp).
-foreach(_narutorise_module IN ITEMS ai2c:sub_882227F8 ai2c1:sub_88228C18 ai2c2:sub_88234D28 ai2c3:sub_88235D10)
+# The hooks inside each script module, the base game's and the DLCs': the
+# orbit routine of the exploration camera (mouse_camera_script.cpp), the
+# state of the Options screen and the read of an option (game_options_script.cpp,
+# with the module's row of its addresses).
+foreach(_narutorise_module IN ITEMS ai2c:sub_882227F8:sub_8810B248:0:sub_88064500
+                                    ai2c1:sub_88228C18:sub_8810B378:1:sub_880644B8
+                                    ai2c2:sub_88234D28:sub_8810B490:2:sub_88064558
+                                    ai2c3:sub_88235D10:sub_8810B490:3:sub_88064558)
     string(REPLACE ":" ";" _narutorise_module "${_narutorise_module}")
     list(GET _narutorise_module 0 _narutorise_module_name)
     list(GET _narutorise_module 1 _narutorise_orbit)
+    list(GET _narutorise_module 2 _narutorise_options_state)
+    list(GET _narutorise_module 3 _narutorise_script_module)
+    list(GET _narutorise_module 4 _narutorise_option_get)
     if(TARGET narutorise_${_narutorise_module_name})
-        target_sources(narutorise_${_narutorise_module_name} PRIVATE src/mouse_camera_script.cpp)
+        target_sources(narutorise_${_narutorise_module_name} PRIVATE src/mouse_camera_script.cpp src/game_options_script.cpp)
+        target_link_libraries(narutorise_${_narutorise_module_name} PRIVATE ${CMAKE_DL_LIBS})
         target_compile_definitions(narutorise_${_narutorise_module_name} PRIVATE
-            NARUTORISE_CAMERA_ORBIT=${_narutorise_orbit})
+            NARUTORISE_CAMERA_ORBIT=${_narutorise_orbit}
+            NARUTORISE_OPTIONS_STATE=${_narutorise_options_state}
+            NARUTORISE_OPTION_GET=${_narutorise_option_get}
+            NARUTORISE_SCRIPT_MODULE=${_narutorise_script_module})
     endif()
 endforeach()
 

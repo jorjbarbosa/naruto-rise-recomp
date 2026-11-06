@@ -62,6 +62,27 @@ int main(int argc, char** argv) {
                 && opted_in.crash_reporting_asked && !opted_in.crash_reporting,
             "The answer to the first-start question did not survive reload");
 
+    const auto audio_path = unicode_dir / "audio.toml";
+    Write(audio_path, "personal_setting = 'keep'\n");
+    GameConfig audio;
+    Require(ConfigManager::Load(audio_path, audio) && audio.audio_layer == "native" &&
+                audio.audio_channels == "stereo" && audio.master_volume == 1.0 && !audio.music_attenuation,
+            "A configuration from before the audio options gets the native layer in stereo at full volume");
+    Write(audio_path, "audio_layer = 'sdk'\naudio_channels = 'surround'\nmaster_volume = 0.4\nmusic_attenuation = true\n");
+    Require(ConfigManager::Load(audio_path, audio) && audio.audio_layer == "sdk" &&
+                audio.audio_channels == "surround" && audio.master_volume == 0.4 && audio.music_attenuation,
+            "The audio options were not read");
+    Write(audio_path, "audio_layer = 'xaudio'\naudio_channels = '7.1'\nmaster_volume = 3.0\n");
+    Require(ConfigManager::Load(audio_path, audio) && audio.audio_layer == "native" &&
+                audio.audio_channels == "stereo" && audio.master_volume == 1.0,
+            "Unknown audio values fall back to the defaults, and the volume to its range");
+    audio.master_volume = 0.25;
+    audio.music_attenuation = false;
+    GameConfig saved_audio;
+    Require(ConfigManager::Save(audio_path, audio) && ConfigManager::Load(audio_path, saved_audio) &&
+                saved_audio.master_volume == 0.25 && !saved_audio.music_attenuation,
+            "The master volume and the music attenuation did not survive reload");
+
     Write(path, "launcher_language = 'pt_BR'\n");
     GameConfig legacy;
     Require(legacy.show_startup_menu, "Initial menu must default to enabled");

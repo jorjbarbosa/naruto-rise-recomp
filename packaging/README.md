@@ -41,7 +41,8 @@ Outputs are `naruto-rise-recomp-win-amd64/` and its ZIP. The payload includes:
 - curated immutable seeds `defaults/mods/pt-br/mod.toml` and `texts.json`;
 - Xenos shader storage from `NARUTORISE_SHADER_STORAGE_DIR`;
 - project and third-party notices under `licenses/`, including RmlUi,
-  FreeType (FTL) and the embedded Roboto Condensed font (OFL).
+  FreeType (FTL), the embedded Roboto Condensed font (OFL) and the embedded
+  Edo SZ font (Vic Fieger License).
 
 Menus, artwork and fonts are embedded in the executable. The ZIP contains no
 launcher, setup helper, `extract-xiso`, `install.ps1` or installer. Game data,

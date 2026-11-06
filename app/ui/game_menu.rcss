@@ -1,0 +1,128 @@
+/* The in-game settings as the game's Options screen (game_style_panel.h),
+   measured 1:1 on the game's own screen at 1280 x 720. Inside the stages,
+   lengths are rem: one rem is a unit of the movie's 1280 x 720 stage, its
+   size set by GameStylePanel::Layout. The page covers the game's 16:9 image
+   (the body, placed and sized by Layout), with the backdrop, the paper and the
+   curtains laid out in dp across it. Layers as the movie's: the title
+   band and the panels pass under the curtains; the cursor's cloud, the help
+   and the prompts stay above them. Art: "game/" images of the user's game,
+   "generated/" shapes the movie draws. The text effects (the movie's offset
+   copies of each text) and the motion (GameStyleMotion) are set by code. */
+body { position: absolute; width: 100%; height: 100%; }  /* What is behind shows once the paper goes. */
+#backdrop { position: absolute; left: 0; top: 0; width: 100%; height: 100%; decorator: image(generated/paper-gradient fill); }
+#paper { position: absolute; top: 0; height: 100%; }
+#sides, .side, #curtain-left, #curtain-right { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+/* What moves in from beyond the game's image stays within it, as in the movie
+   (always: RmlUi clips overflow only past the right and bottom edges). The
+   curtains move their sides, within #sides. */
+#sides, .stage { overflow: hidden; clip: always; }
+#sides, .side { pointer-events: none; }
+#paper { decorator: image(game/paper fill); }
+/* The curtains' images are 724 tall: as the movie places them, their faded
+   first and last rows fall past the stage. */
+.curtain, #edge-left, #edge-right { position: absolute; top: -1.5rem; height: 724rem; }
+.curtain { decorator: image(game/curtain fill); }
+#curtain-right .curtain { decorator: image(game/curtain flip-horizontal fill); }
+#edge-left { decorator: image(game/curtain-edge fill); }
+#edge-right { decorator: image(game/curtain-edge flip-horizontal fill); }
+.stage { position: absolute; width: 1280rem; height: 720rem; }
+#stage { pointer-events: none; }
+#footer { pointer-events: auto; }
+
+/* Edo SZ, as the movie's text: labels blue, the focused one yellow, values
+   and prompts white. Russian uses Roboto Condensed (no Cyrillic in Edo SZ). */
+.tab, .label, .value, .word, .number, #back-label, #ok-label, #legend-label {
+  font-family: "Edo SZ"; text-transform: uppercase; white-space: nowrap; }
+.label { color: #0090ff; }
+.tab { color: #005da4; }
+.value, .word, #back-label, #ok-label, #legend-label { color: #ffffff; }
+.tab.selected, .row:focus .label { color: #ffda32; }
+.modified .value { color: #ffda32; }
+body.cyrillic .tab, body.cyrillic .label, body.cyrillic .value, body.cyrillic .word,
+body.cyrillic #back-label, body.cyrillic #ok-label, body.cyrillic #legend-label {
+  font-family: "Roboto Condensed"; font-weight: bold; }
+
+/* The title band: LB, the tabs and RB, closed by the ink splash. */
+#tabs { position: absolute; left: 160rem; top: 44.667rem; height: 50rem; padding: 0 16rem 0 14.667rem;
+  display: flex; align-items: center; background-color: #332c1d; }
+#splash { position: absolute; left: 100%; margin-left: -4.667rem; top: -33.667rem; width: 152.667rem;
+  height: 117.333rem; overflow: hidden; }  /* Its size is the movie's mask, growing as the band arrives. */
+#splash .ink { display: block; width: 152.667rem; height: 117.333rem; decorator: image(game/splash fill); }
+.tab { display: block; font-size: 28rem; margin-right: 16rem; padding: 0; border-width: 0;
+  background-color: transparent; focus: none; tab-index: none; }
+body.cyrillic .tab { font-size: 20rem; }
+.prompt { display: block; flex-shrink: 0; }
+.prompt span { display: none; font-family: "Roboto Condensed"; font-weight: bold; font-size: 13.333rem;
+  line-height: 20rem; color: #ffffff; text-transform: none; }
+.prompt.lb { width: 50rem; height: 20rem; margin-right: 12rem; decorator: image(game/lb fill); }
+.prompt.rb { width: 50rem; height: 20rem; decorator: image(game/rb fill); }
+body.keys .prompt { decorator: none; width: auto; height: auto; padding: 0 6.667rem; border-radius: 4rem;
+  background-color: #1e1914; }
+body.keys .prompt span { display: block; }
+/* Another family's buttons: its glyphs where the game's images stand. */
+body.glyphs .prompt { decorator: none; }
+body.glyphs .prompt.lb, body.glyphs .prompt.rb { width: 36rem; height: 36rem; margin-top: -4rem; }
+body.glyphs .prompt img.glyph { display: block; width: 100%; height: 100%; margin: 0; }
+
+/* The rows on the movie's translucent panels. */
+#options { position: absolute; left: 120rem; top: 114rem; width: 1013.333rem; height: 446rem;
+  overflow-y: auto; overflow-x: hidden; }
+.group { display: block; position: relative; margin-left: 40rem; width: 918rem; padding: 4.333rem 0;
+  margin-bottom: 18.667rem; background-color: #0000008c;
+  border-radius: 0 26.667rem 26.667rem 0; }  /* Half a one-row panel: larger radii break its corners. */
+.row { display: block; position: relative; width: 898rem; height: 44.667rem; padding: 0; border-width: 0;
+  background-color: transparent; text-align: left; nav: vertical; tab-index: auto; focus: auto; }
+#cursor { display: none; position: absolute; left: 0; top: 0; width: 58rem; height: 37.333rem;
+  decorator: image(game/cloud fill); }
+/* A fixed width keeps the flex label at its text's width while its margin slides it. */
+.name { position: absolute; left: 33.333rem; top: 0; width: 864.667rem; height: 44.667rem; display: flex; align-items: center; }
+.label { display: block; flex-shrink: 0; font-size: 37rem; transform-origin: 0 50%; }
+body.cyrillic .label { font-size: 24.267rem; }
+.star { width: 29.333rem; height: 29.333rem; margin-left: 9.333rem; flex-shrink: 0; decorator: image(game/star fill); }
+.control { position: absolute; left: 566.667rem; top: 0; width: 333.333rem; height: 44.667rem; }
+.arrow { position: absolute; top: 9.733rem; width: 18rem; height: 25.2rem; }
+.arrow.left { left: 0; decorator: image(generated/arrow-left fill); }
+.arrow.right { right: 0; decorator: image(generated/arrow-right fill); }
+.value { display: block; position: absolute; left: 20rem; right: 20rem; top: 0; height: 44.667rem;
+  line-height: 44.667rem; text-align: center; font-size: 34.667rem; overflow: hidden; }
+body.cyrillic .value { font-size: 22.667rem; }
+.value.action { left: 0; right: 26.667rem; text-align: right; }
+.value.info { left: 0; right: 26.667rem; text-align: right; font-family: "Roboto Condensed"; font-weight: bold;
+  font-size: 20rem; text-transform: none; }
+.value.plain { right: 0; }
+.chevron { position: absolute; right: 0; top: 10.333rem; width: 16rem; height: 24rem; decorator: image(generated/chevron fill); }
+/* YES and NO: the orb behind the word's first letters, both words lit. */
+.option { position: absolute; top: 0; height: 44.667rem; }
+.option.on { left: 38.333rem; width: 165.5rem; }
+.option.off { left: 203.833rem; width: 129.5rem; }
+.orb { position: absolute; left: 0; top: 5.833rem; width: 33rem; height: 33rem; decorator: image(generated/orb-off fill); }
+.option.chosen .orb { decorator: image(generated/orb-on fill); }
+.word { display: block; position: absolute; left: 1rem; top: 0; height: 44.667rem; line-height: 44.667rem; font-size: 40rem; }
+body.cyrillic .word { font-size: 24.8rem; }
+.track { position: absolute; left: -3.333rem; top: 6.667rem; width: 340rem; height: 37.333rem; decorator: image(game/brush-dark fill); }
+.fill { position: absolute; left: 0; top: 0; height: 37.333rem; overflow: hidden; }
+.blue { display: block; width: 340rem; height: 37.333rem; decorator: image(game/brush-blue fill); }
+
+scrollbarvertical { width: 6.667rem; margin-left: 4rem; }
+scrollbarvertical slidertrack { background-color: #332c1d80; }
+scrollbarvertical sliderbar { min-height: 20rem; background-color: #f07010; }
+
+/* Help for the focused row, then the game's button prompts. */
+#help { position: absolute; left: 193.333rem; top: 577.333rem; width: 866.667rem; font-family: "Roboto Condensed";
+  font-weight: 500; font-size: 18.667rem; line-height: 24rem; color: #3a2e12; white-space: pre-wrap; }
+#footer { position: absolute; left: 0; top: 636rem; width: 1280rem; height: 44rem; }
+#back-prompt, #ok-prompt { position: absolute; top: 0; width: 44rem; height: 44rem; }
+#back-prompt { left: 174.667rem; decorator: image(game/button-b fill); }
+#ok-prompt { left: 1064.333rem; top: -2.333rem; decorator: image(game/button-a fill); }
+body.glyphs #back-prompt, body.glyphs #ok-prompt { decorator: none; }
+body.keys #back-prompt, body.keys #ok-prompt { top: 11.333rem; width: auto; height: 21.333rem; decorator: none; }
+#back-label, #ok-label { display: block; position: absolute; top: -4rem; height: 44rem; line-height: 44rem; font-size: 32rem; }
+#back-label { left: 225.333rem; }
+#ok-label { right: 219.667rem; }
+body.cyrillic #back-label, body.cyrillic #ok-label { font-size: 20.8rem; }
+#legend { display: none; position: absolute; left: 0; top: 0; width: 1280rem; height: 44rem; pointer-events: none;
+  justify-content: center; align-items: center; }
+body.restart #legend { display: flex; }
+#legend .star { width: 26.667rem; height: 26.667rem; margin-left: 0; }
+#legend-label { display: block; margin-left: 6.667rem; font-size: 24rem; }
+body.cyrillic #legend-label { font-size: 16rem; }

@@ -109,18 +109,22 @@ bool Ui::Initialize(rex::ui::ImmediateDrawer& drawer, rex::ui::Presenter* presen
     return false;
   }
   initialized_ = true;
+  // The regular faces stand in for glyphs a family lacks: Edo SZ, the in-game
+  // settings' face, has no Cyrillic and only some symbols.
   const struct {
     const char* path;
     Rml::Style::FontWeight weight;
     const char* family;
-  } faces[] = {{"fonts/RobotoCondensed-Regular.ttf", Rml::Style::FontWeight::Normal, "Roboto Condensed"},
-               {"fonts/RobotoCondensed-Bold.ttf", Rml::Style::FontWeight::Bold, "Roboto Condensed"},
-               {"fonts/RobotoCondensed-Medium.ttf", Rml::Style::FontWeight(500), "Roboto Condensed"},
-               {"fonts/Roboto-Regular.ttf", Rml::Style::FontWeight::Normal, "Roboto"}};
+    bool fallback;
+  } faces[] = {{"fonts/RobotoCondensed-Regular.ttf", Rml::Style::FontWeight::Normal, "Roboto Condensed", true},
+               {"fonts/RobotoCondensed-Bold.ttf", Rml::Style::FontWeight::Bold, "Roboto Condensed", false},
+               {"fonts/RobotoCondensed-Medium.ttf", Rml::Style::FontWeight(500), "Roboto Condensed", false},
+               {"fonts/Roboto-Regular.ttf", Rml::Style::FontWeight::Normal, "Roboto", true},
+               {"fonts/EdoSZ.ttf", Rml::Style::FontWeight::Normal, "Edo SZ", false}};
   for (const auto& face : faces) {
     const auto bytes = Asset(face.path);
     if (!Rml::LoadFontFace({bytes.data(), bytes.size()}, face.family, Rml::Style::FontStyle::Normal,
-                           face.weight, face.weight == Rml::Style::FontWeight::Normal))
+                           face.weight, face.fallback))
       REXLOG_WARN("[narutorise] UI: the font {} did not load", face.path);
   }
   context_ = Rml::CreateContext("game", {1, 1});
@@ -147,7 +151,7 @@ void Ui::Shutdown() {
   status_shown_ = false; game_menu_enabled_ = false; toggle_menu_ = {};
   CancelKeyCapture();
   HideDialog();
-  panel_.Hide();
+  panel_.Hide(); game_panel_.Hide();
   controls_.Hide(); controls_shown_ = false;
   setup_.SetControlsOpen(false);
   panel_shown_ = false;
@@ -197,23 +201,49 @@ void Ui::CaptureKey(std::function<void(std::string)> captured) {
   key_capture_ = std::move(captured); pending_key_.clear(); capture_started_ = std::chrono::steady_clock::now();
 }
 void Ui::ShowPanel(std::string title, std::vector<std::string> tabs, int tab, std::vector<PanelRow> rows,
-                    std::function<void(int)> select_tab, std::function<void()> close, std::string focus) {
+                    std::function<void(int)> select_tab, std::function<void()> close, std::string focus,
+                    bool game_style) {
   if (!context_) return;
   controls_.Hide(); controls_shown_ = false;
   ++view_revision_;
   setup_.SetControlsOpen(false);
   context_->ProcessMouseMove(-1, -1, 0);
-  panel_shown_ = panel_.Show(*context_, std::move(title), std::move(tabs), tab, std::move(rows),
-                              std::move(select_tab), std::move(close), std::move(focus), setup_.Shown());
-  panel_.SetGlyphs(menu_glyphs_);
+  ReceiveGameArt();
+  if (game_style && !setup_.Shown() && GameArtReady()) {
+    panel_.Hide();
+    panel_shown_ = game_panel_.Show(*context_, std::move(tabs), tab, std::move(rows), std::move(select_tab),
+                                    std::move(close), std::move(focus));
+    game_panel_.SetGlyphs(menu_glyphs_);
+  } else {
+    game_panel_.Hide();
+    panel_shown_ = panel_.Show(*context_, std::move(title), std::move(tabs), tab, std::move(rows),
+                                std::move(select_tab), std::move(close), std::move(focus), setup_.Shown());
+    panel_.SetGlyphs(menu_glyphs_);
+  }
   UpdateDocuments();
 }
-void Ui::HidePanel() { ++view_revision_; controls_.Hide(); controls_shown_ = false; setup_.SetControlsOpen(false); panel_.Hide(); panel_shown_ = false; UpdateDocuments(); }
+void Ui::HidePanel() {
+  ++view_revision_; controls_.Hide(); controls_shown_ = false; setup_.SetControlsOpen(false);
+  panel_.Hide(); game_panel_.Hide(); panel_shown_ = false; UpdateDocuments();
+}
+void Ui::LoadGameArt(std::filesystem::path game_root, bool disc_image) {
+  if (game_root.empty()) return;
+  game_art_ = std::async(std::launch::async, [root = std::move(game_root), disc_image] {
+    return game_assets::Load(root, disc_image, game_assets::kMenuImages);
+  });
+}
+bool Ui::GameArtReady() const { return render_ && render_->HasGameArt(); }
+void Ui::ReceiveGameArt() {
+  if (!game_art_.valid() || game_art_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+  auto art = game_art_.get();
+  if (!art) REXLOG_WARN("[narutorise] UI: the art of the game's menus did not load; the in-game settings use the menus' panel");
+  if (render_) render_->SetGameArt(std::move(art));
+}
 void Ui::ShowControls(controls::Config config,std::function<bool(const controls::Config&)> save,std::function<void()> close,std::string menu_key) {
   if (!context_) return;
   ++view_revision_;
   controls::Hardware().StopAllRumble();
-  CancelKeyCapture(); panel_.Hide(); panel_shown_ = false;
+  CancelKeyCapture(); panel_.Hide(); game_panel_.Hide(); panel_shown_ = false;
   controls_shown_ = controls_.Show(*context_, std::move(config), std::move(save), std::move(close), std::move(menu_key), setup_.Shown());
   setup_.SetControlsOpen(controls_shown_.load());
   controls_.SetGlyphs(menu_glyphs_); UpdateDocuments();
@@ -257,6 +287,7 @@ void Ui::UseGlyphs(controls::Glyphs glyphs) {
   if (menu_glyphs_ == glyphs) return;
   menu_glyphs_ = glyphs;
   panel_.SetGlyphs(glyphs);
+  game_panel_.SetGlyphs(glyphs);
   controls_.SetGlyphs(glyphs);
   setup_.SetGlyphs(glyphs);
   if (overlay_) overlay_->GetElementById("overlay-close-hint")->SetInnerRML(PromptRml(Text("close-hint"), glyphs));
@@ -382,7 +413,7 @@ void Ui::ShowDialog(const std::string& title, const std::string& message,
 void Ui::UpdateDocuments() {
   UpdateStatus();
   if (overlay_) {
-    const bool bar = !panel_.Shown() && !controls_.Shown() && !dialog_;
+    const bool bar = !panel_.Shown() && !game_panel_.Shown() && !controls_.Shown() && !dialog_;
     if (bar && !overlay_->IsVisible()) {
       overlay_->Show(Rml::ModalFlag::None, Rml::FocusFlag::Document);
       if (auto* item = overlay_->GetElementById(overlay_events_->last_focus)) item->Focus();
@@ -390,7 +421,8 @@ void Ui::UpdateDocuments() {
   }
   if (fps_) fps_->SetClass("menu-open", overlay_shown_.load());
   if (fps_) {
-    const bool fps = fps_visible_.load() && !setup_shown_.load() && !panel_.Shown() && !controls_.Shown() && !dialog_;
+    const bool fps = fps_visible_.load() && !setup_shown_.load() && !panel_.Shown() && !game_panel_.Shown() &&
+                     !controls_.Shown() && !dialog_;
     if (fps && !fps_->IsVisible()) {
       rate_frames_ = frames_.load(std::memory_order_relaxed);
       rate_time_ = std::chrono::steady_clock::now();
@@ -451,6 +483,8 @@ void Ui::Draw(rex::ui::UIDrawContext& context) {
     captured(std::exchange(pending_key_, {}));
   }
   panel_.Tick();
+  game_panel_.Tick();
+  ReceiveGameArt();
   PollInput();
   const int width = int(context.render_target_width()), height = int(context.render_target_height());
   if (width <= 0 || height <= 0) return;
@@ -460,12 +494,15 @@ void Ui::Draw(rex::ui::UIDrawContext& context) {
     context_->SetDimensions({width, height});
     context_->SetDensityIndependentPixelRatio(std::max(1.0f, float(height) / 720.0f));
     panel_.Layout(width, height, context_->GetDensityIndependentPixelRatio());
+    game_panel_.Layout(width, height, context_->GetDensityIndependentPixelRatio());
     controls_.Layout(width, height, context_->GetDensityIndependentPixelRatio());
   }
   if (fps_ && fps_->IsVisible()) UpdateRate();
   setup_.UpdateLogo(*render_);
   context_->Update();
   if (panel_.RevealSelection()) context_->Update();
+  while (game_panel_.FitText()) context_->Update();
+  if (game_panel_.PlaceCursor()) context_->Update();
   render_->Begin(context, width, height);
   context_->Render();
   render_->End();

@@ -101,7 +101,7 @@ void Settings::Open(Ui& ui, int tab, bool in_game, std::function<void()> choose_
                      std::function<void(const std::string&)> changed, std::function<void()> closed) {
   ui.HideDialog();
   if (!pending_config_) Reload();
-  ui_ = &ui; group_ = std::clamp(tab, 0, 4); in_game_ = in_game;
+  ui_ = &ui; group_ = std::clamp(tab, 0, int(Tabs().size()) - 1); in_game_ = in_game;
   choose_game_ = std::move(choose_game); changed_ = std::move(changed); closed_ = std::move(closed);
   Redraw();
 }
@@ -173,14 +173,59 @@ void Settings::SaveMenuOptions(const std::string& key, MenuOptions next) {
   if (changed_) changed_(key);
   Redraw(key);
 }
+std::vector<std::string> Settings::Tabs() const {
+  std::vector<std::string> tabs{Tr(TextId::GroupGame), Tr(TextId::GroupDisplay), Tr(TextId::GroupQuality),
+      Tr(TextId::GroupControls), Tr(TextId::GroupAdvanced)};
+  if (game_options_) tabs.insert(tabs.begin(), Text("game-options"));
+  return tabs;
+}
 void Settings::Redraw(std::string focus) {
-  ui_->ShowPanel(Text("settings"), {Tr(TextId::GroupGame), Tr(TextId::GroupDisplay), Tr(TextId::GroupQuality),
-      Tr(TextId::GroupControls), Tr(TextId::GroupAdvanced)}, group_, Rows(group_),
+  ui_->ShowPanel(Text("settings"), Tabs(), group_, Rows(group_),
       [this](int group) { group_ = group; Redraw(); },
-      [this] { panel_revision_ = 0; ui_->HidePanel(); ui_->CancelKeyCapture(); if (closed_) closed_(); }, std::move(focus));
+      [this] { panel_revision_ = 0; ui_->HidePanel(); ui_->CancelKeyCapture(); if (closed_) closed_(); }, std::move(focus),
+      in_game_);
   panel_revision_ = ui_->ViewRevision();
 }
+// The game's options as its own screen lists them, without its brightness
+// (the settings' brightness stands in for it), each panel a section.
+std::vector<PanelRow> Settings::GameOptionRows() {
+  using namespace game_options;
+  std::vector<PanelRow> rows;
+  std::vector<std::string> volume;
+  for (int level = 0; level <= 10; ++level) volume.push_back(std::to_string(level));
+  const auto row = [&](Option option, const char* id, const char* label, const char* help, const char* section,
+                       std::vector<std::string> choices, bool slider = false) {
+    const int value = std::clamp(game_options_->option[size_t(option)], 0, int(choices.size()) - 1);
+    PanelRow item{id, Text(label), choices[size_t(value)], Text(help),
+        game_options_->option[size_t(option)] != initial_game_options_->option[size_t(option)], false, std::move(choices),
+        value, [this, option, id = std::string(id)](int chosen) { SetGameOption(option, id, chosen); }, {}};
+    item.section = section;
+    item.inline_adjust = slider;
+    rows.push_back(std::move(item));
+  };
+  const std::vector<std::string> toggle{Text("off"), Text("on")};
+  row(kMusicVolume, "game-music-volume", "game-music-volume", "game-music-volume-help", "volume", volume, true);
+  row(kVoiceVolume, "game-voice-volume", "game-voice-volume", "game-voice-volume-help", "volume", volume, true);
+  row(kEffectsVolume, "game-effects-volume", "game-effects-volume", "game-effects-volume-help", "volume", volume, true);
+  row(kInvertX, "game-invert-x", "game-invert-x", "game-invert-x-help", "camera", toggle);
+  row(kInvertY, "game-invert-y", "game-invert-y", "game-invert-y-help", "camera", toggle);
+  row(kVibration, "game-vibration", "game-vibration", "game-vibration-help", "camera", toggle);
+  row(kSubtitles, "game-subtitles", "game-subtitles", "game-subtitles-help", "language", toggle);
+  if (game_options_->japanese_voices)
+    row(kJapaneseVoices, "game-japanese-voices", "game-japanese-voices", "game-japanese-voices-help", "language", toggle);
+  return rows;
+}
+void Settings::SetGameOption(game_options::Option option, const std::string& id, int value) {
+  if (!game_options_) return;
+  game_options_->option[size_t(option)] = value;
+  if (set_game_option_) set_game_option_(option, value);
+  if (ui_ && panel_revision_ == ui_->ViewRevision()) Redraw(id);
+}
 std::vector<PanelRow> Settings::Rows(int group) {
+  if (game_options_) {
+    if (group == 0) return GameOptionRows();
+    --group;
+  }
   std::vector<PanelRow> rows;
   const auto choice = [&](std::string key, TextId label, TextId description, std::vector<std::string> values,
                            int selected, bool modified, bool restart, std::function<void(GameConfig&, int)> set) {
@@ -191,6 +236,14 @@ std::vector<PanelRow> Settings::Rows(int group) {
   const auto toggle = [&](const char* key, TextId label, TextId description, bool GameConfig::* member, bool restart = true) {
     choice(key, label, description, {Text("off"), Text("on")}, config_.*member ? 1 : 0,
         config_.*member != initial_.*member, restart, [member](GameConfig& config, int value) { config.*member = value != 0; });
+  };
+  // The audio options apply at once (audio/render.h).
+  const auto audio_row = [&](std::string key, const char* label, const char* description, std::vector<std::string> values,
+                             int selected, bool modified, std::function<void(GameConfig&, int)> set) {
+    selected = std::clamp(selected, 0, int(values.size()) - 1);
+    PanelRow row{key, Text(label), values[size_t(selected)], Text(description), modified, false, values, selected,
+        [this, key, set](int value) { Change(key, [set, value](GameConfig& config) { set(config, value); }); }, {}};
+    rows.push_back(std::move(row));
   };
   if (group == 0) {
     rows.push_back({"custom_game_root", Tr(TextId::TabGameFiles), config_.custom_game_root, Text("game-hint"), false,
@@ -214,6 +267,32 @@ std::vector<PanelRow> Settings::Rows(int group) {
         [this](int value) { Change("launcher_language", [value](GameConfig& config) {
           config.launcher_language = Localization::GetLanguages().at(size_t(value)).code; }); }, {}};
     rows.push_back(std::move(menu_language));
+    std::vector<std::string> volumes; for (int i = 0; i <= 100; ++i) volumes.push_back(std::to_string(i));
+    audio_row("master_volume", "master-volume", "master-volume-help", volumes, int(std::lround(config_.master_volume * 100)),
+        config_.master_volume != initial_.master_volume,
+        [](GameConfig& config, int value) { config.master_volume = value / 100.0; });
+    if (const auto volumes = read_game_volumes_ && !game_options_ ? read_game_volumes_() : std::nullopt) {
+      std::vector<std::string> levels;
+      for (int level = 0; level <= 10; ++level) levels.push_back(std::to_string(level));
+      const char* ids[] = {"game-music-volume", "game-voice-volume", "game-effects-volume"};
+      for (int volume = 0; volume < 3; ++volume) {
+        const int value = std::clamp((*volumes)[size_t(volume)], 0, 10);
+        const std::string id = ids[volume];
+        rows.push_back({id, Text(id), levels[size_t(value)], Text(id + "-help"), false, false, levels, value,
+            [this, volume, id](int chosen) {
+              if (set_game_volume_ && set_game_volume_(volume, chosen) && ui_ && panel_revision_ == ui_->ViewRevision())
+                Redraw(id);
+            }, {}});
+      }
+    }
+    audio_row("audio_channels", "audio-channels", "audio-channels-help", {Text("stereo"), Text("surround")},
+        config_.audio_channels == "surround" ? 1 : 0, config_.audio_channels != initial_.audio_channels,
+        [](GameConfig& config, int value) { config.audio_channels = value ? "surround" : "stereo"; });
+#ifdef _WIN32
+    audio_row("music_attenuation", "music-attenuation", "music-attenuation-help", {Text("off"), Text("on")},
+        config_.music_attenuation ? 1 : 0, config_.music_attenuation != initial_.music_attenuation,
+        [](GameConfig& config, int value) { config.music_attenuation = value != 0; });
+#endif
   } else if (group == 1) {
     std::vector<std::string> apis, api_values;
 #if !defined(NARUTORISE_NATIVE_D3D12_DISABLED)
@@ -328,6 +407,9 @@ std::vector<PanelRow> Settings::Rows(int group) {
         config_.max_frame_latency != initial_.max_frame_latency, true,
         [](GameConfig& config, int value) { config.max_frame_latency = value + 1; });
     toggle("triple_buffering", TextId::TripleBufferingLabel, TextId::TripleBufferingDescription, &GameConfig::triple_buffering);
+    audio_row("audio_layer", "audio-layer", "audio-layer-help", {Text("audio-native"), "SDK"},
+        config_.audio_layer == "sdk" ? 1 : 0, config_.audio_layer != initial_.audio_layer,
+        [](GameConfig& config, int value) { config.audio_layer = value ? "sdk" : "native"; });
     rows.push_back({"crash_reporting", Text("crash-reporting"), Bool(config_.crash_reporting), Text("crash-reporting-help"),
         config_.crash_reporting != initial_.crash_reporting, true, {Text("off"), Text("on")}, config_.crash_reporting ? 1 : 0,
         [this](int value) { Change("crash_reporting", [value](GameConfig& config) {
@@ -389,7 +471,8 @@ std::vector<PanelRow> Settings::Rows(int group) {
         row.id == "present_effect" || row.id == "anisotropic_override" || row.id == "transparency_antialiasing" ||
         row.id == "max_frame_latency" || row.id == "triple_buffering" || row.id == "skip_intro_videos")) row.restart = false;
     if (pending_config_ && row.id == pending_key_) { row.value += " …"; row.description = Text("applying-settings"); }
-    row.inline_adjust = row.id == "brightness" || row.id == "mnk_sensitivity";
+    row.inline_adjust = row.id == "brightness" || row.id == "mnk_sensitivity" || row.id == "master_volume" ||
+                        row.id == "game-music-volume" || row.id == "game-voice-volume" || row.id == "game-effects-volume";
     if (row.id == "controller") {
       row.description += "\n\n" + row.value;
       if (row.value == Tr(TextId::NoControllerDetected)) row.value = Text("not-connected");
@@ -401,6 +484,7 @@ std::vector<PanelRow> Settings::Rows(int group) {
     if (row.id == "mnk_sensitivity") row.label = Text("sensitivity");
     if (row.id == "keys") row.label = Text("key-mapping");
     if (row.id == "skip_intro_videos") row.label = Text("skip-videos");
+    if (row.id == "master_volume" || row.id == "audio_layer") row.section = Text("audio-section");
     if (group == 1 && row.id == "native_backend") row.section = Text("video");
     if (group == 1 && row.id == "brightness") row.section = Text("display-section");
     if (group == 3 && row.id == "input_backend") row.section = Text("input-section");
