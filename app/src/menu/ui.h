@@ -70,9 +70,9 @@ class Ui final : public rex::ui::UIDrawer, public rex::ui::WindowInputListener {
   bool DialogShown() const { return dialog_shown_.load(); }
   void SetTick(std::function<void()> tick) { tick_ = std::move(tick); }
   void SetInputActive(std::function<bool()> active) { input_active_ = std::move(active); }
-  // game_style: the in-game settings, drawn as the game's Options screen when
-  // the game's art is loaded (LoadGameArt); otherwise, and for the other
-  // windows, the menus' own panel.
+  // game_style: the settings the game's Options screen opened, drawn as that
+  // screen when the game's art is loaded (LoadGameArt); otherwise, and for
+  // the other windows and the F1 menu, the menus' own panel.
   void ShowPanel(std::string title, std::vector<std::string> tabs, int tab, std::vector<PanelRow> rows,
                  std::function<void(int)> select_tab, std::function<void()> close, std::string focus = {},
                  bool game_style = false);
@@ -80,18 +80,21 @@ class Ui final : public rex::ui::UIDrawer, public rex::ui::WindowInputListener {
   std::string PanelFocus() const { return game_panel_.Shown() ? game_panel_.FocusId() : panel_.FocusId(); }
   bool PanelShown() const { return panel_.Shown() || game_panel_.Shown() || controls_.Shown(); }
   // UI thread: reads the art of the game's menus (game_assets.h) on a worker
-  // for the in-game settings. Until it arrives, or if it fails, they use the
-  // menus' own panel.
+  // for the settings of the game's Options screen. Until it arrives, or if it
+  // fails, they use the menus' own panel.
   void LoadGameArt(std::filesystem::path game_root, bool disc_image);
   bool GameArtReady() const;
-  // The game's interface sounds for the in-game settings' actions.
-  void SetPanelSound(std::function<void(GameStylePanel::Sound)> sound) { game_panel_.SetSound(std::move(sound)); }
+  // The game's interface sounds for the actions of the pages on the game's stage.
+  void SetPanelSound(std::function<void(GameStylePanel::Sound)> sound) {
+    game_panel_.SetSound(sound);
+    controls_.SetSound(std::move(sound));
+  }
   // Tests step the in-game settings' animations with their own clock.
   void SetAnimationClock(std::function<std::chrono::steady_clock::time_point()> now) { game_panel_.SetClock(std::move(now)); }
   // UI thread: asynchronous results belong to the view that started them.
   uint64_t ViewRevision() const { return view_revision_; }
   void ShowControls(controls::Config config, std::function<bool(const controls::Config&)> save,
-                    std::function<void()> close, std::string menu_key);
+                    std::function<void()> close, std::string menu_key, bool game_style = false);
   void CaptureKey(std::function<void(std::string)> captured);
   void CancelKeyCapture() { key_capture_ = {}; pending_key_.clear(); }
   void EnableGameMenu(std::string key, std::string chord, std::function<void()> toggle);

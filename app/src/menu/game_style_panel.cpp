@@ -1,5 +1,6 @@
 // Window interactions are queued until after RmlUi finishes dispatching events (game_style_panel.h).
 #include "menu/game_style_panel.h"
+#include "menu/game_stage.h"
 #include "menu/localization.h"
 #include "menu/prompts.h"
 #include "menu/text.h"
@@ -7,62 +8,26 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <tuple>
+#include <limits>
 #include <utility>
 #include <fmt/format.h>
 namespace narutorise::menu {
 namespace {
+using game_stage::Copies;
+using game_stage::Prompt;
+using game_stage::kOutline;
+using game_stage::kOverOutline;
+using game_stage::kPromptOutline;
+using game_stage::kValueShadow;
+using game_stage::kInk;
+using game_stage::kWhite;
 std::string Escape(const std::string& text) { return Rml::StringUtilities::EncodeRml(text); }
 std::string Replace(std::string text, std::string_view from, std::string_view to) {
   for (size_t at = text.find(from); at != std::string::npos; at = text.find(from, at + to.size()))
     text.replace(at, from.size(), to);
   return text;
 }
-// The movie's stage, and where its panels, curtains and paper are on it.
-constexpr float kStageWidth = 1280, kStageHeight = 720;
-constexpr float kPaperLeft = 160, kPaperRight = 1120, kCurtainWidth = 133.333f;
-// Each curtain piece reaches this far under its neighbours: the art fades out
-// over its two outer pixels, which would show the black behind them.
-constexpr float kCurtainOverlap = 3;
-constexpr float kEdgeOverPaper = 2;
 constexpr float kNameLeft = 33.333f;  // The labels' place in their rows (game_menu.rcss .name).
-// The movie's outlines are copies of the text under it, offset in stage units:
-// labels and the title over four copies, the prompts over four closer ones,
-// the values over a single shadow.
-using Offsets = std::vector<std::array<float, 2>>;
-const Offsets kOutline{{2.5f, 2.5f}, {-2.5f, 2.5f}, {-1.5f, -1.5f}, {1.5f, -1.5f}};
-const Offsets kPromptOutline{{1.5f, 1.5f}, {-1.5f, -1.5f}, {1.5f, -1.5f}, {-1.5f, 1.5f}};
-const Offsets kValueShadow{{2.5f, 2.5f}};
-constexpr uint32_t kWhite = 0xFFFFFF, kInk = 0x000000, kOverOutline = 0xA30000;
-// The copies as RmlUi shadows at px pixels per stage unit. Shadows move by
-// whole pixels: one at the offset's whole part, and one a pixel further out
-// with the fraction left as its alpha, as the game's antialiased copies.
-std::string Copies(const Offsets& offsets, float px, uint32_t rgb) {
-  std::string effects;
-  const auto shadow = [&](float x, float y, float alpha) {
-    effects += fmt::format("{}shadow({}px {}px #{:06x}{:02x})", effects.empty() ? "" : ", ", int(x), int(y), rgb,
-                           int(std::lround(255 * alpha)));
-  };
-  for (const auto& [dx, dy] : offsets) {
-    const float x = dx * px, y = dy * px, whole = std::floor(std::abs(x)), fraction = std::abs(x) - whole;
-    const float sx = x < 0 ? -1.f : 1.f, sy = y < 0 ? -1.f : 1.f;
-    if (whole >= 1) shadow(sx * whole, sy * whole, 1);
-    if (fraction > .1f) shadow(sx * (whole + 1), sy * (whole + 1), fraction);
-  }
-  return effects;
-}
-// A prompt: the game's button image on an Xbox pad, the family's glyph on
-// another pad, or the key's name with the keyboard (SetGlyphs fills it).
-std::string Prompt(const char* id, const char* image) {
-  return fmt::format("<div id='{}' class='prompt {}'/>", id, image);
-}
-struct PromptButton {
-  const char* id;
-  const char* button;  // The atlas name after the family's prefix.
-  const char* key;
-};
-constexpr PromptButton kPromptButtons[] = {
-    {"tab-previous", "lb", "PgUp"}, {"tab-next", "rb", "PgDn"}, {"back-prompt", "east", "Esc"}, {"ok-prompt", "south", "Enter"}};
 }  // namespace
 
 GameStylePanel::Kind GameStylePanel::KindOf(const PanelRow& row) {
@@ -78,7 +43,8 @@ std::string GameStylePanel::EdoText(std::string text) {
 }
 
 bool GameStylePanel::Show(Rml::Context& context, std::vector<std::string> tabs, int tab, std::vector<PanelRow> rows,
-                          std::function<void(int)> select_tab, std::function<void()> close, std::string focus) {
+                          std::function<void(int)> select_tab, std::function<void()> close, std::string focus,
+                          bool at_once) {
   Content content{std::move(tabs), tab, std::move(rows), std::move(select_tab), std::move(close), std::move(focus)};
   if (document_ && motion_.phase() != Phase::kClose && content.tab != tab_ && int(content.tabs.size()) == tabs_) {
     // Another tab: its panels enter once the current ones leave (Tick).
@@ -103,7 +69,7 @@ bool GameStylePanel::Show(Rml::Context& context, std::vector<std::string> tabs, 
   motion_.Settle();
   next_.reset();
   Build(std::move(content));
-  if (opening) {
+  if (opening && !at_once) {
     motion_.Start(Phase::kOpen);
     Play(Sound::kOpen);
   }
@@ -273,60 +239,56 @@ bool GameStylePanel::FitText() {
 
 void GameStylePanel::Layout(int width, int height, float ratio) {
   if (!document_) return;
-  // The page fills the game's image, which the native renderer fits at 16:9
-  // in the window, with black bars beside or above it.
-  const float window_w = width / ratio, window_h = height / ratio;
-  const float w = std::min(window_w, window_h * kStageWidth / kStageHeight), h = w * kStageHeight / kStageWidth;
-  const float k = w / kStageWidth, left = 0, top = 0;
-  motion_.SetStage(left, k);
+  const float k = game_stage::Place(*document_, width, height, ratio);
+  motion_.SetStage(0, k);
   text_px_ = k * ratio;  // Pixels per stage unit, for the text effects.
-  const auto dp = [](float n) { return fmt::format("{:.3f}dp", n); };
-  document_->SetProperty("left", dp((window_w - w) / 2)); document_->SetProperty("top", dp((window_h - h) / 2));
-  document_->SetProperty("width", dp(w)); document_->SetProperty("height", dp(h));
-  document_->SetProperty("font-size", dp(k));  // One rem: a stage unit.
-  for (const char* id : {"stage-back", "stage"}) {  // The layers under and over the curtains.
-    auto* stage = document_->GetElementById(id);
-    stage->SetProperty("left", dp(left)); stage->SetProperty("top", dp(top));
-  }
-  const auto place = [&](const char* id, float x, float width_dp) {
-    auto* element = document_->GetElementById(id);
-    element->SetProperty("left", dp(x)); element->SetProperty("width", dp(std::max(0.0f, width_dp)));
-  };
-  place("paper", left + kPaperLeft * k, (kPaperRight - kPaperLeft) * k);
-  // The edges also cover the paper's lighter outer column.
-  const float edge = kPaperLeft - kCurtainWidth + kCurtainOverlap + kEdgeOverPaper;
-  place("edge-left", left + (kCurtainWidth - kCurtainOverlap) * k, edge * k);
-  place("edge-right", left + (kPaperRight - kEdgeOverPaper) * k, edge * k);
-  const float tile = kCurtainWidth * k;
-  for (const auto& [id, edge, toward] : {std::tuple{"curtain-left", left + kCurtainWidth * k, -1.0f},
-                                         std::tuple{"curtain-right", left + (kStageWidth - kCurtainWidth) * k, 1.0f}}) {
-    auto* curtains = document_->GetElementById(id);
-    while (curtains->GetNumChildren()) curtains->RemoveChild(curtains->GetFirstChild());
-    const float span = toward < 0 ? edge : w - edge;
-    for (int n = 0; n * tile < span + tile && n < 16; ++n) {
-      auto piece = document_->CreateElement("div"); piece->SetClass("curtain", true);
-      piece->SetProperty("left", dp((toward < 0 ? edge - (n + 1) * tile : edge + n * tile) - kCurtainOverlap * k));
-      piece->SetProperty("width", dp(tile + 2 * kCurtainOverlap * k));
-      curtains->AppendChild(std::move(piece));
-    }
-  }
   ApplyTextEffects();
 }
 
 void GameStylePanel::SetGlyphs(controls::Glyphs glyphs) {
   glyphs_ = glyphs;
-  if (!document_) return;
-  const bool keyboard = glyphs == controls::Glyphs::Keyboard;
-  const bool other_pad = !keyboard && glyphs != controls::Glyphs::Xbox;
-  document_->SetClass("keys", keyboard);
-  document_->SetClass("glyphs", other_pad);
-  for (const auto& prompt : kPromptButtons) {
-    auto* element = document_->GetElementById(prompt.id);
-    if (!element) continue;
-    std::string content = fmt::format("<span>{}</span>", prompt.key);
-    if (other_pad) content += GlyphRml(fmt::format("{}-{}", controls::GlyphPrefix(glyphs), prompt.button));
-    element->SetInnerRML(content);
-  }
+  if (document_) game_stage::SetPrompts(*document_, glyphs);
+}
+
+// The list scrolls by rows of different panels, so its ends usually fall
+// inside one. Copies of the paper cover what does not fit whole: a row is
+// shown entire or not at all, and its panel ends flat where more follows.
+bool GameStylePanel::TrimList() {
+  auto* options = document_ ? document_->GetElementById("options") : nullptr;
+  auto* upper = document_ ? document_->GetElementById("trim-top") : nullptr;
+  auto* lower = document_ ? document_->GetElementById("trim-bottom") : nullptr;
+  const float rem = document_ ? document_->GetComputedValues().font_size() : 0;
+  if (!options || !upper || !lower || rem <= 0) return false;
+  const float view_top = options->GetAbsoluteTop(), view_bottom = view_top + options->GetClientHeight();
+  float first = std::numeric_limits<float>::max(), last = std::numeric_limits<float>::lowest();
+  if (motion_.phase() == Phase::kIdle)  // The panels pass under the curtains unclipped while they move.
+    for (const auto& row : rows_) {
+      auto* item = document_->GetElementById(row.id);
+      auto* group = item ? item->GetParentNode() : nullptr;
+      if (!group) continue;
+      const float top = item->GetAbsoluteTop(), bottom = top + item->GetOffsetHeight();
+      if (top < view_top - .5f || bottom > view_bottom + .5f) continue;
+      first = std::min(first, group->GetFirstChild() == item ? group->GetAbsoluteTop() : top);
+      last = std::max(last, group->GetLastChild() == item ? group->GetAbsoluteTop() + group->GetOffsetHeight() : bottom);
+    }
+  const bool whole = first <= last;
+  const float stage = document_->GetElementById("stage-back")->GetAbsoluteTop();
+  const std::array<float, 4> place{(view_top - stage) / rem, whole ? std::max(0.0f, first - view_top) / rem : 0,
+                                   (std::min(view_bottom, whole ? last : view_bottom) - stage) / rem,
+                                   whole ? std::max(0.0f, view_bottom - last) / rem : 0};
+  bool same = true;
+  for (size_t i = 0; i < place.size(); ++i) same &= std::abs(place[i] - trims_[i]) < .01f;
+  if (same) return false;
+  trims_ = place;
+  const auto set = [&](Rml::Element* trim, float top, float height) {
+    trim->SetProperty("display", height > .25f ? "block" : "none");
+    trim->SetProperty("top", fmt::format("{:.3f}rem", top));
+    trim->SetProperty("height", fmt::format("{:.3f}rem", height));
+    trim->GetFirstChild()->SetProperty("top", fmt::format("{:.3f}rem", -top));
+  };
+  set(upper, place[0], place[1]);
+  set(lower, place[2], place[3]);
+  return true;
 }
 
 void GameStylePanel::Hide() {

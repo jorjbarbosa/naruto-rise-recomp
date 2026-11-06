@@ -65,8 +65,14 @@ body.glyphs .prompt.lb, body.glyphs .prompt.rb { width: 36rem; height: 36rem; ma
 body.glyphs .prompt img.glyph { display: block; width: 100%; height: 100%; margin: 0; }
 
 /* The rows on the movie's translucent panels. */
-#options { position: absolute; left: 120rem; top: 114rem; width: 1013.333rem; height: 446rem;
+/* Wide enough for the panels and the scrollbar beside them, on the paper:
+   the curtains start at 1118. */
+#options { position: absolute; left: 120rem; top: 114rem; width: 978rem; height: 446rem;
   overflow-y: auto; overflow-x: hidden; }
+/* Copies of the paper over what does not fit whole at the list's ends
+   (GameStylePanel::TrimList), up to the panels' right end. */
+.trim { display: none; position: absolute; left: 160rem; width: 924rem; overflow: hidden; clip: always; pointer-events: none; }
+.trim-paper { display: block; position: absolute; left: 0; width: 960rem; height: 720rem; decorator: image(game/paper fill); }
 .group { display: block; position: relative; margin-left: 40rem; width: 918rem; padding: 4.333rem 0;
   margin-bottom: 18.667rem; background-color: #0000008c;
   border-radius: 0 26.667rem 26.667rem 0; }  /* Half a one-row panel: larger radii break its corners. */
@@ -106,10 +112,12 @@ body.cyrillic .word { font-size: 24.8rem; }
 scrollbarvertical { width: 6.667rem; margin-left: 4rem; }
 scrollbarvertical slidertrack { background-color: #332c1d80; }
 scrollbarvertical sliderbar { min-height: 20rem; background-color: #f07010; }
+body.moving scrollbarvertical { opacity: 0; }
 
 /* Help for the focused row, then the game's button prompts. */
-#help { position: absolute; left: 193.333rem; top: 577.333rem; width: 866.667rem; font-family: "Roboto Condensed";
-  font-weight: 500; font-size: 18.667rem; line-height: 24rem; color: #3a2e12; white-space: pre-wrap; }
+/* Three lines end above the prompts. */
+#help { position: absolute; left: 193.333rem; top: 566rem; width: 866.667rem; font-family: "Roboto Condensed";
+  font-weight: 500; font-size: 18rem; line-height: 22rem; color: #3a2e12; white-space: pre-wrap; }
 #footer { position: absolute; left: 0; top: 636rem; width: 1280rem; height: 44rem; }
 #back-prompt, #ok-prompt { position: absolute; top: 0; width: 44rem; height: 44rem; }
 #back-prompt { left: 174.667rem; decorator: image(game/button-b fill); }

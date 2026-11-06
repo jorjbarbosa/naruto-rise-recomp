@@ -229,7 +229,7 @@ if(UNIX AND NOT APPLE)
     # The script modules find the session of the game's options by name (game_options.h).
     target_link_options(narutorise PRIVATE "LINKER:--export-dynamic-symbol=narutorise_game_options")
 endif()
-add_library(narutorise_menu_components STATIC src/menu/text.cpp src/menu/panel.cpp src/menu/game_style_panel.cpp src/menu/game_style_motion.cpp src/menu/pad_input.cpp
+add_library(narutorise_menu_components STATIC src/menu/text.cpp src/menu/panel.cpp src/menu/game_stage.cpp src/menu/game_style_panel.cpp src/menu/game_style_motion.cpp src/menu/game_style_controls.cpp src/menu/pad_input.cpp
             src/controls/config.cpp
             src/controls/service.cpp
             src/controls/glyphs.cpp

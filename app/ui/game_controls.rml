@@ -1,0 +1,8 @@
+<rml><head><title>Controls</title><link type="text/rcss" href="theme.rcss"/><link type="text/rcss" href="prompts.rcss"/><link type="text/rcss" href="game_menu.rcss"/><link type="text/rcss" href="game_controls.rcss"/></head>
+<body><div id="backdrop"/><div id="paper"/>
+<div id="stage-back" class="stage"><div id="controls-sidebar"/><div id="controls-detail"/><div id="tabs"/></div>
+<div id="sides"><div id="side-left" class="side"><div id="curtain-left"/><div id="edge-left"/></div>
+<div id="side-right" class="side"><div id="curtain-right"/><div id="edge-right"/></div></div>
+<div id="stage" class="stage"><div id="cursor"/><div id="controls-status"/>
+<div id="footer"><div id="back-prompt" class="prompt button-b" command="close"/><span id="back-label" command="close"/><div id="controls-footer"/></div>
+</div></body></rml>

@@ -2,8 +2,10 @@
 
 Usage: python -I app/tests/game_style_boot_test.py <product folder> <game folder or .iso> <new output folder>
 For each API: the game's own Options screen opening the settings, with a
-change it keeps; then the opening, every tab, a tab switch and the closing at
-1280x720, the page at 1920x1080 and 2560x1080 (21:9) and the opening at 21:9.
+change it keeps; the F1 menu keeping the menus' own panel; then the opening,
+every tab, the controls page, the end of a long list, a tab switch and the
+closing at 1280x720, the page at 1920x1080 and 2560x1080 (21:9) and the opening
+at 21:9.
 Uses isolated configuration and saves. Does not change the supplied product.
 Keys are real input (SendInput) to the focused test window: keep the desktop free.
 """
@@ -87,66 +89,80 @@ def main():
                 win.user32.GetClientRect(hwnd, ctypes.byref(actual))
                 assert (actual.right, actual.bottom) == (width, height), (actual.right, actual.bottom)
 
-            def open_settings(prefix):
-                opened = log().count('Game menu opened')
-                key(F1, 0)  # The menu bar; Settings is focused.
-                win.wait_for(lambda: log().count('Game menu opened') > opened, process, timeout=5)
-                time.sleep(.3)
-                key(ENTER, 0)
-                shot(prefix + '-open-a', .1)
-                shot(prefix + '-open-b', .1)
-                shot(prefix + '-open-c', .15)
-                shot(prefix + '-open', SETTLED)
-
             resize(1280, 720)
             time.sleep(4)  # Past the shortcut hint.
             # The game's own Options screen opens the settings with the game's
             # options first; a change made there stays in the game's options.
             opened = "The game's Options screen opened the settings"
 
-            def game_options(count):
+            def game_options(count, prefix=None):
                 for _ in range(3):
                     key(PAD_DOWN, .6, GAME_KEY)  # OPTIONS, from STORY MODE.
                 key(PAD_A, 0, GAME_KEY)
                 win.wait_for(lambda: log().count(opened) == count, process, timeout=10)
-                shot(f'options-{count}', SETTLED + 1)
+                if prefix:
+                    shot(prefix + '-open-a', .1)
+                    shot(prefix + '-open-b', .1)
+                    shot(prefix + '-open-c', .15)
+                    shot(prefix + '-open', SETTLED)
+                else:
+                    shot(f'options-{count}', SETTLED + 1)
+
+            def leave_options(count):
+                key(ESCAPE, 0)
+                win.wait_for(lambda: log().count('Options screen left') == count, process, timeout=10)
 
             key(ENTER, 3, GAME_KEY)  # START: the main menu.
             game_options(1)
             key(LEFT, .5)  # The music volume, a step down.
             shot('options-changed')
-            key(ESCAPE, 0)
-            win.wait_for(lambda: log().count('Options screen left') == 1, process, timeout=10)
+            leave_options(1)
             shot('options-closed', 3)
             game_options(2)
-            key(ESCAPE, 0)
-            win.wait_for(lambda: log().count('Options screen left') == 2, process, timeout=10)
+            leave_options(2)
             shot('options-closed-again', 3)
-            open_settings('720p')
-            for tab in ('display', 'quality', 'controls', 'advanced'):
+            # The F1 menu keeps the menus' own panel.
+            shown = log().count('Game menu opened')
+            key(F1, 0)  # The menu bar; Settings is focused.
+            win.wait_for(lambda: log().count('Game menu opened') > shown, process, timeout=5)
+            time.sleep(.3)
+            key(ENTER, 0)
+            shot('f1-settings', SETTLED)
+            key(ESCAPE, .5)
+            key(ESCAPE, .5)  # Closes the menu bar.
+            game_options(3, '720p')
+            for tab in ('game', 'display', 'quality', 'controls', 'advanced'):
                 key(PAGE_DOWN, 0)
-                if tab == 'display':
+                if tab == 'game':
                     shot('720p-tab-switch-a', .05)
                     shot('720p-tab-switch-b', .1)
                 shot(f'720p-{tab}', SETTLED)
-            key(PAGE_DOWN, SETTLED)  # Back to Game.
-            key(PAGE_DOWN, SETTLED)
+                if tab == 'controls':
+                    key(ENTER, 1)  # Configure controls, first of the tab.
+                    shot('720p-controls-page')
+                    key(ESCAPE, 1)
+                    shot('720p-controls-back')
+            for _ in range(8):
+                key(DOWN, .15)
+            shot('720p-advanced-end', .5)
+            for _ in range(3):  # The game's options, Game, Display.
+                key(PAGE_DOWN, SETTLED)
             key(DOWN, .3)
             shot('720p-display-focus')
             key(ESCAPE, 0)
             shot('720p-close-a', .1)
             shot('720p-close-b', .15)
-            shot('720p-closed', SETTLED)
-            key(ESCAPE, .5)  # Closes the menu bar.
-            for name, size in (('1080p', (1920, 1080)), ('wide', (2560, 1080))):
+            win.wait_for(lambda: log().count('Options screen left') == 3, process, timeout=10)
+            shot('720p-closed', 3)
+            for count, (name, size) in enumerate((('1080p', (1920, 1080)), ('wide', (2560, 1080))), 4):
                 resize(*size)
-                open_settings(name)
-                key(ESCAPE, SETTLED)
-                key(ESCAPE, .5)
+                game_options(count, name)
+                leave_options(count)
+                time.sleep(3)
             text = log()
             music = [int(line.split(' music ')[1].split()[0]) for line in text.splitlines()
                      if 'Options screen hidden for the settings' in line]
-            assert len(music) == 2 and music[1] == max(music[0] - 1, 0), music
+            assert len(music) == 5 and music[1] == max(music[0] - 1, 0) and len(set(music[1:])) == 1, music
             assert 'the art of the game' not in text, 'the game art did not load'
             # A normal program close also exercises the deferred native path.
             win.user32.PostMessageW(hwnd, 0x10, 0, 0)

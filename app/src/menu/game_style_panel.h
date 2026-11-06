@@ -9,6 +9,7 @@
 #include "menu/game_style_motion.h"
 #include "menu/panel.h"
 #include <RmlUi/Core/EventListener.h>
+#include <array>
 #include <deque>
 #include <functional>
 #include <optional>
@@ -30,9 +31,11 @@ class GameStylePanel final : public Rml::EventListener {
   static std::string EdoText(std::string text);
   // Opens with the movie's in-animation; another tab of the open page swaps
   // its panels; the same tab redraws at once. Back (Esc, B) plays the
-  // out-animation before close runs; Hide closes at once.
+  // out-animation before close runs; Hide closes at once. at_once: opens
+  // without the in-animation, coming back from a page on the same stage.
   bool Show(Rml::Context& context, std::vector<std::string> tabs, int tab, std::vector<PanelRow> rows,
-            std::function<void(int)> select_tab, std::function<void()> close, std::string focus = {});
+            std::function<void(int)> select_tab, std::function<void()> close, std::string focus = {},
+            bool at_once = false);
   void Hide();
   bool Shown() const { return document_ != nullptr; }
   const std::string& FocusId() const { return focus_id_; }
@@ -43,9 +46,9 @@ class GameStylePanel final : public Rml::EventListener {
   // (translations, file names) shrink to it. True when the layout changed,
   // for another update and pass, at most kFitPasses after Show.
   bool FitText();
-  // After the context's update: the cursor's cloud on the focused row. True
-  // when it moved, for another update.
-  bool PlaceCursor() { return motion_.PlaceCursor(); }
+  // After the context's update: the cursor's cloud on the focused row and
+  // the list's ends. True when they moved, for another update.
+  bool PlaceCursor() { const bool moved = motion_.PlaceCursor(); return TrimList() || moved; }
   void Layout(int width, int height, float ratio);
   void SetGlyphs(controls::Glyphs glyphs);
   void ProcessEvent(Rml::Event& event) override;
@@ -61,6 +64,7 @@ class GameStylePanel final : public Rml::EventListener {
   };
   void Build(Content content);
   void ApplyTextEffects();
+  bool TrimList();
   int FocusedRow() const;
   void Close();
   void Describe(size_t row);
@@ -76,6 +80,7 @@ class GameStylePanel final : public Rml::EventListener {
   static constexpr int kFitPasses = 4;
   float text_px_ = 1;
   int fit_passes_ = 0;
+  std::array<float, 4> trims_{};  // Top and height of the list's two ends, in stage units.
   controls::Glyphs glyphs_ = controls::Glyphs::Keyboard;
   bool skipping_ = false, replaying_ = false, building_ = false;
   GameStyleMotion motion_;

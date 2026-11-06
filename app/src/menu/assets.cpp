@@ -57,6 +57,12 @@ constexpr uint8_t kGameMenu[] = {
 constexpr uint8_t kGameMenuStyle[] = {
 #embed "../../ui/game_menu.rcss"
 };
+constexpr uint8_t kGameControls[] = {
+#embed "../../ui/game_controls.rml"
+};
+constexpr uint8_t kGameControlsStyle[] = {
+#embed "../../ui/game_controls.rcss"
+};
 constexpr uint8_t kControls[] = {
 #embed "../../ui/controls.rml"
 };
@@ -103,6 +109,8 @@ constexpr std::array kAssets{
     Entry{"panel.rcss", kPanelStyle},
     Entry{"game_menu.rml", kGameMenu},
     Entry{"game_menu.rcss", kGameMenuStyle},
+    Entry{"game_controls.rml", kGameControls},
+    Entry{"game_controls.rcss", kGameControlsStyle},
     Entry{"controls.rml", kControls},
     Entry{"controls.rcss", kControlsStyle},
     Entry{"overlay.rml", kOverlay},

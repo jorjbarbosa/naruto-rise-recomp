@@ -183,7 +183,7 @@ void Settings::Redraw(std::string focus) {
   ui_->ShowPanel(Text("settings"), Tabs(), group_, Rows(group_),
       [this](int group) { group_ = group; Redraw(); },
       [this] { panel_revision_ = 0; ui_->HidePanel(); ui_->CancelKeyCapture(); if (closed_) closed_(); }, std::move(focus),
-      in_game_);
+      game_options_.has_value());
   panel_revision_ = ui_->ViewRevision();
 }
 // The game's options as its own screen lists them, without its brightness
@@ -506,7 +506,7 @@ void Settings::Controls() {
     config_ = std::move(proposed); controls::Publish(config_.controls);
     if (changed_) changed_("controls");
     return true;
-  }, [this] { Redraw("configure-controls"); }, menu_options_.key);
+  }, [this] { Redraw("configure-controls"); }, menu_options_.key, game_options_.has_value());
 }
 bool Settings::ApplyBeforeGame() const {
   try {

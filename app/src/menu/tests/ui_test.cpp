@@ -21,8 +21,10 @@
 #include <toml++/toml.hpp>
 #include <RmlUi/Core.h>
 #include <windows.h>
+#include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -1022,8 +1024,8 @@ int main(int argc, char** argv) {
     menu.HideSetup();
     check("setup-hidden", !menu.Shown(), "{}");
     if (const char* root = std::getenv("NARUTORISE_TEST_GAME_ROOT")) {
-      // The in-game settings as the game's Options screen once the art of the
-      // game's menus arrives; before it, the menus' own panel.
+      // The settings of the game's Options screen drawn as that screen once the
+      // art of the game's menus arrives; before it, the menus' own panel.
       menu.ShowOverlay({}, {}, {}, {});
       settings_model.Open(menu, 0, true, {}, {}, {});
       check("game-style-waits-for-art", !menu.GameArtReady() && visible_document("panel-title"), "{}");
@@ -1051,12 +1053,12 @@ int main(int argc, char** argv) {
         std::ofstream(language_dir / "narutorise.toml") << "launcher_language = \"" << language.code << "\"\n";
         narutorise::menu::Settings translated;
         translated.Initialize(language_dir);
+        translated.SetGameOptions(game_values, {});
         for (int tab = 0; tab < 6; ++tab) {
-          // The last: the game's options, first when its Options screen opened the settings.
-          if (tab == 5) translated.SetGameOptions(game_values, {});
-          translated.Open(menu, tab == 5 ? 0 : tab, true, [] {}, {}, {});
+          // The game's options are the first tab.
+          translated.Open(menu, tab, true, [] {}, {}, {});
           const std::string name = "game-style-" + std::string(language.code) + "-" +
-                                   (tab == 5 ? std::string("options") : std::to_string(tab));
+                                   (tab == 0 ? std::string("options") : std::to_string(tab - 1));
           if (!still(name, art)) continue;
           std::ofstream(std::string(argv[1]) + "." + name + "-1280x720.bgra", std::ios::binary)
               .write(reinterpret_cast<const char*>(art.data()), std::streamsize(art.size()));
@@ -1092,13 +1094,14 @@ int main(int argc, char** argv) {
         menu.HidePanel();
       }
       settings_model.Reload();
+      settings_model.SetGameOptions(game_values, {});
       // A controller's input shows the game's button images.
       SDL_VirtualJoystickDesc style_pad; SDL_INIT_INTERFACE(&style_pad);
       style_pad.type = SDL_JOYSTICK_TYPE_GAMEPAD; style_pad.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
       style_pad.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1; style_pad.name = "Game style fixture";
       const auto style_id = SDL_AttachVirtualJoystick(&style_pad);
       auto* style_joystick = style_id ? SDL_OpenJoystick(style_id) : nullptr;
-      settings_model.Open(menu, 1, true, [] {}, {}, {});
+      settings_model.Open(menu, 2, true, [] {}, {}, {});
       still("game-style-pad-before", art);
       if (check("game-style-pad-attached", style_joystick != nullptr, "{}")) {
         SDL_SetJoystickVirtualButton(style_joystick, SDL_GAMEPAD_BUTTON_DPAD_DOWN, true);
@@ -1162,7 +1165,7 @@ int main(int argc, char** argv) {
       };
       menu.SetPanelSound([&](Sound sound) { sounds.push_back(sound); });
       auto start = animation_time;
-      settings_model.Open(menu, 1, true, [] {}, {}, [&] { ++closed; });
+      settings_model.Open(menu, 2, true, [] {}, {}, [&] { ++closed; });
       to_frame(start, 0); capture("anim-open-00");
       check("anim-open-cuts-to-the-paper", paper_shown() && !curtain_shown(), "{\"paper\":" + Json(at(art, 640, 700)) + "}");
       for (float q : {7.f, 9.f, 12.f, 14.f, 16.f, 19.f, 21.f, 25.f, 30.f}) { to_frame(start, q); capture("anim-open-" + fmt::format("{:02}", int(q))); }
@@ -1184,7 +1187,7 @@ int main(int argc, char** argv) {
       to_frame(start, 60); capture("anim-tab-in-60");
       auto* tabbed = visible_document("back-label");
       auto* selected = tabbed ? tabbed->QuerySelector(".tab.selected") : nullptr;
-      check("anim-tab-switches-panels", selected && selected->GetAttribute<int>("tab", -1) == 2 &&
+      check("anim-tab-switches-panels", selected && selected->GetAttribute<int>("tab", -1) == 3 &&
             menu.PanelFocus() == "msaa_samples", "{\"focus\":\"" + menu.PanelFocus() + "\"}");
       key(rex::ui::VirtualKey::kEscape);
       start = animation_time;
@@ -1196,7 +1199,7 @@ int main(int argc, char** argv) {
             sounds_json());
       // Input skips: the page at once, and the input still acts.
       start = animation_time;
-      settings_model.Open(menu, 1, true, [] {}, {}, [&] { ++closed; });
+      settings_model.Open(menu, 2, true, [] {}, {}, [&] { ++closed; });
       to_frame(start, 5); frame("anim-skip-open", art);
       key(rex::ui::VirtualKey::kDown);
       frame("anim-skip-open-done", art);
@@ -1211,7 +1214,8 @@ int main(int argc, char** argv) {
         std::filesystem::create_directories(change_dir);
         narutorise::menu::Settings changing;
         changing.Initialize(change_dir);
-        changing.Open(menu, 1, true, [] {}, {}, {});
+        changing.SetGameOptions(game_values, {});
+        changing.Open(menu, 2, true, [] {}, {}, {});
         still("game-style-change-before", art);
         focus_id("frame_rate");
         auto* document = visible_document("back-label");
@@ -1240,7 +1244,7 @@ int main(int argc, char** argv) {
         check("game-style-toggle-flips", vsync_once != vsync_before && vsync_on() == vsync_before &&
               menu.PanelFocus() == "vsync", "{\"focus\":\"" + menu.PanelFocus() + "\"}");
         // Keys pressed together reach the pages they were meant for, in order.
-        changing.Open(menu, 0, true, [] {}, {}, {});
+        changing.Open(menu, 1, true, [] {}, {}, {});
         still("game-style-keys-before", art);
         for (auto vk : {rex::ui::VirtualKey::kNext, rex::ui::VirtualKey::kNext, rex::ui::VirtualKey::kDown,
                         rex::ui::VirtualKey::kDown})
@@ -1250,7 +1254,7 @@ int main(int argc, char** argv) {
         Rml::ElementList keyed_rows;
         if (keyed) keyed->QuerySelectorAll(keyed_rows, "#options .row");
         auto* keyed_tab = keyed ? keyed->QuerySelector(".tab.selected") : nullptr;
-        check("game-style-held-keys-in-order", keyed_tab && keyed_tab->GetAttribute<int>("tab", -1) == 2 &&
+        check("game-style-held-keys-in-order", keyed_tab && keyed_tab->GetAttribute<int>("tab", -1) == 3 &&
               keyed_rows.size() > 2 && menu.PanelFocus() == keyed_rows[2]->GetId(),
               "{\"focus\":\"" + menu.PanelFocus() + "\"}");
         menu.HidePanel();
@@ -1286,7 +1290,7 @@ int main(int argc, char** argv) {
               "{\"closed\":" + std::to_string(game_closed) + "}");
       }
       // BACK takes the click beside the restart legend.
-      settings_model.Open(menu, 1, true, [] {}, {}, [&] { ++closed; });
+      settings_model.Open(menu, 2, true, [] {}, {}, [&] { ++closed; });
       still("game-style-back-click", art);
       rex::ui::MouseEvent over_back(nullptr, rex::ui::MouseEvent::Button::kNone, 260, 658);
       rex::ui::MouseEvent press_back(nullptr, rex::ui::MouseEvent::Button::kLeft, 260, 658);
@@ -1294,6 +1298,123 @@ int main(int argc, char** argv) {
       frame("game-style-back-click-closing", art);
       animation_time += std::chrono::seconds(10); frame("game-style-back-click-closed", art);
       check("game-style-back-click", closed == 3 && !menu.PanelShown(), "{\"closed\":" + std::to_string(closed) + "}");
+      {
+        // A list longer than its view shows the scrollbar beside the panels, on
+        // the paper, and no row cut at its ends.
+        settings_model.Open(menu, 5, true, [] {}, {}, {});
+        still("game-style-advanced", art);
+        capture("game-style-advanced");
+        auto* page = visible_document("back-label");
+        auto* options = page ? page->GetElementById("options") : nullptr;
+        const float rem = page ? page->GetComputedValues().font_size() : 1;
+        check("game-style-scrollbar-on-the-paper", options && options->GetScrollHeight() > options->GetClientHeight() &&
+              options->GetAbsoluteLeft() + options->GetOffsetWidth() <= 1118 * rem &&
+              options->GetClientWidth() >= 958 * rem, "{}");
+        const auto rows_whole = [&](const std::string& name) {
+          // What the trim leaves: the view ends at a row's end.
+          auto* lower = page ? page->GetElementById("trim-bottom") : nullptr;
+          const bool shown = lower && lower->IsVisible();
+          std::string cut;
+          Rml::ElementList rows;
+          page->GetElementsByClassName(rows, "row");
+          const float view_end = options->GetAbsoluteTop() + options->GetClientHeight();
+          const float trim_start = shown ? lower->GetAbsoluteTop() : view_end;
+          for (auto* row : rows) {
+            const float top = row->GetAbsoluteTop(), bottom = top + row->GetOffsetHeight();
+            if (top < trim_start - .5f && bottom > trim_start + .5f) cut += row->GetId() + " ";
+          }
+          check(name, cut.empty(), "{\"cut\":\"" + cut + "\"}");
+        };
+        if (options) {
+          frame("game-style-advanced-trim", art);
+          rows_whole("game-style-no-row-cut");
+          key(rex::ui::VirtualKey::kEnd);
+          frame("game-style-advanced-scrolled", art); frame("game-style-advanced-scrolled-trim", art);
+          capture("game-style-advanced-scrolled");
+          rows_whole("game-style-no-row-cut-scrolled");
+        }
+        // Configure controls stays on the game's stage, and comes back at once.
+        settings_model.Open(menu, 4, true, [] {}, {}, [&] { ++closed; });
+        still("game-controls-from", art);
+        focus_id("configure-controls");
+        sounds.clear();
+        key(rex::ui::VirtualKey::kReturn);
+        frame("game-controls-open", art); frame("game-controls-shown", art);
+        auto* controls_page = visible_document("controls-sidebar");
+        check("game-controls-on-the-stage", controls_page && controls_page == visible_document("back-label") &&
+              !visible_document("controls-window") && paper_shown() && curtain_shown(), "{}");
+        // A short label keeps its size: only what does not fit shrinks.
+        auto* short_label = controls_page ? controls_page->QuerySelector("#category-1 .category-label") : nullptr;
+        const float page_rem = controls_page ? controls_page->GetComputedValues().font_size() : 1;
+        check("game-controls-labels-keep-their-size", short_label &&
+              std::abs(short_label->GetComputedValues().font_size() - 27 * page_rem) < 1,
+              "{\"size\":" + std::to_string(short_label ? short_label->GetComputedValues().font_size() : 0.f) + "}");
+        capture("game-controls-devices");
+        const std::pair<const char*, const char*> controls_pages[] = {{"category-1", "buttons"}, {"category-3", "triggers"},
+            {"category-4", "sticks"}, {"category-deadzones", "deadzones"}, {"category-restore", "restore"}};
+        for (const auto& [id, name] : controls_pages) {
+          focus_id(id); key(rex::ui::VirtualKey::kReturn);
+          frame(std::string("game-controls-") + name + "-open", art); capture(std::string("game-controls-") + name);
+          key(rex::ui::VirtualKey::kEscape); frame(std::string("game-controls-") + name + "-sidebar", art);
+        }
+        key(rex::ui::VirtualKey::kNext); frame("game-controls-next-player", art); frame("game-controls-next-player-shown", art);
+        auto* player_tab = controls_page ? controls_page->QuerySelector(".tab.selected") : nullptr;
+        check("game-controls-next-player", player_tab && player_tab->GetId() == "player-1", "{}");
+        capture("game-controls-player-two");
+        focus_id("device-category");
+        key(rex::ui::VirtualKey::kEscape);
+        frame("game-controls-closing", art); frame("game-controls-closed", art);
+        check("game-controls-back-at-once", !visible_document("controls-sidebar") && visible_document("back-label") &&
+              menu.PanelFocus() == "configure-controls" && paper_shown() && curtain_shown(),
+              "{\"focus\":\"" + menu.PanelFocus() + "\"}");
+        const bool opened_again = std::find(sounds.begin(), sounds.end(), Sound::kOpen) != sounds.end();
+        check("game-controls-sounds", !opened_again && !sounds.empty() && sounds.front() == Sound::kConfirm &&
+              sounds.back() == Sound::kClose, sounds_json());
+        menu.HidePanel();
+        {
+          // With a controller: its pages, with the deadzones' graphs.
+          const auto pad_dir = settings_dir / "game-controls-pad";
+          std::filesystem::create_directories(pad_dir);
+          narutorise::menu::Settings pad_settings;
+          pad_settings.Initialize(pad_dir);
+          pad_settings.SetGameOptions(game_values, {});
+          SDL_VirtualJoystickDesc controls_pad = style_pad;
+          controls_pad.naxes = SDL_GAMEPAD_AXIS_COUNT;
+          controls_pad.axis_mask = (1u << SDL_GAMEPAD_AXIS_COUNT) - 1;
+          controls_pad.name = "A controller with a rather long name for its panel";
+          const auto controls_pad_id = SDL_AttachVirtualJoystick(&controls_pad);
+          auto* controls_joystick = controls_pad_id ? SDL_OpenJoystick(controls_pad_id) : nullptr;
+          for (int i = 0; i < 3; ++i) frame("game-controls-pad-attach", art);
+          pad_settings.Open(menu, 4, true, [] {}, {}, {});
+          still("game-controls-pad-from", art);
+          focus_id("configure-controls");
+          key(rex::ui::VirtualKey::kReturn);
+          frame("game-controls-pad-open", art); capture("game-controls-pad-devices");
+          const std::pair<const char*, const char*> pad_pages[] = {{"category-1", "buttons"}, {"category-3", "triggers"},
+              {"category-4", "sticks"}, {"category-5", "rumble"}, {"category-deadzones", "deadzones"}};
+          for (const auto& [id, name] : pad_pages) {
+            focus_id(id); key(rex::ui::VirtualKey::kReturn);
+            frame(std::string("game-controls-pad-") + name + "-open", art); capture(std::string("game-controls-pad-") + name);
+            key(rex::ui::VirtualKey::kEscape); frame(std::string("game-controls-pad-") + name + "-sidebar", art);
+          }
+          auto* graphs_page = visible_document("controls-sidebar");
+          check("game-controls-pad-graphs", graphs_page && graphs_page->QuerySelector(".stick-graph"), "{}");
+          menu.HidePanel();
+          if (controls_joystick) SDL_CloseJoystick(controls_joystick);
+          if (controls_pad_id) SDL_DetachVirtualJoystick(controls_pad_id);
+        }
+        // The F1 menu keeps the menus' own panel and the controls' own window,
+        // with the art of the game loaded.
+        settings_model.SetGameOptions(std::nullopt, {});
+        settings_model.Open(menu, 3, true, [] {}, {}, {});
+        frame("f1-settings", art); frame("f1-settings-shown", art);
+        check("f1-settings-keep-the-panel", visible_document("panel-title") && !visible_document("back-label"), "{}");
+        focus_id("configure-controls");
+        key(rex::ui::VirtualKey::kReturn);
+        frame("f1-controls", art); frame("f1-controls-shown", art);
+        check("f1-controls-keep-their-window", visible_document("controls-window"), "{}");
+        menu.HidePanel();
+      }
       menu.SetPanelSound({});
       menu.SetAnimationClock({});
       menu.HideOverlay();

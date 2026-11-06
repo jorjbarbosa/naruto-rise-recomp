@@ -1,4 +1,5 @@
 #include "menu/controls.h"
+#include "menu/game_stage.h"
 #include "menu/text.h"
 #include "menu/prompts.h"
 #include <RmlUi/Core.h>
@@ -31,8 +32,9 @@ std::string Button(const std::string& id, const std::string& label, const std::s
 std::string Category(const std::string& id, const std::string& label, int page, bool selected,
                      bool disabled, const std::string& marker = "") {
   auto out =
-      Button(id, label, "page", page, 0, disabled, selected ? "category selected" : "category");
-  out.insert(out.size() - 9, "<span class='category-marker'>" +
+      Button(id, "", "page", page, 0, disabled, selected ? "category selected" : "category");
+  out.insert(out.size() - 9, "<span class='category-label'>" + Escape(label) + "</span>" +
+                                 "<span class='category-marker" + (marker.empty() ? " chevron-mark" : "") + "'>" +
                                  Escape(marker.empty() ? (selected ? "•" : "›") : marker) +
                                  "</span>");
   return out;
@@ -71,7 +73,7 @@ std::string SourceName(controls::Source source) {
 }  // namespace
 bool Controls::Show(Rml::Context& context, controls::Config config,
                     std::function<bool(const controls::Config&)> save, std::function<void()> close,
-                    std::string menu_key, bool setup) {
+                    std::string menu_key, bool setup, bool game_style) {
   Hide();
   context_ = &context;
   config_ = std::move(config);
@@ -81,10 +83,16 @@ bool Controls::Show(Rml::Context& context, controls::Config config,
   inventory_ = controls::Hardware().Devices();
   player_ = 0;
   page_ = Devices;
-  document_ = context.LoadDocument("controls.rml");
+  game_style_ = game_style;
+  document_ = context.LoadDocument(game_style ? "game_controls.rml" : "controls.rml");
   if (!document_)
     return false;
   document_->SetClass("setup", setup);
+  if (game_style_) {
+    look_.Attach(document_);
+    const auto size = context.GetDimensions();
+    look_.Layout(size.x, size.y, context.GetDensityIndependentPixelRatio());
+  }
   for (const char* event : {"click", "keydown", "mouseover", "focus"})
     document_->AddEventListener(event, this);
   Render("device-category");
@@ -107,6 +115,8 @@ void Controls::Hide() {
       document_->RemoveEventListener(event, this);
     document_->Close();
   }
+  look_.Detach();
+  game_style_ = false;
   document_ = nullptr;
   context_ = nullptr;
   save_ = {};
@@ -210,6 +220,10 @@ void Controls::Tick(bool focused) {
 void Controls::Layout(int width, int height, float ratio) {
   if (!document_)
     return;
+  if (game_style_) {
+    look_.Layout(width, height, ratio);
+    return;
+  }
   const float w = std::max(360.0f, std::min(1040.0f, width / ratio - 48)),
               h = std::max(300.0f, std::min(586.667f, height / ratio - 32));
   auto* window = document_->GetElementById("controls-window");
@@ -236,7 +250,15 @@ void Controls::SetGlyphs(controls::Glyphs glyphs) {
                        : capture_.BlocksNavigation() ? "c-capture-release"
                        : pad && page_ == Deadzones ? "c-preview-hints"
                                                    : "c-hints";
-    document_->GetElementById("controls-footer")->SetInnerRML(PromptRml(Text(hint), glyphs));
+    std::string text = Text(hint);
+    if (game_style_) {
+      // The stage has its own BACK beside the hints.
+      game_stage::SetPrompts(*document_, glyphs);
+      if (const auto back = text.find("{back}"); back != std::string::npos)
+        text.erase(text.find_last_not_of(" \xC2\xB7", back - 1) + 1);
+      look_.Refit();
+    }
+    document_->GetElementById("controls-footer")->SetInnerRML(PromptRml(text, glyphs));
   }
 }
 std::string Controls::Bindings(const std::vector<size_t>& actions) {
@@ -253,8 +275,9 @@ std::string Controls::Bindings(const std::vector<size_t>& actions) {
       values.resize(std::max(size_t(2), values.size()));
       for (size_t slot = 0; slot < values.size(); ++slot) {
         const bool sticks = page_ == Sticks;
+        // The game's face is wider, and its rows shrink what still does not fit.
         const int width =
-            std::clamp(int(values[slot].size()) * 8 + (sticks ? 18 : 24),
+            std::clamp(int(values[slot].size()) * (game_style_ ? 13 : 8) + (sticks ? 18 : 24),
                        sticks ? 40 : 60, sticks ? 160 : 280);
         out += Button("bind-" + std::to_string(action) + "-" + std::to_string(slot),
                       values[slot].empty() ? "—" : values[slot], "bind", int(action), int(slot),
@@ -277,35 +300,50 @@ std::string Controls::Number(const std::string& field, const std::string& label,
   }
   if (field.starts_with("rumble-"))
     disabled = !d || !d->rumble || controls::Hardware().RumbleActive();
-  return "<div class='number-row'><span>" + Escape(label) + "</span><div class='number-control'>" +
-         Button("minus-" + field, "−", "adjust", -1, 0, disabled, "step") + "<span id='number-" +
+  return "<div class='number-row'><span class='number-label'>" + Escape(label) + "</span><div class='number-control'>" +
+         Button("minus-" + field, "−", "adjust", -1, 0, disabled, "step minus") + "<span id='number-" +
          field + "'>" + fmt::format("{:.0f}%", value * scale) + "</span>" +
-         Button("plus-" + field, "+", "adjust", 1, 0, disabled, "step") + "</div></div>";
+         Button("plus-" + field, "+", "adjust", 1, 0, disabled, "step plus") + "</div></div>";
 }
 void Controls::Render(std::string focus) {
   if (!document_)
     return;
+  const bool was_rendering = std::exchange(rendering_, true);
   if (focus.empty())
     if (auto* current = context_->GetFocusElement())
       focus = current->GetId();
   const auto& port = config_.ports[player_];
   const auto* device = Device();
   bool keyboard = device ? device->keyboard : port.device == "keyboard";
-  document_->GetElementById("controls-back")->SetInnerRML("‹  " + Escape(Text("c-controls")));
+  if (game_style_)
+    document_->GetElementById("back-label")->SetInnerRML(Escape(Text("back")));
+  else
+    document_->GetElementById("controls-back")->SetInnerRML("‹  " + Escape(Text("c-controls")));
   std::string tabs;
   for (size_t i = 0; i < 4; ++i)
     tabs += Button("player-" + std::to_string(i),
                    std::string(Text("c-player")) + " " + std::to_string(i + 1), "player", int(i), 0,
-                   false, i == player_ ? "player selected" : "player");
-  document_->GetElementById("players")->SetInnerRML(tabs);
+                   false, std::string(game_style_ ? "tab" : "player") + (i == player_ ? " selected" : ""));
+  if (game_style_) {
+    // The players in the title band, as the settings page's tabs.
+    const auto step = [&](int to) { return fmt::format("command='player' index='{}'", int(player_) + to); };
+    tabs = game_stage::Prompt("tab-previous", "lb", step(-1)) + tabs + game_stage::Prompt("tab-next", "rb", step(1)) +
+           "<div id='splash'><div class='ink'/></div>";
+    document_->GetElementById("tabs")->SetInnerRML(tabs);
+  } else
+    document_->GetElementById("players")->SetInnerRML(tabs);
   std::string name = device                ? (keyboard ? Text("keyboard-mouse") : device->name)
                      : port.device.empty() ? Text("c-none")
                                            : port.device_name + " · " + Text("not-connected");
-  if (port.device == controls::kAutomaticDevice)
+  // On the game's stage the wider face leaves room for the device alone;
+  // its page tells it is the automatic one.
+  if (port.device == controls::kAutomaticDevice && (!game_style_ || !device))
     name = std::string(Text("c-automatic")) + (device ? " · " + name : "");
-  std::string side = "<div class='section'>" + Escape(Text("c-device")) + "</div>" +
-                     Category("device-category", name, Devices, page_ == Devices, false);
-  side += "<div class='section gap'>" + Escape(Text("c-mapping")) + "</div>";
+  // On the game's stage each section is one of the movie's panels.
+  const std::string panel_open = game_style_ ? "<div class='group'>" : "", panel_close = game_style_ ? "</div>" : "";
+  std::string side = "<div class='section'>" + Escape(Text("c-device")) + "</div>" + panel_open +
+                     Category("device-category", name, Devices, page_ == Devices, false) + panel_close;
+  side += "<div class='section gap'>" + Escape(Text("c-mapping")) + "</div>" + panel_open;
   const std::pair<Page, const char*> categories[] = {
       {Buttons, "c-buttons"},
       {Triggers, "c-triggers"},
@@ -315,14 +353,15 @@ void Controls::Render(std::string focus) {
     side += Category("category-" + std::to_string(page), Text(key), page,
                      page_ == page || (page == Buttons && page_ == Directions),
                      !device || (page == Rumble && (!device->rumble || keyboard)));
-  side += "<div class='section gap'>" + Escape(Text("c-options")) + "</div>";
+  side += panel_close + "<div class='section gap'>" + Escape(Text("c-options")) + "</div>" + panel_open;
   side += Category("category-deadzones", Text("c-use-deadzones"), Deadzones, page_ == Deadzones,
                    !device || keyboard, Text(port.deadzones ? "on" : "off"));
-  side += Category("category-restore", Text("c-restore"), Restore, page_ == Restore, false);
+  side += Category("category-restore", Text("c-restore"), Restore, page_ == Restore, false) + panel_close;
   document_->GetElementById("controls-sidebar")->SetInnerRML(side);
-  document_->GetElementById("controls-port")
-      ->SetInnerRML(Escape(std::string(Text("c-player")) + " " + std::to_string(player_ + 1) +
-                           " · " + Text("c-port-settings")));
+  if (!game_style_)
+    document_->GetElementById("controls-port")
+        ->SetInnerRML(Escape(std::string(Text("c-player")) + " " + std::to_string(player_ + 1) +
+                             " · " + Text("c-port-settings")));
   std::string out;
   if (page_ == Devices) {
     out = Title(Text("c-choose-device"), Text("c-device-help"));
@@ -478,12 +517,16 @@ void Controls::Render(std::string focus) {
                               message_ == Text("c-reserved"));
   SetGlyphs(glyphs_);
   auto size = context_->GetDimensions();
-  Layout(size.x, size.y, context_->GetDensityIndependentPixelRatio());
+  if (!game_style_)
+    Layout(size.x, size.y, context_->GetDensityIndependentPixelRatio());
   if (auto* selected = document_->GetElementById(focus))
     selected->Focus();
   else if (page_ == Transfer)
     document_->GetElementById("transfer-cancel")->Focus();
   UpdatePreview();
+  if (game_style_)
+    look_.Rebuilt();
+  rendering_ = was_rendering;
 }
 const char* Controls::SidebarId() const {
   switch (page_) {
@@ -497,6 +540,7 @@ const char* Controls::SidebarId() const {
   }
 }
 void Controls::FocusContent() {
+  const bool was_rendering = std::exchange(rendering_, true);
   // A stationary mouse must not reclaim focus after rebuilding the category.
   context_->ProcessMouseMove(-1, -1, 0);
   document_->UpdateDocument();
@@ -510,6 +554,7 @@ void Controls::FocusContent() {
     return false;
   };
   if (!first(first, document_->GetElementById("controls-detail"))) FocusSidebar();
+  rendering_ = was_rendering;
 }
 void Controls::FocusSidebar() {
   controls::Hardware().StopRumble();
@@ -556,6 +601,7 @@ void Controls::Activate(const std::string& command, int index, int slot) {
   if (capture_.BlocksNavigation())
     return;
   if (command == "close") {
+    Play(GameStylePanel::Sound::kClose);
     auto close = close_;
     if (close)
       close();
@@ -763,6 +809,8 @@ void Controls::CaptureVisual() {
       text = SourceName(config_.ports[target.player].pad[target.action]);
     value->SetInnerRML(Escape(text.empty() ? "—" : text));
     value->SetClass("editing", capture_.Active());
+    if (game_style_)
+      value->RemoveProperty("font-size");  // SetGlyphs below fits it again.
     if (auto* row = value->GetParentNode()->GetParentNode())
       row->SetClass("editing", capture_.Active());
   }
@@ -892,6 +940,8 @@ void Controls::ProcessEvent(Rml::Event& event) {
   }
   if (event.GetType() == "focus") {
     target->ScrollIntoView(Rml::ScrollIntoViewOptions{Rml::ScrollAlignment::Nearest});
+    if (!rendering_)
+      Play(GameStylePanel::Sound::kMove);
     return;
   }
   if (target->HasAttribute("disabled"))
@@ -916,6 +966,7 @@ void Controls::ProcessEvent(Rml::Event& event) {
       pending_ = [this, page] { Activate("page", page, 0); };
       event.StopPropagation();
     } else if (key == Rml::Input::KI_PRIOR || key == Rml::Input::KI_NEXT) {
+      Play(GameStylePanel::Sound::kMove);
       pending_ = [this, key] {
         Activate("player", int(player_) + (key == Rml::Input::KI_NEXT ? 1 : -1), 0);
       };
@@ -924,6 +975,7 @@ void Controls::ProcessEvent(Rml::Event& event) {
                target->GetAttribute<std::string>("command", "") == "adjust") {
       auto id = target->GetId();
       auto field = id.substr(id.find('-') + 1);
+      Play(GameStylePanel::Sound::kAdjust);
       pending_ = [this, field, key] { Adjust(field, key == Rml::Input::KI_LEFT ? -1 : 1); };
       event.StopPropagation();
     }
@@ -936,8 +988,12 @@ void Controls::ProcessEvent(Rml::Event& event) {
   if (command == "adjust") {
     auto id = target->GetId();
     auto field = id.substr(id.find('-') + 1);
+    Play(GameStylePanel::Sound::kAdjust);
     pending_ = [this, field, index] { Adjust(field, index); };
-  } else
+  } else {
+    if (command != "close")
+      Play(GameStylePanel::Sound::kConfirm);
     pending_ = [this, command, index, slot] { Activate(command, index, slot); };
+  }
 }
 }  // namespace narutorise::menu

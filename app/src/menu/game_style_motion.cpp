@@ -102,6 +102,7 @@ void GameStyleMotion::Start(Phase phase) {
   Settle();
   if (!document_ || phase == Phase::kIdle) return;
   phase_ = phase; start_ = now_(); skipped_ = false;
+  document_->SetClass("moving", true);
   for (size_t i = 0; i < rows_.size(); ++i)
     rows_[i].start = phase == Phase::kOpen ? kRowsFirst + kRowsApart * float(i)
                    : phase == Phase::kTabIn ? kRowsApart * float(i) : float(i);
@@ -257,6 +258,7 @@ void GameStyleMotion::Settle() {
   panels_ = 0;
   std::fill(slides_.begin(), slides_.end(), 0.f);
   std::fill(shown_.begin(), shown_.end(), true);
+  if (document_) document_->SetClass("moving", false);
   phase_ = Phase::kIdle;
 }
 }  // namespace narutorise::menu

@@ -2,6 +2,8 @@
 #include "controls/runtime.h"
 #include "controls/capture.h"
 #include "controls/glyphs.h"
+#include "menu/game_style_controls.h"
+#include "menu/game_style_panel.h"
 #include <rex/ui/virtual_key.h>
 #include <set>
 #include <RmlUi/Core/EventListener.h>
@@ -16,12 +18,18 @@ class Controls final : public Rml::EventListener {
  public:
   bool Show(Rml::Context& context, controls::Config config,
             std::function<bool(const controls::Config&)> save, std::function<void()> close,
-            std::string menu_key, bool setup);
+            std::string menu_key, bool setup, bool game_style = false);
   void Hide();
   bool Shown() const { return document_ != nullptr; }
   void Tick(bool focused);
   void Layout(int width, int height, float ratio);
   void SetGlyphs(controls::Glyphs glyphs);
+  // On the game's stage: the game's interface sounds for the page's actions.
+  void SetSound(std::function<void(GameStylePanel::Sound)> sound) { sound_ = std::move(sound); }
+  // After the context's update, on the game's stage (GameStyleControls). True
+  // when the layout changed, for another update.
+  bool FitText() { return game_style_ && look_.FitText(); }
+  bool PlaceCursor() { return game_style_ && look_.PlaceCursor(); }
   bool BlocksNavigation() const { return capture_.BlocksNavigation(); }
   bool UseStickNavigation() const { return !Shown() || page_ != Deadzones; }
   void Key(rex::ui::VirtualKey key, bool down, bool repeat = false);
@@ -58,6 +66,7 @@ class Controls final : public Rml::EventListener {
   void FocusContent();
   void FocusSidebar();
   const char* SidebarId() const;
+  void Play(GameStylePanel::Sound sound) const { if (game_style_ && sound_) sound_(sound); }
   Rml::ElementDocument* document_ = nullptr;
   Rml::Context* context_ = nullptr;
   controls::Config config_;
@@ -79,5 +88,8 @@ class Controls final : public Rml::EventListener {
   int transfer_owner_ = -1;
   uint64_t transfer_generation_ = 0, transfer_revision_ = 0;
   bool rumble_active_ = false;
+  bool game_style_ = false, rendering_ = false;  // Rendering moves the focus without a sound.
+  GameStyleControls look_;
+  std::function<void(GameStylePanel::Sound)> sound_;
 };
 }  // namespace narutorise::menu

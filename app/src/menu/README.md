@@ -72,12 +72,12 @@ pode receber caminhos adicionais de jogo/ISO para validar o logo local real.
 duplicidade), BC1 com quatro e três cores, BC3 e entradas corrompidas; com caminhos
 de jogo/ISO, confere as 13 imagens do menu no jogo (`kMenuImages`).
 
-Durante o jogo, Configurações imita a tela Options do próprio jogo
+Aberta pelo Options do próprio jogo, Configurações imita essa tela
 (`game_style_panel.cpp`, `ui/game_menu.rml`): papel, cortinas, faixa do título,
 nuvem do cursor, pincéis do brilho e botões vêm das 13 imagens, lidas num worker
 quando o jogo começa; os textos usam Edo SZ (licença Vic Fieger, embutida). Até
 a arte chegar, ou se ela falhar, a página usa o painel comum. A tela de
-configuração, a barra do overlay, a DLC e a janela de controles continuam no
+configuração, a barra do overlay, a DLC e o que abre pelo F1 continuam no
 estilo próprio. O russo usa Roboto Condensed, pois a Edo SZ não tem cirílico.
 Rótulos e valores longos encolhem até caber, e as opções liga/desliga usam
 palavras curtas (On/Off, Sim/Não, Oui/Non…), como o YES/NO do jogo.
@@ -121,7 +121,13 @@ O Options do próprio jogo, no menu principal ou na pausa, abre estas
 Configurações no lugar da tela dele, com uma aba **Opções** primeiro: volumes de
 música, vozes e efeitos, câmera invertida nos dois eixos, vibração, legendas e,
 nos menus de título com o conteúdo instalado, as vozes em japonês. O brilho do
-jogo fica fora (vale o nosso, em Tela). Pelo F1 a aba não aparece. Com
+jogo fica fora (vale o nosso, em Tela). Pelo F1 o estilo do jogo não aparece:
+as Configurações usam o painel dos menus e a janela de controles. Configurar
+controles, aberto desta página, continua no palco do jogo (`game_style_controls.cpp`,
+`ui/game_controls.rml`): os jogadores na faixa do título, as categorias à
+esquerda e a página à direita, sobre o mesmo modelo de `controls.cpp`. Uma
+lista maior que a área mostra a barra de rolagem no papel, ao lado dos painéis,
+e cópias do papel cobrem as linhas que não cabem inteiras. Com
 `game_options_settings = false` (ou `--game_options_settings=false`), o Options
 do jogo continua com a tela original. Como no original, aberto pela pausa o
 Options volta a tocar a música.

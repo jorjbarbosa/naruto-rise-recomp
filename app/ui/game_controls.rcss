@@ -1,0 +1,119 @@
+/* The controls page on the game's stage, over game_menu.rcss: the players in
+   the title band, the categories on the movie's panels at the paper's left,
+   the page's rows on panels at its right and the prompts below. Lengths are
+   stage units; the text effects and the cloud are set by GameStyleControls. */
+.tab { white-space: nowrap; overflow: hidden; }
+
+/* The categories. */
+#controls-sidebar { position: absolute; left: 160rem; top: 114rem; width: 372rem; height: 446rem; overflow: hidden auto; }
+#controls-sidebar .section { display: none; }
+#controls-sidebar .group { margin-left: 0; width: 372rem;
+  border-radius: 0 24rem 24rem 0; }  /* Half a one-row panel here: larger radii break its corners. */
+button { font-family: "Edo SZ"; text-transform: uppercase; white-space: nowrap; color: #ffffff; border-width: 0; padding: 0;
+  background-color: transparent; text-align: left; box-sizing: border-box; tab-index: auto; focus: auto; nav: auto; overflow: hidden; }
+.category { display: block; position: relative; width: 100%; height: 40rem; line-height: 40rem;
+  font-size: 27rem; color: #0090ff; nav: vertical; }
+/* Its box ends before the marker: the text shrinks to it. */
+.category-label { display: block; position: absolute; left: 33.333rem; right: 56rem; top: 0; height: 40rem; overflow: hidden; white-space: nowrap; }
+.category:focus { color: #ffda32; }
+.category.selected { background-color: #ffffff1f; }
+.category.disabled { color: #8f9aa3; }
+.category-marker { position: absolute; right: 16rem; top: 0; height: 40rem; line-height: 40rem; font-size: 22rem; color: #ffffff; }
+.category-marker.chevron-mark { top: 8rem; width: 16rem; height: 24rem; decorator: image(generated/chevron fill); color: transparent; }
+.category.disabled .category-marker { opacity: .45; }
+body.cyrillic button, body.cyrillic .binding-label, body.cyrillic .number-label, body.cyrillic h2, body.cyrillic .section,
+body.cyrillic .mapping-head, body.cyrillic #controls-footer { font-family: "Roboto Condensed"; font-weight: bold; }
+body.cyrillic .category { font-size: 20rem; }
+
+/* The page. The right padding holds the scrollbar. */
+#controls-detail { display: block; position: absolute; left: 548rem; top: 108rem; width: 540rem; height: 452rem; padding-right: 18rem;
+  overflow: hidden auto; }
+#controls-detail .category { height: 36rem; line-height: 36rem; padding: 0 12rem 0 44rem; font-size: 25rem; margin-bottom: 4rem;
+  background-color: #0000008c; border-radius: 18rem; }
+#controls-detail .category:focus, .binding-row.editing { background-color: #000000b8; }
+h2 { display: block; margin: 0 0 3rem; font-family: "Edo SZ"; font-size: 30rem; line-height: 36rem; color: #0090ff;
+  text-transform: uppercase; white-space: nowrap; overflow: hidden; }
+p { display: block; margin: 0 0 8rem; font-family: "Roboto Condensed"; font-weight: 500; font-size: 16.667rem; line-height: 21rem;
+  color: #3a2e12; white-space: pre-wrap; }
+.below { margin-top: 10rem; }
+.section, .mapping-head { font-family: "Edo SZ"; text-transform: uppercase; font-size: 18rem; line-height: 22rem; color: #3a2e12; }
+.section { display: block; margin-bottom: 4rem; }
+.gap { margin-top: 10rem; }
+.mapping-head { display: flex; justify-content: space-between; margin: 2rem 18rem 4rem 44rem; }
+.mapping-head > span { display: block; }
+
+/* A command and what it is bound to. */
+.binding-row, .number-row { display: flex; align-items: center; height: 34rem; margin-bottom: 3rem; padding: 0 12rem 0 44rem;
+  background-color: #0000008c; border-radius: 17rem; }
+.binding-label, .number-label { display: block; flex: 1; min-width: 0; font-family: "Edo SZ"; text-transform: uppercase; white-space: nowrap;
+  overflow: hidden; font-size: 24rem; line-height: 34rem; color: #0090ff; }
+.binding-row:focus .binding-label, .number-row:focus .number-label { color: #ffda32; }
+.bindings { display: flex; flex: 0 0 58%; justify-content: flex-end; max-width: 58%; min-width: 0; }
+.binding { display: block; height: 30rem; min-width: 60rem; max-width: 100%; padding: 0 10rem; line-height: 30rem; font-size: 23rem;
+  text-align: right; color: #ffffff; border-radius: 15rem; nav: auto; }
+.binding:focus { color: #ffda32; background-color: #ffffff26; }
+.binding.editing { min-width: 200rem; color: #ffda32; background-color: #a30000b3; }
+.number-control { display: flex; align-items: center; flex-shrink: 0; }
+.number-control span { display: block; width: 64rem; text-align: center; font-family: "Edo SZ"; font-size: 23rem; line-height: 34rem; color: #ffffff; }
+.step { display: block; width: 18rem; height: 25.2rem; color: transparent; }
+.step.minus { decorator: image(generated/arrow-left fill); }
+.step.plus { decorator: image(generated/arrow-right fill); }
+.step:focus { background-color: #ffffff40; }
+
+/* Actions. */
+.secondary, .primary, .danger { display: inline-block; height: 36rem; line-height: 36rem; min-width: 180rem; padding: 0 22rem;
+  font-size: 23rem; text-align: center; color: #ffffff; background-color: #0000008c; border-radius: 18rem; }
+.primary { color: #ffda32; }
+.danger { color: #ffb4a6; }
+.secondary:focus, .primary:focus, .danger:focus, .identify:focus { color: #ffda32; background-color: #000000b8; }
+.confirmation { display: flex; margin-top: 14rem; }
+.confirmation button { flex: 1; margin-right: 12rem; }
+.restore-list { font-size: 18rem; line-height: 23rem; margin-bottom: 10rem; }
+.restore-actions { margin-top: 18rem; }
+
+/* The devices. */
+.device-row { display: flex; align-items: center; min-height: 58rem; margin-bottom: 4rem; padding-right: 10rem; background-color: #0000008c;
+  border-radius: 18rem; }
+.device-choice { flex: 1; min-width: 0; height: 58rem; padding: 3rem 12rem 3rem 44rem; font-size: 22rem; line-height: 26rem; white-space: pre; color: #0090ff; }
+.device-choice:focus { color: #ffda32; }
+.identify { display: block; flex-shrink: 0; height: 32rem; line-height: 32rem; padding: 0 12rem; font-size: 19rem; color: #ffffff; border-radius: 16rem; }
+
+/* The two columns of the sticks' page. */
+.stick-columns { display: flex; }
+.stick-columns > div { flex: 1; min-width: 0; margin-right: 8rem; }
+.stick-columns .mapping-head { display: none; }
+.stick-columns .binding-row, .stick-columns .number-row { padding: 0 6rem 0 34rem; }  /* The small cloud's room. */
+.stick-columns .binding-label, .stick-columns .number-label { font-size: 19rem; }
+.stick-columns .bindings { flex: 0 0 66%; max-width: 66%; }
+.stick-columns .binding { min-width: 36rem; padding: 0 5rem; font-size: 19rem; }
+.stick-columns .binding.editing { min-width: 120rem; }
+
+/* The deadzones' graphs. */
+.deadzone-layout { display: flex; margin-top: 8rem; }
+.deadzone-adjustments { display: block; flex: 1; min-width: 0; margin-right: 12rem; }
+.deadzone-adjustments .number-row { padding-left: 34rem; }
+.graphs { display: block; flex: 0 0 226rem; }
+.stick-graphs { display: flex; }
+.graph-column { display: block; flex: 1; min-width: 0; margin-right: 6rem; }
+.stick-graph { display: block; position: relative; width: 106rem; height: 106rem; border: 1rem #3a2e12; border-radius: 53rem; background-color: #0000008c; }
+.deadzone-region { position: absolute; border: 1rem #f07010; border-radius: 100%; background-color: #f0701055; }
+.axis-horizontal { position: absolute; left: 0; top: 50%; width: 100%; height: 1rem; background-color: #ffffff33; }
+.axis-vertical { position: absolute; left: 50%; top: 0; width: 1rem; height: 100%; background-color: #ffffff33; }
+.raw-dot { position: absolute; width: 8rem; height: 8rem; margin: -4rem 0 0 -4rem; border-radius: 4rem; background-color: #f07010; }
+.effective-dot { position: absolute; width: 5rem; height: 5rem; margin: -2.5rem 0 0 -2.5rem; border-radius: 2.5rem; background-color: #5fe07a; }
+.readout { display: block; text-align: center; margin: 4rem 0 8rem; color: #3a2e12; font-family: "Roboto Condensed"; font-size: 14rem; }
+.trigger-label { display: flex; justify-content: space-between; height: 18rem; font-family: "Roboto Condensed"; font-size: 15rem; color: #3a2e12; margin: 6rem 0 2rem; }
+.trigger-label > span { display: block; }
+.trigger-graph { display: block; position: relative; width: 100%; height: 18rem; background-color: #0000008c; border: 1rem #3a2e12; }
+.trigger-input { position: absolute; top: 0; left: 0; height: 100%; background-color: #f07010; }
+.trigger-zone { position: absolute; top: 0; left: 0; height: 100%; background-color: #ffffff40; border-right: 1rem #ffb4a6; }
+.trigger-output { position: absolute; top: -2rem; width: 2rem; height: 22rem; background-color: #5fe07a; }
+
+/* The status, where the settings page has its help, and the prompts. */
+#controls-status { position: absolute; left: 193.333rem; top: 577.333rem; width: 866.667rem; font-family: "Roboto Condensed";
+  font-weight: 500; font-size: 18.667rem; line-height: 24rem; color: #3a2e12; }
+#controls-status.error { color: #a30000; }
+#controls-footer { position: absolute; left: 340rem; top: -2rem; width: 766rem; height: 44rem; line-height: 44rem; text-align: right;
+  font-family: "Edo SZ"; font-size: 24rem; color: #ffffff; text-transform: uppercase; white-space: pre; overflow: hidden; }
+#controls-footer img.glyph { width: 30rem; height: 30rem; margin: 0 2rem; vertical-align: middle; }
+#controls-footer img.glyph.key { width: 36rem; height: 30rem; }

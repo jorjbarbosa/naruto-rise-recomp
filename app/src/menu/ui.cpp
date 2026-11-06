@@ -204,6 +204,7 @@ void Ui::ShowPanel(std::string title, std::vector<std::string> tabs, int tab, st
                     std::function<void(int)> select_tab, std::function<void()> close, std::string focus,
                     bool game_style) {
   if (!context_) return;
+  const bool from_controls = controls_.Shown();  // On the same stage, when both are in the game's style.
   controls_.Hide(); controls_shown_ = false;
   ++view_revision_;
   setup_.SetControlsOpen(false);
@@ -212,7 +213,7 @@ void Ui::ShowPanel(std::string title, std::vector<std::string> tabs, int tab, st
   if (game_style && !setup_.Shown() && GameArtReady()) {
     panel_.Hide();
     panel_shown_ = game_panel_.Show(*context_, std::move(tabs), tab, std::move(rows), std::move(select_tab),
-                                    std::move(close), std::move(focus));
+                                    std::move(close), std::move(focus), from_controls);
     game_panel_.SetGlyphs(menu_glyphs_);
   } else {
     game_panel_.Hide();
@@ -239,12 +240,14 @@ void Ui::ReceiveGameArt() {
   if (!art) REXLOG_WARN("[narutorise] UI: the art of the game's menus did not load; the in-game settings use the menus' panel");
   if (render_) render_->SetGameArt(std::move(art));
 }
-void Ui::ShowControls(controls::Config config,std::function<bool(const controls::Config&)> save,std::function<void()> close,std::string menu_key) {
+void Ui::ShowControls(controls::Config config,std::function<bool(const controls::Config&)> save,std::function<void()> close,std::string menu_key,bool game_style) {
   if (!context_) return;
   ++view_revision_;
   controls::Hardware().StopAllRumble();
   CancelKeyCapture(); panel_.Hide(); game_panel_.Hide(); panel_shown_ = false;
-  controls_shown_ = controls_.Show(*context_, std::move(config), std::move(save), std::move(close), std::move(menu_key), setup_.Shown());
+  ReceiveGameArt();
+  controls_shown_ = controls_.Show(*context_, std::move(config), std::move(save), std::move(close), std::move(menu_key), setup_.Shown(),
+                                   game_style && !setup_.Shown() && GameArtReady());
   setup_.SetControlsOpen(controls_shown_.load());
   controls_.SetGlyphs(menu_glyphs_); UpdateDocuments();
 }
@@ -503,6 +506,8 @@ void Ui::Draw(rex::ui::UIDrawContext& context) {
   if (panel_.RevealSelection()) context_->Update();
   while (game_panel_.FitText()) context_->Update();
   if (game_panel_.PlaceCursor()) context_->Update();
+  while (controls_.FitText()) context_->Update();
+  if (controls_.PlaceCursor()) context_->Update();
   render_->Begin(context, width, height);
   context_->Render();
   render_->End();
