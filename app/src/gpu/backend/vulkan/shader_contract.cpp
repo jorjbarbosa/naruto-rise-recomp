@@ -79,7 +79,10 @@ std::vector<std::string> MissingFromDevice(const ShaderContract& contract, const
   const VkPhysicalDeviceLimits& limits = device.physicalDeviceProperties.limits;
   for (const auto& name : contract.capabilities) {
     bool has = false;
-    if (name == "Shader" || name == "ImageQuery") has = true;  // Core, no feature.
+    // Core, no feature: Vulkan 1.0 supports them unconditionally (the SPIR-V
+    // environment of the specification). DerivativeControl: ddx_coarse and
+    // ddy_coarse, the getGradients of the translated cel shaders.
+    if (name == "Shader" || name == "ImageQuery" || name == "DerivativeControl") has = true;
     else if (name == "ClipDistance") has = features.shaderClipDistance;
     else if (name == "Int64") has = features.shaderInt64;
     else if (name == "StorageImageExtendedFormats") has = features.shaderStorageImageExtendedFormats;

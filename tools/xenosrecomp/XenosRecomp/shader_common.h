@@ -230,6 +230,17 @@ float4 tfetch2DDenorm(uint resourceDescriptorIndex, uint samplerDescriptorIndex,
     Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
     return texture.Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], (texCoord + offset) / getTexture2DDimensions(texture));
 }
+
+// getGradients: the screen-space derivatives of two source components,
+// X and Z = ddx(source.xy), Y and W = ddy(source.xy), coarse because the
+// texture unit computes them per quad. No texture is read. The cel shaders take
+// the width of their light step from them.
+float4 getGradients(float2 value)
+{
+    float2 dx = ddx_coarse(value);
+    float2 dy = ddy_coarse(value);
+    return float4(dx.x, dy.x, dx.y, dy.y);
+}
 #endif
 
 #ifdef NARUTO_RECOMP
