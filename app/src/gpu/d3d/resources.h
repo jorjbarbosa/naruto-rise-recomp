@@ -159,6 +159,14 @@ std::string ResourceSummary();
 // The own resource of a registered guest header, released on the engine owner
 // (D750 and the ordered close). False: unproved (evidence says why).
 bool ReleaseRegistered(uint32_t key, std::string& evidence);
+// A header that may have been a resolve destination without ever being
+// registered (a texture header embedded in a game structure): the own texture
+// the engine created for its resolves, released on the engine owner as
+// ReleaseRegistered releases a registered one (which it does for those).
+bool ReleaseResolveDestination(uint32_t key, std::string& evidence);
+// The sampled copy of a texture header (its physical base), released as D750
+// does; true for any other resource type. False: unproved (evidence says why).
+bool ReleaseSampledCopy(uint8_t* base, uint32_t header, std::string& evidence);
 // The first field of a color surface format outside the covered RGBA8, or null.
 const char* UncoveredColorField(uint32_t format, uint32_t info);
 bool DepthFormatCovered(uint32_t format);

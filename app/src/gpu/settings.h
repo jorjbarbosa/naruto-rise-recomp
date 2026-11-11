@@ -55,6 +55,9 @@ void RegisterPluginOptions();
 void LoadSettings();
 // Value snapshots: menu, translator and render threads never share mutable data.
 Settings CurrentSettings();
+// The resolution scale in effect (a live change once the engine applied it),
+// without copying the rest of the settings.
+ResolutionScale CurrentResolutionScale();
 Settings RequestedSettings();
 uint64_t RequestSettings(Settings settings);
 struct SettingsResult {

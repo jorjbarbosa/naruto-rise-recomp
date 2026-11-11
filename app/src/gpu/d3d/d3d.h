@@ -1,7 +1,10 @@
 #pragma once
 
 // The D3D boundary of the native renderer seen from the host.
+#include <array>
+#include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <rex/ppc/context.h>
@@ -26,6 +29,15 @@ void DeviceDefaults(PPCContext& ctx, uint8_t* base);     // 8213E610
 void DeviceMemory(PPCContext& ctx, uint8_t* base);       // 8217DDB0 at LR 8213EE0C, runs the original
 void RingReserve(PPCContext& ctx, uint8_t* base);        // 8212F608: flush omitted or guard
 bool AdmitExport(std::string_view name, PPCContext& ctx);
+// A black frame on the picture the title presents: while the title draws a
+// display list from `first` to `last` (widescreen::DrawnList), every color
+// resolve into the texture `front` first clears these rectangles {left, top,
+// right, bottom} of its source, so the copy carries them black whatever the
+// frame drew before it (the widescreen mode's frame around a 16:9 picture). A
+// request that follows on from the previous one extends it. A host operation
+// the title never issued: posted in order with the resolve, never fatal; a
+// refusal of the engine ends the frames of the session with a warning.
+void RequestFrontFrame(uint32_t front, std::span<const std::array<int32_t, 4>> rects, uint64_t first, uint64_t last);
 void ExportAfter(std::string_view name, PPCContext& ctx);  // Records admitted queries.
 // True when a packet-writing leaf (8212F7E0) runs inside an own discard scope
 // of this thread with its cursor in the discard buffer.

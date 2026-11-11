@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <string_view>
 #include <vector>
 #include <rex/memory/utils.h>
@@ -98,13 +99,25 @@ inline uint32_t GuestThread() {
   return ts ? ts->thread_id() : 0;
 }
 
+// The caller's register file, restored when the scope ends.
+class SavedContext {
+ public:
+  explicit SavedContext(PPCContext& ctx) : ctx_(ctx) { std::memcpy(saved_.data(), &ctx, sizeof(PPCContext)); }
+  ~SavedContext() { std::memcpy(&ctx_, saved_.data(), sizeof(PPCContext)); }
+  SavedContext(const SavedContext&) = delete;
+  SavedContext& operator=(const SavedContext&) = delete;
+
+ private:
+  PPCContext& ctx_;
+  std::array<uint8_t, sizeof(PPCContext)> saved_{};
+};
+
 // Calls an original CPU-only guest function on the current thread. The caller's
 // register file is restored afterwards; r1 is moved below the caller's frame.
 using GuestFunction = void (*)(PPCContext& __restrict, uint8_t*);
 inline void CallGuest(PPCContext& ctx, uint8_t* base, GuestFunction fn, uint32_t sp, uint32_t r3, uint32_t r4,
                const std::array<double, 6>* floats = nullptr, uint32_t r10 = 0) {
-  std::array<uint8_t, sizeof(PPCContext)> saved{};
-  std::memcpy(saved.data(), &ctx, sizeof(PPCContext));
+  const SavedContext saved(ctx);
   ctx.r1.u64 = sp;
   ctx.r3.u64 = r3;
   ctx.r4.u64 = r4;
@@ -114,7 +127,20 @@ inline void CallGuest(PPCContext& ctx, uint8_t* base, GuestFunction fn, uint32_t
     ctx.f4.f64 = (*floats)[3]; ctx.f5.f64 = (*floats)[4]; ctx.f6.f64 = (*floats)[5];
   }
   fn(ctx, base);
-  std::memcpy(&ctx, saved.data(), sizeof(PPCContext));
+}
+// The same with up to eight integer arguments (r3..r10; the ones not passed
+// are 0) and LR 0, returning r3: the call-site filters of the native hooks
+// see no call site of the game, so the arguments passed are final.
+inline uint32_t CallGuestArgs(PPCContext& ctx, uint8_t* base, GuestFunction fn, uint32_t sp,
+                              std::initializer_list<uint32_t> args) {
+  const SavedContext saved(ctx);
+  ctx.r1.u64 = sp;
+  ctx.lr = 0;
+  PPCRegister* const regs[] = {&ctx.r3, &ctx.r4, &ctx.r5, &ctx.r6, &ctx.r7, &ctx.r8, &ctx.r9, &ctx.r10};
+  auto value = args.begin();
+  for (PPCRegister* reg : regs) reg->u64 = value != args.end() ? *value++ : 0;
+  fn(ctx, base);
+  return ctx.r3.u32;
 }
 
 // Swaps a guest buffer by the Xenos endian mode (0 none, 1 8in16, 2 8in32, 3 16in32).

@@ -10,7 +10,7 @@ New control profiles use **Automatic** for player one: an available controller a
 
 Native builds configure controls through **Settings → Controls → Configure controls**, before playing or from the F1 menu. The dedicated four-port configuration is described below.
 
-During play, resolution, brightness, frame rate, VSync, MSAA, FXAA, CAS/FSR, texture filtering, transparency AA, frame latency and triple buffering apply without restarting. The menu waits for the renderer to accept each change; a rejected change restores the previous value. Resolution, MSAA and presentation resource changes can briefly pause rendering. Vulkan keeps effective frame latency at 1 and respects the surface's supported image counts. Skip intro videos affects subsequent video opens.
+During play, resolution, aspect ratio, HUD placement, brightness, frame rate, VSync, MSAA, FXAA, CAS/FSR, texture filtering, transparency AA, frame latency and triple buffering apply without restarting. The menu waits for the renderer to accept each change; a rejected change restores the previous value. Resolution, MSAA and presentation resource changes can briefly pause rendering. Vulkan keeps effective frame latency at 1 and respects the surface's supported image counts. Skip intro videos affects subsequent video opens.
 
 Graphics API, graphics card, input API, game language/translation and game-file changes retain their restart behavior.
 
@@ -19,7 +19,7 @@ The shared Settings window has tabs and an option list, with descriptions or val
 | Group | Options |
 | --- | --- |
 | Game | Game language, skip intro videos |
-| Display | Renderer (Direct3D 12 / Vulkan), graphics card, resolution, brightness, frame rate, VSync, fullscreen |
+| Display | Renderer (Direct3D 12 / Vulkan), graphics card, resolution, brightness, frame rate, VSync, fullscreen, aspect ratio, open-world HUD, fight HUD |
 | Quality | MSAA, FXAA, post-processing (CAS/FSR), texture filtering, transparency AA |
 | Controls | Dedicated four-port configuration, SDL/XInput backend, global menu shortcuts |
 | Advanced | Frame latency, triple buffering, data folder, update checks, desktop shortcut |
@@ -70,7 +70,25 @@ The compatibility bridge (`NarutoRiseInstaller.exe`) always starts with English 
 
 ## Ultrawide
 
-Xenos supports 16:9, 21:9, and 32:9 through the TOML settings below. The native menu hides these Xenos-only options. The patch changes the game's projection constant and passes the target aspect ratio to the SDK presenter, preserving the resolution seen by the original game code.
+### Native renderer
+
+The native renderer draws the game at the aspect of the window, or of the monitor in fullscreen, from 4:3 to 32:9, without stretching anything: wider screens show more of the 3D scene at the sides (Hor+), taller ones more above and below (Vert+). Beyond those limits the image keeps 4:3 or 32:9 with black bars. **Settings → Display → Aspect ratio** offers **Automatic** (the default) and **16:9**, which keeps the game's original screen with bars on wider monitors.
+
+The interface keeps its original size. HUD pieces go to the edges of the screen or stay in the 16:9 center:
+
+| Option | Key | Values | Default |
+| --- | --- | --- | --- |
+| Aspect ratio | `aspect_ratio` | `"auto"`, `"16:9"` | `"auto"` |
+| Open-world HUD | `hud_world` | `"edges"`, `"center"` | `"edges"` |
+| Fight HUD | `hud_fight` | `"center"`, `"edges"` | `"center"` |
+
+The pause, options and save menus place their side borders at the edges of the screen, and the main menu's sky and the pause background fill its width. Other full-screen menus and the Bink videos stay in the 16:9 center. The save thumbnail keeps 320×180 with the middle of the screen, so saves stay compatible. The resolution option multiplies the screen the aspect gives: at 21:9, 1× is 1680×720 and 2× is 3360×1440. Render surfaces stop at 8192 pixels per side, so at 4× a screen wider than about 2.84:1 (32:9, for instance) narrows to 2048×720 (8192×2880) with bars at the sides; the menu lists the sizes each scale gives.
+
+Changing the aspect, or resizing the window, during play recreates the game's render targets between two frames; the HUD options apply on the next frame. `widescreen_log = true` logs each Flash movie and menu piece the renderer draws, to extend the HUD catalog (`app/src/widescreen/catalog.cpp`).
+
+### Xenos
+
+Xenos supports 16:9, 21:9, and 32:9 through the TOML settings below. The native renderer ignores them. The patch changes the game's projection constant and passes the target aspect ratio to the SDK presenter, preserving the resolution seen by the original game code.
 
 | Aspect ratio | `ultrawide_target_aspect` |
 | --- | --- |
@@ -133,7 +151,7 @@ The menu saves `renderer = "native"` for both choices. Xenos remains available a
 | --- | --- | --- |
 | Resolution (`resolution_scale`) | 1× to 4× | 1×, 1.5× (`internal_resolution_scale = 1.5`), 2× to 4× |
 | Texture filtering, FXAA, CAS/FSR, VSync, fullscreen | Yes | Yes |
-| Aspect ratio (`ultrawide_target_aspect`) | Yes | No: the image stays 16:9 with bars |
+| Aspect ratio | `ultrawide_target_aspect`: anamorphic 16:9 image | `aspect_ratio`: the window's aspect, 4:3 to 32:9, see [Ultrawide](#ultrawide) |
 | Dithering (`present_dither`), FPS overlay (`show_fps_overlay`, F1), F3 overlay | Yes | No |
 | MSAA, transparency antialiasing, frame rate, brightness, frame latency, triple buffering | No | Yes |
 
@@ -150,6 +168,8 @@ Native renderer options:
 | `internal_resolution_scale` | `0.0` | Fractional internal scale from 1 to 4 (`1.5` = 1920×1080); `0` uses `resolution_scale` |
 | `max_frame_latency` | `1` | Frames queued ahead of the display (1 to 3) |
 | `triple_buffering` | `false` | Three swapchain buffers instead of two |
+| `aspect_ratio` | `"auto"` | Screen aspect: `"auto"` follows the window or monitor from 4:3 to 32:9; `"16:9"` keeps the original screen |
+| `hud_world`, `hud_fight` | `"edges"`, `"center"` | HUD of the open world and of fights on screens wider than 16:9: at the `"edges"` or in the 16:9 `"center"` |
 
 ## Graphics card
 

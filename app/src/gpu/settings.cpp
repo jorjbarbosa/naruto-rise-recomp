@@ -287,6 +287,7 @@ void LoadSettings() {
       s.transparency_antialiasing, s.frame_rate, Quoted(s.graphics_device), sources);
 }
 Settings CurrentSettings() { std::lock_guard lock(settings_mutex); return settings; }
+ResolutionScale CurrentResolutionScale() { std::lock_guard lock(settings_mutex); return settings.resolution_scale; }
 Settings RequestedSettings() { std::lock_guard lock(settings_mutex); return requested_settings; }
 uint64_t RequestSettings(Settings next) {
   std::lock_guard lock(settings_mutex);
