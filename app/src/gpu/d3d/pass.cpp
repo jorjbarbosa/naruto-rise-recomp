@@ -231,14 +231,15 @@ void RequestFrontFrame(uint32_t front, std::span<const std::array<int32_t, 4>> r
   front_frame_asked.store(true, std::memory_order_release);
 }
 
-// Before a color resolve into the framed front buffer in a framed list: the
-// rectangles of the source cleared to black, posted ahead of the resolve
-// (FIFO) and never fatal. The rectangles reach the right and bottom edges of
-// the screen they were asked for: a destination of another size (a list
+// Before a whole color resolve into the framed front buffer in a framed list:
+// the rectangles of the source cleared to black, posted ahead of the resolve
+// (FIFO) and never fatal. The rectangles are in the screen's coordinates and
+// reach its right and bottom edges: a resolve of a part (a source rectangle
+// or a destination point), or into a destination of another size (a list
 // drawn across a change of the screen, or a front buffer created again at
-// the same address) is left alone.
-void ApplyFrontFrame(uint8_t* base, uint32_t dev, uint32_t dest, uint32_t src_index) {
-  if (!front_frame_asked.load(std::memory_order_acquire)) return;
+// the same address), is left alone.
+void ApplyFrontFrame(uint8_t* base, uint32_t dev, uint32_t dest, uint32_t src_index, bool whole) {
+  if (!whole || !front_frame_asked.load(std::memory_order_acquire)) return;
   FrontFrame frame;
   {
     const uint64_t list = widescreen::DrawnList();
@@ -484,7 +485,7 @@ void OwnResolve(PPCContext& ctx, uint8_t* base, uint32_t dev, uint32_t flags, ui
       UncoveredOperation(ctx, fmt::format("{}-uncovered-dest_fetch.dimension", source));
       copy = false;
     }
-    if (copy && src_index < 4) ApplyFrontFrame(base, dev, dest, src_index);  // The widescreen frame, when asked.
+    if (copy && src_index < 4) ApplyFrontFrame(base, dev, dest, src_index, !rect && !point);  // The widescreen frame.
     if (copy) {
       profile::Timer profile(profile::kResolve);
       ResolveRequest request{};

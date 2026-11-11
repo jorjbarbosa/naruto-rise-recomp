@@ -11,6 +11,7 @@ the screen changes of the log and the Flash catalog the runs drew. Images stay
 next to the page (relative links); the page is a local file.
 """
 import html
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -18,6 +19,15 @@ import struct
 import sys
 import zlib
 
+
+def load(name, filename):
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(filename))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+write_png = load('thumbnail_helpers', 'widescreen_thumbnail.py').write_png
 ORDER = ['baseline', '16:9', '16:10', '4:3', '21:9', 'monitor', '32:9']
 
 
@@ -34,14 +44,6 @@ def read_png(path):
     stride = width * 3 + 1
     if any(rows[y * stride] for y in range(height)): raise ValueError(f'{path}: filtered rows are not supported')
     return width, height, b''.join(rows[y * stride + 1:(y + 1) * stride] for y in range(height))
-
-
-def write_png(path, width, height, rgb):
-    def chunk(name, payload):
-        return struct.pack('>I', len(payload)) + name + payload + struct.pack('>I', zlib.crc32(name + payload))
-    scan = b''.join(b'\0' + rgb[y * width * 3:(y + 1) * width * 3] for y in range(height))
-    path.write_bytes(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)) +
-                     chunk(b'IDAT', zlib.compress(scan)) + chunk(b'IEND', b''))
 
 
 def difference(a, b, out):

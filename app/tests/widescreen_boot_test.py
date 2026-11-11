@@ -12,7 +12,8 @@ with a client of the aspect (window_width/height), the Flash catalog log on
 folder (a profile with saves) into the isolated product. The route is a comma
 list of steps: wait:<s>, waitlog:<text>[:<s>] (until the log has it), shot:<name>,
 resize:<w>x<h> (the window's client), key:<name>[*n] (RETURN, SPACE, ESCAPE, E,
-UP=1, DOWN=2, LEFT=3, RIGHT=4, W, A, S, D). Captures, the log and a summary go
+UP=1, DOWN=2, LEFT=3, RIGHT=4, W, A, S, D for the game; F1, PGDN and the
+ARROW* keys for the settings panel). Captures, the log and a summary go
 to the output folder; a later widescreen_compare.py run builds the page.
 """
 import ctypes
@@ -43,7 +44,7 @@ ASPECTS = {'16:9': (1280, 720), '21:9': (1680, 720), '32:9': (2560, 720), '16:10
            'monitor': (0, 0)}
 KEYS = {'RETURN': 0x0D, 'SPACE': 0x20, 'ESCAPE': 0x1B, 'E': 0x45, 'UP': 0x31, 'DOWN': 0x32, 'LEFT': 0x33,
         'RIGHT': 0x34, 'W': 0x57, 'A': 0x41, 'S': 0x53, 'D': 0x44, 'TAB': 0x09, 'F1': 0x70, 'PGDN': 0x22,
-        'ARROWDOWN': 0x28}
+        'ARROWLEFT': 0x25, 'ARROWUP': 0x26, 'ARROWRIGHT': 0x27, 'ARROWDOWN': 0x28}
 ROUTES = {
     # Title, main menu (Story Mode), the save warning when it shows, the single player menu, Load Game and a
     # slot, the world, pause. With the warning: S is ignored and SPACE closes it; without it, S selects Load.

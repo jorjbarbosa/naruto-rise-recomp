@@ -23,8 +23,8 @@ class Settings {
             std::function<void(const std::string&)> changed, std::function<void()> closed);
   void Reload();
   // The window's client size (the monitor's in fullscreen): the resolution
-  // list shows the screen the automatic aspect gives it.
-  void SetDisplaySize(uint32_t width, uint32_t height) { display_width_ = width; display_height_ = height; }
+  // list shows the screen the automatic aspect gives it, the open panel too.
+  void SetDisplaySize(uint32_t width, uint32_t height);
   void SetDataFolder(data::DataPaths active, std::optional<std::filesystem::path> pending,
                      std::function<void(data::Mode)> select) {
     data_paths_ = std::move(active); pending_data_root_ = std::move(pending);

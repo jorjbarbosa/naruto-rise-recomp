@@ -87,7 +87,7 @@ Slot& SlotFor(std::array<Slot, N>& table, Match match) {
 // player's bar and the opponent's (HUD53). Other shared pieces (the context
 // buttons) draw once and do not count: the elements are kept per movie.
 struct SharedDraw {
-  size_t movie = 0;
+  uint16_t movie = 0;  // MovieRule::id.
   uint32_t element = 0;
   int64_t at = 0;
 };
@@ -96,7 +96,7 @@ std::array<SharedDraw, 8> shared_draws{};
 constexpr int64_t kFightHoldMs = 1500;
 // True when another element drew the same shared movie within 100 ms.
 bool SecondSharedElement(const Movie& movie, int64_t now, uint32_t* other) {
-  const size_t key = std::hash<std::string>{}(movie.name);
+  const uint16_t key = movie.rule.id;
   std::lock_guard lock(shared_mutex);
   SharedDraw& slot = SlotFor(shared_draws, [key](const SharedDraw& draw) { return draw.movie == key; });
   const bool second =
@@ -154,7 +154,7 @@ class GuestFloats {
 // level (0 outside the movie's root, 1 inside _level0) and the depths of the
 // pieces being displayed from the root down (more than kMaxPath keep counting,
 // unrecorded), and the copy of a repeated piece being drawn (its shift along
-// its own x, in its pixels).
+// its own x, in stage pixels).
 struct PiecePath {
   std::array<uint16_t, ClipRule::kMaxPath> depths{};
   int length = 0;
@@ -179,7 +179,10 @@ std::string ElementName(uint8_t* base, uint32_t elem) {
   auto* memory = gpu::GuestMemory();
   uint8_t bytes[256];
   uint32_t size = 0;
-  for (uint32_t want : {256u, 128u, 64u, 32u})  // The string may end near the end of its page.
+  // The string may end near the end of its page, before one that is not
+  // committed: then up to the end of its page.
+  const uint32_t page_rest = 0x1000 - (text & 0xFFF);
+  for (uint32_t want : {256u, std::min(256u, page_rest)})
     if (gpu::CopyFromGuest(memory, text, bytes, want)) {
       size = want;
       break;
@@ -240,7 +243,11 @@ void LogMovie(const Movie* movie, const Rect& in, const Rect& out, uint8_t ancho
   static std::mutex mutex;
   static std::unordered_set<std::string> seen;
   const std::string name = movie ? movie->name : std::string("(global)");
-  const std::string key = fmt::format("{}|{:.3f},{:.3f},{:.3f},{:.3f}", name, in.x, in.y, in.w, in.h);
+  // A movie at the origin by its rectangle; one a script places (a marker
+  // that follows a character moves every frame) once.
+  const bool placed = in.x != 0.0f || in.y != 0.0f;
+  const std::string key =
+      placed ? name + "|placed" : fmt::format("{}|{:.3f},{:.3f},{:.3f},{:.3f}", name, in.x, in.y, in.w, in.h);
   {
     std::lock_guard lock(mutex);
     if (seen.size() >= 2000 || !seen.insert(key).second) return;
@@ -376,9 +383,9 @@ REX_HOOK_RAW(sub_820EC008) {
   Put32(base, texset + 4, x + uint32_t(BoxLeft(s)));
   Put32(base, texset + 8, y + uint32_t(BoxTop(s)));
   static std::atomic<uint32_t> records{0};
-  if (records.fetch_add(1) < 4)
-    REXLOG_INFO("[narutorise] widescreen Bink {}x{} at {},{}", Get32(base, Get32(base, texset)),
-                Get32(base, Get32(base, texset) + 4), x + uint32_t(BoxLeft(s)), y + uint32_t(BoxTop(s)));
+  if (const uint32_t bink = Get32(base, texset); bink && records.fetch_add(1) < 4)  // HBINK: +0 width, +4 height.
+    REXLOG_INFO("[narutorise] widescreen Bink {}x{} at {},{}", Get32(base, bink), Get32(base, bink + 4),
+                x + uint32_t(BoxLeft(s)), y + uint32_t(BoxTop(s)));
   __imp__sub_820EC008(ctx, base);
   Put32(base, texset + 4, x);
   Put32(base, texset + 8, y);
@@ -559,10 +566,7 @@ REX_HOOK_RAW(sub_825E8490) {
   }
   GuestFloats<6> floats(base, matrix);
   const auto& saved = floats.saved();
-  Matrix2D piece{saved[0], saved[1], saved[2], saved[3], saved[4], saved[5]};
-  constexpr float kTwips = 20.0f;
-  piece.tx += piece.a * repeat_offset * kTwips;
-  piece.ty += piece.b * repeat_offset * kTwips;
+  const Matrix2D piece = RepeatPiece({saved[0], saved[1], saved[2], saved[3], saved[4], saved[5]}, repeat_offset);
   const Matrix2D m = AnchorPiece(Layout(), piece, anchors);
   floats.Write({m.a, m.c, m.tx, m.b, m.d, m.ty});
   __imp__sub_825E8490(ctx, base);

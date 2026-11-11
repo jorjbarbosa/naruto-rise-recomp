@@ -74,19 +74,24 @@ constexpr ClipRule kStageShade[] = {Piece({1}, kAnchorFill)};
 
 // The dialog (one root, d1): the band (mcText d1, a vertical gradient) and
 // the plain backing of the text (mcTexte d1) span the screen; the strip of
-// spirals on its top edge (mcText d2: an 88 pixel bitmap repeated over 2325
-// pixels, scrolling) and the bar at the bottom (d18: three 552 pixel tiles)
-// repeat whole. The portraits, the names and the text stay in the box.
+// spirals on its top edge (mcText d2: one shape drawn at 1.24, an 88 pixel
+// pattern over about 2325 stage pixels, scrolling) and the bar at the bottom
+// (d18: one shape drawn at 0.67, three 552 pixel tiles, 1656 in all) repeat
+// whole, by a multiple of their pattern no longer than they are. The
+// portraits, the names and the text stay in the box.
 constexpr ClipRule kDialog[] = {
     Piece({1, 1, 1}, kAnchorExtend), Piece({1, 1, 12, 1}, kAnchorExtend),
     Piece({1, 1, 2}, kAnchorNone, 2288, Repeat::kBoth),  // 26 bitmaps.
     Piece({1, 18}, kAnchorNone, 1656, Repeat::kBoth),
 };
 
-// The player's bar (HUD > moving > blackhud > d3): one plain rectangle 611
-// pixels long, from the stage's edge at 16:9. In the box it repeats outward
-// (toward its own -x, the screen's edge on either side) to the screen's edge.
-constexpr ClipRule kHud53[] = {Piece({1, 1, 1, 3}, kAnchorNone, 611, Repeat::kBefore)};
+// The player's bar (HUD > moving > blackhud > d3): one black band drawn at
+// 0.42 from the stage's edge at 16:9, plain for about 540 stage pixels. In the
+// box it repeats outward (toward its own -x, the screen's edge on either side)
+// to the screen's edge, 256 stage pixels apart: the copies overlap well inside
+// the plain part, so no gap shows where they meet. Each copy carries the
+// band's cloud end, which shows between the copies on screens wider than 21:9.
+constexpr ClipRule kHud53[] = {Piece({1, 1, 1, 3}, kAnchorNone, 256, Repeat::kBefore)};
 
 struct Entry {
   std::string_view name;
@@ -232,7 +237,7 @@ MovieRule FindMovieRule(std::string_view name) {
   for (size_t i = 0; i < names.size(); ++i)
     if (EndsWithComponents(normalized, names[i])) {
       const Entry& entry = kMovies[i];
-      return {entry.anchors, entry.group, true, entry.clips, entry.clip_count, entry.framed};
+      return {entry.anchors, entry.group, true, entry.clips, entry.clip_count, entry.framed, uint16_t(i + 1)};
     }
   return {};
 }

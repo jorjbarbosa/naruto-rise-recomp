@@ -122,4 +122,9 @@ struct Matrix2D {
 // screen's width (extend) or scaled alike on both axes to cover it (cover),
 // around the stage's center. In stage twips (20 per pixel).
 Matrix2D AnchorPiece(Size s, Matrix2D m, uint8_t anchors);
+// A copy of a repeated piece: moved `offset` stage pixels along the piece's
+// own x axis (its direction on the stage, mirrored or turned as the piece
+// is), whatever the piece's scale. The catalog measures the periods on the
+// stage.
+Matrix2D RepeatPiece(Matrix2D m, float offset);
 }  // namespace widescreen
