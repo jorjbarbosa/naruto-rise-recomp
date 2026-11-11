@@ -21,9 +21,11 @@ namespace widescreen {
 // fight option while a fight piece is on screen.
 enum class Group : uint8_t { kNone, kWorld, kFight, kShared };
 
-// Copies of a piece along its own x axis, `repeat` of its pixels apart: art
-// that tiles (a strip of a repeating bitmap, a plain bar) reaches the screen's
-// edges without being stretched. kBoth draws copies on both sides, kBefore
+// Copies of a piece along its own x axis, `repeat` stage pixels apart
+// (RepeatPiece; a multiple of the art's own period, at most its width, so the
+// copies meet without a gap or a seam): art that tiles (a strip of a
+// repeating bitmap, a plain bar) reaches the screen's edges without being
+// stretched. kBoth draws copies on both sides, kBefore
 // only toward its own -x (the outer side of the player's bar; a mirrored bar
 // gets them on its own outer side).
 enum class Repeat : uint8_t { kNone, kBoth, kBefore };
@@ -38,7 +40,7 @@ struct ClipRule {
   std::array<uint16_t, kMaxPath> path{};
   uint8_t length = 0;
   uint8_t anchors = kAnchorNone;
-  uint16_t repeat = 0;  // The distance between copies, in the piece's own pixels.
+  uint16_t repeat = 0;  // The distance between copies, in stage pixels.
   Repeat repeat_side = Repeat::kNone;
 };
 constexpr ClipRule Piece(std::initializer_list<uint16_t> path, uint8_t anchors, uint16_t repeat = 0,

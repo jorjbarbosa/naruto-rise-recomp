@@ -122,4 +122,13 @@ Matrix2D AnchorPiece(Size s, Matrix2D m, uint8_t anchors) {
   if (anchors & kAnchorBottom) m.ty += BoxTop(s) * kTwips;
   return m;
 }
+
+Matrix2D RepeatPiece(Matrix2D m, float offset) {
+  constexpr float kTwips = 20.0f;
+  const float axis = std::hypot(m.a, m.b);  // The stage length of one unit of the piece's x.
+  if (!(axis > 0.0f) || offset == 0.0f) return m;
+  m.tx += m.a / axis * offset * kTwips;
+  m.ty += m.b / axis * offset * kTwips;
+  return m;
+}
 }  // namespace widescreen

@@ -154,7 +154,7 @@ class GuestFloats {
 // level (0 outside the movie's root, 1 inside _level0) and the depths of the
 // pieces being displayed from the root down (more than kMaxPath keep counting,
 // unrecorded), and the copy of a repeated piece being drawn (its shift along
-// its own x, in its pixels).
+// its own x, in stage pixels).
 struct PiecePath {
   std::array<uint16_t, ClipRule::kMaxPath> depths{};
   int length = 0;
@@ -566,10 +566,7 @@ REX_HOOK_RAW(sub_825E8490) {
   }
   GuestFloats<6> floats(base, matrix);
   const auto& saved = floats.saved();
-  Matrix2D piece{saved[0], saved[1], saved[2], saved[3], saved[4], saved[5]};
-  constexpr float kTwips = 20.0f;
-  piece.tx += piece.a * repeat_offset * kTwips;
-  piece.ty += piece.b * repeat_offset * kTwips;
+  const Matrix2D piece = RepeatPiece({saved[0], saved[1], saved[2], saved[3], saved[4], saved[5]}, repeat_offset);
   const Matrix2D m = AnchorPiece(Layout(), piece, anchors);
   floats.Write({m.a, m.c, m.tx, m.b, m.d, m.ty});
   __imp__sub_825E8490(ctx, base);

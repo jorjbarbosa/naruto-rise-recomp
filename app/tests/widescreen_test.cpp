@@ -222,6 +222,18 @@ int main() {
     Check(EffectiveAnchors(shared, HudPlacement::kEdges, HudPlacement::kCenter, true) == kAnchorNone &&
               EffectiveAnchors(shared, HudPlacement::kEdges, HudPlacement::kCenter, false) == kAnchorLeft,
           "a shared piece follows the fight option while a fight piece shows");
+    // A copy moves its distance in stage pixels whatever the piece's scale
+    // (the dialog's bar is drawn at 0.669, its strip of spirals at 1.2437).
+    const Matrix2D bar{0.669f, 0, 637.2f * 20, 0, 0.669f, 728.3f * 20};
+    Check(Near(RepeatPiece(bar, 1656).tx, (637.2f + 1656) * 20, 0.5f) && Near(RepeatPiece(bar, 1656).ty, 728.3f * 20, 0.5f) &&
+              Near(RepeatPiece(bar, 1656).a, 0.669f), "a scaled piece's copy moves its stage distance");
+    const Matrix2D strip{1.2437f, 0, 379.5f * 20, 0, 1.2434f, 707.9f * 20};
+    Check(Near(RepeatPiece(strip, -2288).tx, (379.5f - 2288) * 20, 0.5f), "and toward its -x");
+    const Matrix2D mirrored{-0.8f, 0, 1000 * 20, 0, 0.8f, 0};
+    Check(Near(RepeatPiece(mirrored, -611).tx, (1000 + 611) * 20, 0.5f), "a mirrored piece's -x is the stage's +x");
+    const Matrix2D turned{0, 0, 0, 2.0f, 2.0f, 0};  // Its x along the stage's y.
+    Check(Near(RepeatPiece(turned, 100).ty, 100 * 20, 0.5f) && Near(RepeatPiece(turned, 100).tx, 0),
+          "a turned piece moves along its own x");
     Check(MirrorAnchors(kAnchorLeft | kAnchorTop) == (kAnchorRight | kAnchorTop) &&
               MirrorAnchors(kAnchorRight | kAnchorBottom) == (kAnchorLeft | kAnchorBottom) &&
               MirrorAnchors(kAnchorLeft | kAnchorRight) == (kAnchorLeft | kAnchorRight) &&
