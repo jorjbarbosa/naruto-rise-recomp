@@ -55,6 +55,9 @@ bool Enabled();
 bool LayoutEnabled();
 // The session started (820E6D68 ran with the native renderer).
 bool SessionStarted();
+// No change of the screen under way (live.cpp): none asked for, and every
+// pool entry of the last one released.
+bool ChangeSettled();
 void SetCurrent(Size s);
 void SetLayout(Size s);
 void StartSession(Size s);

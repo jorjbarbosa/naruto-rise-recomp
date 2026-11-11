@@ -159,6 +159,11 @@ std::string ResourceSummary();
 // The own resource of a registered guest header, released on the engine owner
 // (D750 and the ordered close). False: unproved (evidence says why).
 bool ReleaseRegistered(uint32_t key, std::string& evidence);
+// The registry's generation of a header, 0 when it is not registered; and
+// ReleaseRegistered for that registration alone (true at once when the
+// address was released since, or holds another resource now).
+uint64_t RegisteredGeneration(uint32_t key);
+bool ReleaseRegisteredGeneration(uint32_t key, uint64_t generation, std::string& evidence);
 // A header that may have been a resolve destination without ever being
 // registered (a texture header embedded in a game structure): the own texture
 // the engine created for its resolves, released on the engine owner as

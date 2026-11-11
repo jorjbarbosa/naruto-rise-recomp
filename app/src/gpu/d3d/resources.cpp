@@ -155,16 +155,10 @@ namespace gpu {
 // follows the engine: the entry is removed only after a confirmed release.
 // Shared by D750 and the ordered close. False: unproved (evidence says why).
 std::atomic<uint32_t> d750_texture_records{0}, d750_shader_records{0};
-bool ReleaseRegistered(uint32_t key, std::string& evidence) {
-  ResourceRegistry::Entry entry{};
+namespace {
+// The release of the registry entry found under `key`.
+bool ReleaseEntry(uint32_t key, ResourceRegistry::Entry entry, std::string& evidence) {
   auto* dispatcher = host::ActiveDispatcher();
-  if (!resources.Find(key, entry)) {
-    // In order with the captures (the registered path forgets after its Run, which is).
-    if (dispatcher) dispatcher->Defer([key] { texture_content.Forget(key); });
-    else texture_content.Forget(key);
-    evidence = "{\"registered\":false}";
-    return true;
-  }
   const bool surface = entry.host_surface;
   if (!dispatcher || !dispatcher->Run([key, surface](Engine& engine, std::string& out) {
         return surface ? engine.DestroySurface(key, out) : engine.ReleaseTexture(key, out); }, evidence))
@@ -175,6 +169,30 @@ bool ReleaseRegistered(uint32_t key, std::string& evidence) {
   }
   texture_content.Forget(key);
   return true;
+}
+}  // namespace
+bool ReleaseRegistered(uint32_t key, std::string& evidence) {
+  ResourceRegistry::Entry entry{};
+  if (!resources.Find(key, entry)) {
+    // In order with the captures (the registered path forgets after its Run, which is).
+    if (auto* dispatcher = host::ActiveDispatcher()) dispatcher->Defer([key] { texture_content.Forget(key); });
+    else texture_content.Forget(key);
+    evidence = "{\"registered\":false}";
+    return true;
+  }
+  return ReleaseEntry(key, entry, evidence);
+}
+uint64_t RegisteredGeneration(uint32_t key) {
+  ResourceRegistry::Entry entry{};
+  return resources.Find(key, entry) ? entry.generation : 0;
+}
+bool ReleaseRegisteredGeneration(uint32_t key, uint64_t generation, std::string& evidence) {
+  ResourceRegistry::Entry entry{};
+  if (!generation || !resources.Find(key, entry) || entry.generation != generation) {
+    evidence = "{\"registered\":false}";  // Released already, or another resource at the address now.
+    return true;
+  }
+  return ReleaseEntry(key, entry, evidence);
 }
 bool ReleaseResolveDestination(uint32_t key, std::string& evidence) {
   ResourceRegistry::Entry entry{};

@@ -2,6 +2,7 @@
 // (widescreen.h), and the sizes of the game's own targets at their call sites.
 #include "widescreen/widescreen.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -75,6 +76,13 @@ void InitializeOptions() {
     rex::cvar::RegisterChangeCallback("hud_fight", [](std::string_view, std::string_view value) {
       fight_hud.store(ParseHudPlacement(value, HudPlacement::kCenter), std::memory_order_relaxed);
     });
+    // A live change of the resolution scale waits until the game's targets
+    // fit at it and no change of the screen is under way.
+    gpu::SetSettingsGate([](const gpu::Settings& next) {
+      const Size s = Current();
+      return float(s.width) * next.resolution_scale.x <= float(kMaxSurfaceSide) &&
+             float(s.height) * next.resolution_scale.y <= float(kMaxSurfaceSide) && ChangeSettled();
+    });
   });
   // The values already loaded; the UI thread is the one that writes them.
   aspect_mode.store(ParseAspectMode(REXCVAR_GET(aspect_ratio)), std::memory_order_relaxed);
@@ -96,11 +104,13 @@ void SetWindowSize(uint32_t width, uint32_t height) {
 bool WindowSettled() { return NowMs() - window_changed_at.load(std::memory_order_relaxed) >= kWindowSettleMs; }
 Size Requested() {
   const uint64_t window = window_size.load(std::memory_order_relaxed);
-  // The scale in effect: a live change of the resolution is applied by the
-  // engine only when the current targets fit at it (Reconfigure), and the
-  // next screen asked for fits at the scale that was applied.
-  const gpu::ResolutionScale scale = gpu::CurrentResolutionScale();
-  return LogicalSize(ConfiguredAspect(), uint32_t(window >> 32), uint32_t(window), scale.x, scale.y);
+  // The larger of the scale in effect and the one asked for: a larger scale
+  // reaches the engine (Reconfigure) only once the targets fit at it, so the
+  // screen narrows first (the settings gate, InitializeOptions); a smaller
+  // one widens the screen only once it is in effect.
+  const gpu::ResolutionScale current = gpu::CurrentResolutionScale(), requested = gpu::RequestedResolutionScale();
+  return LogicalSize(ConfiguredAspect(), uint32_t(window >> 32), uint32_t(window), std::max(current.x, requested.x),
+                     std::max(current.y, requested.y));
 }
 Size Current() { return UnpackSize(current_size.load(std::memory_order_acquire)); }
 Size Layout() { return UnpackSize(layout_size.load(std::memory_order_acquire)); }

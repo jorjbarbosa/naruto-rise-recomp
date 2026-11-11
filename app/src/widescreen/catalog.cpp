@@ -232,7 +232,7 @@ MovieRule FindMovieRule(std::string_view name) {
   for (size_t i = 0; i < names.size(); ++i)
     if (EndsWithComponents(normalized, names[i])) {
       const Entry& entry = kMovies[i];
-      return {entry.anchors, entry.group, true, entry.clips, entry.clip_count, entry.framed};
+      return {entry.anchors, entry.group, true, entry.clips, entry.clip_count, entry.framed, uint16_t(i + 1)};
     }
   return {};
 }

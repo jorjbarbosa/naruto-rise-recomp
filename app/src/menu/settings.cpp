@@ -44,6 +44,12 @@ void Settings::Initialize(std::filesystem::path directory, bool native_controls,
   controls::Publish(config_.controls);
   initial_menu_options_ = menu_options_;
 }
+void Settings::SetDisplaySize(uint32_t width, uint32_t height) {
+  if (width == display_width_ && height == display_height_) return;
+  display_width_ = width;
+  display_height_ = height;
+  if (ui_ && panel_revision_ == ui_->ViewRevision()) Redraw(ui_->PanelFocus());
+}
 void Settings::SetPendingDataLocation(std::optional<std::filesystem::path> pending) {
   pending_data_root_ = std::move(pending);
   if (ui_ && panel_revision_ == ui_->ViewRevision())

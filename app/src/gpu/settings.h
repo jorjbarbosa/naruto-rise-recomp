@@ -9,6 +9,7 @@
 // image. No SDK header here: the engine and its host tests take the values as
 // plain data.
 #include <cstdint>
+#include <functional>
 #include <string>
 #include "gpu/common/resolution_scale.h"
 
@@ -56,8 +57,16 @@ void LoadSettings();
 // Value snapshots: menu, translator and render threads never share mutable data.
 Settings CurrentSettings();
 // The resolution scale in effect (a live change once the engine applied it),
-// without copying the rest of the settings.
+// and the one asked for (the menu's, until the engine applies or refuses
+// it), without copying the rest of the settings.
 ResolutionScale CurrentResolutionScale();
+ResolutionScale RequestedResolutionScale();
+// A check of the title's own state before a request reaches the engine: false
+// while that state cannot take it yet (the widescreen mode narrowing its
+// screen for a larger scale). ApplyPendingSettings waits for it up to
+// kSettingsGateFrames frames; the engine decides after that.
+inline constexpr uint32_t kSettingsGateFrames = 240;
+void SetSettingsGate(std::function<bool(const Settings&)> gate);
 Settings RequestedSettings();
 uint64_t RequestSettings(Settings settings);
 struct SettingsResult {

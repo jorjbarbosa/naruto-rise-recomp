@@ -62,6 +62,7 @@ struct MovieRule {
   // sequences): while it draws, the screen outside the 16:9 box is black, as
   // the frame of a film, instead of the 3D scene behind it.
   bool framed = false;
+  uint16_t id = 0;  // The catalog's entry (1 and up), 0 outside the catalog.
 };
 
 // The rule of the piece at `path` (depths from the root, `length` of them):

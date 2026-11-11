@@ -175,6 +175,9 @@ int main() {
     Check(FindMovieRule("HUD_Fight_Start_PLVs").group == Group::kFight &&
               FindMovieRule("HUD_Fight_Start_Naruto_Neji").group == Group::kFight &&
               !FindMovieRule("HUD_Fight_Start_PLVs").clip_count, "every versus screen marks a fight, framed whole");
+    Check(FindMovieRule("HUD53").id && FindMovieRule("Flash\\hud53.swf").id == FindMovieRule("HUD53").id &&
+              FindMovieRule("ControlPanel").id != FindMovieRule("HUD53").id && !FindMovieRule("OldHUD53").id,
+          "a catalog entry has one id under any spelling, none outside the catalog");
     Check(FindMovieRule("rage\\RageBlackOverlay").anchors == kAnchorFill, "the rage overlay fills the screen");
     const MovieRule fight_pause = FindMovieRule("Menu\\Menu_FightPause");
     Check(fight_pause.group == Group::kFight && ClipAnchors(fight_pause, 1) == kAnchorFill,

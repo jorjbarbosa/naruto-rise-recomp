@@ -80,6 +80,10 @@ std::mutex settings_mutex;
 uint64_t requested_revision = 0;
 SettingsResult last_result;
 std::string evidence;
+std::function<bool(const Settings&)> settings_gate;  // Under settings_mutex.
+// The request the gate holds back and the frames it waited (the thread of ApplyPendingSettings).
+uint64_t gated_revision = 0;
+uint32_t gated_frames = 0;
 
 // The options that the SDK defines in the Xenos plugin (command_processor.cpp,
 // graphics_system.cpp, texture/cache.cpp), with its names, ranges and allowed
@@ -288,6 +292,14 @@ void LoadSettings() {
 }
 Settings CurrentSettings() { std::lock_guard lock(settings_mutex); return settings; }
 ResolutionScale CurrentResolutionScale() { std::lock_guard lock(settings_mutex); return settings.resolution_scale; }
+ResolutionScale RequestedResolutionScale() {
+  std::lock_guard lock(settings_mutex);
+  return requested_settings.resolution_scale;
+}
+void SetSettingsGate(std::function<bool(const Settings&)> gate) {
+  std::lock_guard lock(settings_mutex);
+  settings_gate = std::move(gate);
+}
 Settings RequestedSettings() { std::lock_guard lock(settings_mutex); return requested_settings; }
 uint64_t RequestSettings(Settings next) {
   std::lock_guard lock(settings_mutex);
@@ -301,11 +313,21 @@ SettingsResult LastSettingsResult() { std::lock_guard lock(settings_mutex); retu
 void ApplyPendingSettings(Dispatcher& dispatcher) {
   Settings next;
   uint64_t revision;
+  std::function<bool(const Settings&)> gate;
   {
     std::lock_guard lock(settings_mutex);
     if (requested_revision == last_result.revision) return;
     revision = requested_revision;
     next = requested_settings;
+    gate = settings_gate;
+  }
+  // The title's state first (SetSettingsGate), for a bounded number of frames.
+  if (gate) {
+    if (revision != gated_revision) {
+      gated_revision = revision;
+      gated_frames = 0;
+    }
+    if (!gate(next) && ++gated_frames <= kSettingsGateFrames) return;
   }
   PresentMode present;
   present.vsync = next.vsync; present.allow_tearing = next.allow_tearing;

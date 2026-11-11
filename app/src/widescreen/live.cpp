@@ -25,7 +25,7 @@
 #include <cstring>
 #include <mutex>
 #include <string>
-#include <unordered_set>
+#include <unordered_map>
 
 #include <rex/hook.h>
 #include <rex/logging.h>
@@ -68,9 +68,15 @@ std::atomic<uint64_t> pending{0};    // Packed screen of step A, waiting for ste
 std::atomic<uint64_t> refused{0};    // A screen whose targets could not be created.
 std::atomic<uint32_t> since_change{kSettleLimit};
 // The pool entries step B queued for the deferred destruction: step C acts
-// on these alone, never on an entry the game destroys on its own.
+// on these alone, never on an entry the game destroys on its own. An alias
+// keeps the surface it held (E+4) with the registry's generation of it then,
+// so step C never releases another resource created at that address since.
+struct QueuedEntry {
+  uint32_t alias_surface = 0;
+  uint64_t alias_generation = 0;
+};
 std::mutex queued_mutex;
-std::unordered_set<uint32_t> queued_entries;
+std::unordered_map<uint32_t, QueuedEntry> queued_entries;
 
 // True when the previous change is over (see kSettleDeliveries).
 bool PreviousChangeSettled() {
@@ -186,9 +192,14 @@ Outcome Recreate(PPCContext& ctx, uint8_t* base, Size s) {
     for (uint32_t i = 0; i < kPoolEntries; ++i) {
       const uint32_t entry = Get32(base, manager + 4 * i);
       if (entry) {
+        QueuedEntry queued;
+        if (Get32(base, entry + 108)) {  // An alias: the surface it keeps (E+4), as registered now.
+          queued.alias_surface = Get32(base, entry + 4);
+          queued.alias_generation = queued.alias_surface ? gpu::RegisteredGeneration(queued.alias_surface) : 0;
+        }
         {
           std::lock_guard lock(queued_mutex);
-          queued_entries.insert(entry);
+          queued_entries[entry] = queued;
         }
         Call(ctx, base, __imp__sub_820F2A08, frame, {kDeferredQueue, entry});
       }
@@ -207,17 +218,37 @@ Outcome Recreate(PPCContext& ctx, uint8_t* base, Size s) {
   return created ? Outcome::kApplied : Outcome::kRefused;
 }
 
-// True once for an entry step B queued; `last` when it was the last one.
-bool TakeQueuedEntry(uint32_t entry, bool& last) {
+// True once for an entry step B queued, with what it kept; `last` when it
+// was the last one.
+bool TakeQueuedEntry(uint32_t entry, QueuedEntry& queued, bool& last) {
   std::lock_guard lock(queued_mutex);
-  if (!queued_entries.erase(entry)) return false;
+  const auto it = queued_entries.find(entry);
+  if (it == queued_entries.end()) return false;
+  queued = it->second;
+  queued_entries.erase(it);
   last = queued_entries.empty();
   return true;
 }
+
+// The camera's screen, written again when the GDI lost it (a GDI that did
+// not exist yet at the session's start, or one built again since): the 3D
+// scene would be drawn at 16:9 into the wider targets.
+void KeepCamera(uint8_t* base, Size s) {
+  const uint32_t gdi = Get32(base, kGdi);
+  if (gdi && (Get32(base, gdi + 244) != s.width || Get32(base, gdi + 248) != s.height || Get32(base, gdi + 280) != 0))
+    WriteCamera(base, s);
+}
 }  // namespace
+
+bool widescreen::ChangeSettled() {
+  if (pending.load(std::memory_order_acquire)) return false;
+  std::lock_guard lock(queued_mutex);
+  return queued_entries.empty();
+}
 
 // Step A: the main thread starts a view block.
 REX_HOOK_RAW(sub_8259E908) {
+  if (LayoutEnabled()) KeepCamera(base, Layout());
   if (gpu::Active() && SessionStarted() && !pending.load(std::memory_order_acquire) && WindowSettled() &&
       PreviousChangeSettled()) {
     const Size next = Requested();
@@ -256,34 +287,28 @@ REX_HOOK_RAW(sub_820ED9D8) {
   }
 }
 
-// A header the game binds as one of its targets now (+504 .. +524).
-bool CurrentTarget(uint8_t* base, uint32_t header) {
-  const uint32_t owner = Get32(base, kDeviceOwner);
-  if (!owner) return false;
-  for (uint32_t field : {504u, 516u, 520u, 524u})
-    if (Get32(base, owner + field) == header) return true;
-  return false;
-}
-
 // Step C: the deferred destruction of a pool entry (r3 = entry). The game
 // releases the base's memory and surface; for an entry step B queued, the
 // native renderer also lets go of the embedded texture header (E+32, never
 // registered nor through D750: the own texture of its resolves and its
 // sampled copy) and, for an alias (E+108 != 0), of the surface the game keeps
-// (E+4), unless that header is one of the game's targets by now.
+// (E+4), if that address still holds the resource it held then.
 REX_HOOK_RAW(sub_820F2C70) {
   const uint32_t entry = ctx.r3.u32;
+  QueuedEntry queued;
   bool last = false;
-  if (gpu::Active() && entry && TakeQueuedEntry(entry, last)) {
-    std::string evidence;
+  if (gpu::Active() && entry && TakeQueuedEntry(entry, queued, last)) {
     const uint32_t header = entry + 32;
-    if (!gpu::ReleaseResolveDestination(header, evidence) || !gpu::ReleaseSampledCopy(base, header, evidence))
-      REXLOG_WARN("[narutorise] widescreen: pool entry {:08X} texture not released: {}", entry, evidence);
-    if (Get32(base, entry + 108)) {
-      const uint32_t surface = Get32(base, entry + 4);
-      if (surface && !CurrentTarget(base, surface) && !gpu::ReleaseRegistered(surface, evidence))
-        REXLOG_WARN("[narutorise] widescreen: alias surface {:08X} not released: {}", surface, evidence);
-    }
+    std::string resolved, sampled;
+    const bool resolve_released = gpu::ReleaseResolveDestination(header, resolved);
+    const bool copy_released = gpu::ReleaseSampledCopy(base, header, sampled);  // Whatever the first did.
+    if (!resolve_released || !copy_released)
+      REXLOG_WARN("[narutorise] widescreen: pool entry {:08X} texture not released: resolve {}, sampled copy {}", entry,
+                  resolved, sampled);
+    std::string evidence;
+    if (queued.alias_surface &&
+        !gpu::ReleaseRegisteredGeneration(queued.alias_surface, queued.alias_generation, evidence))
+      REXLOG_WARN("[narutorise] widescreen: alias surface {:08X} not released: {}", queued.alias_surface, evidence);
   }
   __imp__sub_820F2C70(ctx, base);
   if (last) REXLOG_INFO("[narutorise] widescreen: the previous pool is released");
