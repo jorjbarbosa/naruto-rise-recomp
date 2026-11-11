@@ -14,6 +14,7 @@
 #include "gpu/d3d/resources.h"
 #include "gpu/d3d/draw.h"
 #include "gpu/diagnostics/frame_trace.h"
+#include "widescreen/widescreen.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -37,6 +38,7 @@
 #include <fmt/ranges.h>
 #include <rex/cvar.h>
 #include <rex/hook.h>
+#include <rex/logging.h>
 #include <rex/system/kernel_state.h>
 #include <rex/system/thread_state.h>
 #include <rex/system/xthread.h>
@@ -191,6 +193,93 @@ void OwnClear(PPCContext& ctx, uint8_t* base, uint32_t dev, uint32_t flags, cons
         request.color_keys[1], request.color_keys[2], request.color_keys[3], request.depth_key, evidence));
   }
 }
+
+// The host frame of the front buffer (RequestFrontFrame): the texture, the
+// rectangles and the lists it covers, under a mutex (the main thread asks,
+// the thread of the resolves applies, the engine's owner refuses).
+namespace {
+struct FrontFrame {
+  uint32_t front = 0;
+  std::array<std::array<int32_t, 4>, 4> rects{};
+  size_t count = 0;
+  uint64_t first = 0, last = 0;
+  bool refused = false;
+};
+std::mutex front_frame_mutex;
+FrontFrame front_frame;
+std::atomic<bool> front_frame_asked{false};  // Any request yet: the resolves skip the mutex until then.
+
+// A refusal of the engine (another surface format, say), on its owner: the
+// frames end for the session instead of failing the posted queue.
+void RefuseFrontFrame(const std::string& evidence) {
+  std::lock_guard lock(front_frame_mutex);
+  if (front_frame.refused) return;
+  front_frame.refused = true;
+  REXLOG_WARN("[narutorise] widescreen: the black frame of 16:9 pictures is off for the session: {}", evidence);
+}
+}  // namespace
+
+void RequestFrontFrame(uint32_t front, std::span<const std::array<int32_t, 4>> rects, uint64_t first, uint64_t last) {
+  std::lock_guard lock(front_frame_mutex);
+  if (front_frame.refused) return;
+  const bool follows = front_frame.count && front_frame.front == front && first <= front_frame.last + 1;
+  front_frame.first = follows ? std::min(front_frame.first, first) : first;
+  front_frame.last = follows ? std::max(front_frame.last, last) : last;
+  front_frame.front = front;
+  front_frame.count = std::min(rects.size(), front_frame.rects.size());
+  std::copy_n(rects.begin(), front_frame.count, front_frame.rects.begin());
+  front_frame_asked.store(true, std::memory_order_release);
+}
+
+// Before a color resolve into the framed front buffer in a framed list: the
+// rectangles of the source cleared to black, posted ahead of the resolve
+// (FIFO) and never fatal. The rectangles reach the right and bottom edges of
+// the screen they were asked for: a destination of another size (a list
+// drawn across a change of the screen, or a front buffer created again at
+// the same address) is left alone.
+void ApplyFrontFrame(uint8_t* base, uint32_t dev, uint32_t dest, uint32_t src_index) {
+  if (!front_frame_asked.load(std::memory_order_acquire)) return;
+  FrontFrame frame;
+  {
+    const uint64_t list = widescreen::DrawnList();
+    std::lock_guard lock(front_frame_mutex);
+    if (front_frame.refused || !front_frame.count || front_frame.front != dest || list < front_frame.first ||
+        list > front_frame.last)
+      return;
+    frame = front_frame;
+  }
+  int32_t width = 0, height = 0;
+  for (size_t i = 0; i < frame.count; ++i) {
+    width = std::max(width, frame.rects[i][2]);
+    height = std::max(height, frame.rects[i][3]);
+  }
+  const uint32_t dw2 = Get32(base, dest + 0x24);  // Fetch dword 2: the destination's size - 1.
+  if (uint32_t(width) != (dw2 & 0x1FFF) + 1 || uint32_t(height) != ((dw2 >> 13) & 0x1FFF) + 1) return;
+  const uint32_t key = Backing(Get32(base, dev + 12432 + 4 * src_index));
+  auto* dispatcher = host::ActiveDispatcher();
+  std::string evidence;
+  if (!key || !dispatcher || dispatcher->PostedFailure(evidence)) return;
+  std::vector<ClearRequest> requests;
+  for (size_t i = 0; i < frame.count; ++i) {
+    ClearRequest request{};
+    request.color_keys[0] = key;
+    request.clear_color = true;
+    request.color = {0.0f, 0.0f, 0.0f, 1.0f};
+    request.left = frame.rects[i][0]; request.top = frame.rects[i][1];
+    request.right = frame.rects[i][2]; request.bottom = frame.rects[i][3];
+    requests.push_back(request);
+  }
+  const bool posted = dispatcher->Post([requests = std::move(requests)](Engine& engine, std::string& out) {
+    uint64_t fence = 0;
+    for (const ClearRequest& request : requests)
+      if (!engine.ClearSurfaces(request, fence, out)) {
+        RefuseFrontFrame(out);
+        break;
+      }
+    return true;
+  });
+  if (posted && device_owner) device_owner->NoteSubmission();  // Refused: the resolve itself stops in order.
+}
 }  // namespace gpu
 
 // D3DDevice_ClearF(device, Flags, pRect, pColor, Z, Stencil): own clear. The
@@ -226,9 +315,11 @@ REX_HOOK_RAW(sub_8213A7E0) {
   constexpr uint32_t kTiles = 0x82081798, kViewport = 0x8208B398, kScissor = 0x8208B3B0;
   Put32(base, dev + 12740, 3);
   uint32_t max_x = 0, max_y = 0;
+  // The tiles cover the logical screen of the widescreen mode; at 1280 x 720, the table.
+  const auto own_tiles = widescreen::TilingRects();
   for (uint32_t i = 0; i < 3; ++i) {
-    const uint32_t x1 = Get32(base, kTiles + 16 * i), y1 = Get32(base, kTiles + 16 * i + 4);
-    const uint32_t x2 = Get32(base, kTiles + 16 * i + 8), y2 = Get32(base, kTiles + 16 * i + 12);
+    const auto tile = [&](uint32_t k) { return own_tiles ? (*own_tiles)[i][k] : Get32(base, kTiles + 16 * i + 4 * k); };
+    const uint32_t x1 = tile(0), y1 = tile(1), x2 = tile(2), y2 = tile(3);
     max_x = std::max(max_x, x2);
     max_y = std::max(max_y, y2);
     Put32(base, dev + 12744 + 16 * i, x1); Put32(base, dev + 12748 + 16 * i, y1);
@@ -393,6 +484,7 @@ void OwnResolve(PPCContext& ctx, uint8_t* base, uint32_t dev, uint32_t flags, ui
       UncoveredOperation(ctx, fmt::format("{}-uncovered-dest_fetch.dimension", source));
       copy = false;
     }
+    if (copy && src_index < 4) ApplyFrontFrame(base, dev, dest, src_index);  // The widescreen frame, when asked.
     if (copy) {
       profile::Timer profile(profile::kResolve);
       ResolveRequest request{};

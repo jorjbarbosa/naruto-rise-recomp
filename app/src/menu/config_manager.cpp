@@ -97,6 +97,9 @@ bool ConfigManager::Load(const std::filesystem::path& toml_path, GameConfig& con
     if (auto v = tbl["internal_resolution_scale"].value<double>()) loaded.internal_resolution_scale = *v;
     if (auto v = tbl["max_frame_latency"].value<int>()) loaded.max_frame_latency = *v;
     if (auto v = tbl["triple_buffering"].value<bool>()) loaded.triple_buffering = *v;
+    if (auto v = tbl["aspect_ratio"].value<std::string>()) loaded.aspect_ratio = *v == "16:9" ? "16:9" : "auto";
+    if (auto v = tbl["hud_world"].value<std::string>()) loaded.hud_world = *v == "center" ? "center" : "edges";
+    if (auto v = tbl["hud_fight"].value<std::string>()) loaded.hud_fight = *v == "edges" ? "edges" : "center";
     if (auto v = tbl["swap_post_effect"].value<std::string>()) loaded.swap_post_effect = *v;
     if (auto v = tbl["present_effect"].value<std::string>()) loaded.present_effect = *v;
     if (auto v = tbl["present_dither"].value<bool>()) loaded.present_dither = *v;
@@ -145,6 +148,9 @@ bool ConfigManager::Save(const std::filesystem::path& toml_path, const GameConfi
     tbl.insert_or_assign("internal_resolution_scale", config.internal_resolution_scale);
     tbl.insert_or_assign("max_frame_latency", config.max_frame_latency);
     tbl.insert_or_assign("triple_buffering", config.triple_buffering);
+    tbl.insert_or_assign("aspect_ratio", config.aspect_ratio);
+    tbl.insert_or_assign("hud_world", config.hud_world);
+    tbl.insert_or_assign("hud_fight", config.hud_fight);
   }
   tbl.insert_or_assign("d3d12_readback_resolve", config.d3d12_readback_resolve);
   tbl.insert_or_assign("skip_intro_videos", config.skip_intro_videos);

@@ -64,6 +64,7 @@
 #include "gpu/ui/layer.h"
 #include "gpu/ui/screen.h"
 #include "gpu/common/shader_activity.h"
+#include "widescreen/widescreen.h"
 #include "wine.h"
 #endif
 
@@ -134,6 +135,23 @@ class FullscreenShortcuts : public rex::ui::WindowInputListener {
     }
   }
 };
+
+#ifdef NARUTORISE_NATIVE_RENDERER_BOOTSTRAP
+// The client size of the game window (the monitor's in fullscreen), which
+// the widescreen mode's automatic aspect follows.
+class WidescreenWindow : public rex::ui::WindowListener {
+ public:
+  // Also told of each size (the settings menu's list of resolutions).
+  std::function<void(uint32_t width, uint32_t height)> resized;
+  void OnResize(rex::ui::UISetupEvent& e) override {
+    Update(e.target());
+    if (resized && e.target()) resized(e.target()->GetActualPhysicalWidth(), e.target()->GetActualPhysicalHeight());
+  }
+  static void Update(rex::ui::Window* window) {
+    if (window) widescreen::SetWindowSize(window->GetActualPhysicalWidth(), window->GetActualPhysicalHeight());
+  }
+};
+#endif
 
 class NarutoriseApp : public rex::ReXApp {
  public:
@@ -439,13 +457,14 @@ class NarutoriseApp : public rex::ReXApp {
   }
 
   // The anamorphic projection relies on the SDK presenter stretching the 16:9
-  // image to the window. The native renderer keeps the 16:9 image with bars,
-  // so the game stays at 16:9 there.
+  // image to the window. The native renderer has its own widescreen mode
+  // (aspect_ratio: the game's screen follows the window, nothing stretched),
+  // so the patch stays off there.
   void ApplyUltrawide() {
 #ifdef NARUTORISE_NATIVE_RENDERER_BOOTSTRAP
     if (gpu::host::Enabled()) {
       if (rex::cvar::Query<double>("ultrawide_target_aspect") > 0.0) {
-        REXLOG_INFO("[narutorise] ultrawide_target_aspect is not used by the native renderer (16:9)");
+        REXLOG_INFO("[narutorise] ultrawide_target_aspect is not used by the native renderer (aspect_ratio replaces it)");
       }
       return;
     }
@@ -464,7 +483,17 @@ class NarutoriseApp : public rex::ReXApp {
       // Window shortcuts take priority over overlays and keyboard emulation.
       window()->AddInputListener(&fullscreen_shortcuts_,
                                  std::numeric_limits<size_t>::max());
+#ifdef NARUTORISE_NATIVE_RENDERER_BOOTSTRAP
+      widescreen_window_.resized = [this](uint32_t width, uint32_t height) {
+        menu_settings_.SetDisplaySize(width, height);
+      };
+      window()->AddListener(&widescreen_window_);
+      WidescreenWindow::Update(window());
+#endif
     }
+#ifdef NARUTORISE_NATIVE_RENDERER_BOOTSTRAP
+    widescreen::InitializeOptions();  // The configuration is loaded; the game has not started.
+#endif
     RestoreXenosAdapter();  // The provider exists by now.
     SeedShaderStorage();
     AutoInstallDlc();
@@ -552,6 +581,9 @@ class NarutoriseApp : public rex::ReXApp {
     CloseSetupScreen();
     if (window()) window()->RemoveInputListener(&ui_);
     if (window()) window()->RemoveInputListener(&fullscreen_shortcuts_);
+#ifdef NARUTORISE_NATIVE_RENDERER_BOOTSTRAP
+    if (window()) window()->RemoveListener(&widescreen_window_);
+#endif
     rex::cvar::UnregisterChangeCallbacks("ultrawide_target_aspect");
     rex::ui::UnregisterBind("bind_exit_game");
     rex::ui::UnregisterBind("bind_fps_overlay");
@@ -1223,6 +1255,8 @@ class NarutoriseApp : public rex::ReXApp {
     CloseSetupScreen();
 #ifdef NARUTORISE_NATIVE_RENDERER_BOOTSTRAP
     gpu::LoadSettings();
+    widescreen::InitializeOptions();     // The options as the setup screen left them.
+    WidescreenWindow::Update(window());  // The size the game's screen starts at.
 #endif
     if (setup_paths_.game_data_root != game_data_root()) LogGameData(setup_paths_.game_data_root);
     ArmFirstPresentation();
@@ -1232,6 +1266,7 @@ class NarutoriseApp : public rex::ReXApp {
     menu_settings_.SetDataFolder(prepared_data_->paths, pending_data_root_, [this](narutorise::data::Mode mode) {
       app_context().CallInUIThreadDeferred([this, mode] { RequestDataLocation(mode); });
     });
+    if (window()) menu_settings_.SetDisplaySize(window()->GetActualPhysicalWidth(), window()->GetActualPhysicalHeight());
 #ifdef NARUTORISE_NATIVE_RENDERER_BOOTSTRAP
     if (NativeRenderer()) menu_settings_.SetLiveSettings(
       [](const std::string& key, const GameConfig& config) -> uint64_t {
@@ -1270,6 +1305,12 @@ class NarutoriseApp : public rex::ReXApp {
         if (!narutorise::reporting::SetConsent(consent) && consent) OfferSettingsRestart();
       } else if (key == "fullscreen") {
         rex::cvar::SetFlagByName(key, menu_settings_.config().fullscreen ? "true" : "false");
+      } else if (key == "aspect_ratio") {
+        rex::cvar::SetFlagByName(key, menu_settings_.config().aspect_ratio);
+      } else if (key == "hud_world") {
+        rex::cvar::SetFlagByName(key, menu_settings_.config().hud_world);
+      } else if (key == "hud_fight") {
+        rex::cvar::SetFlagByName(key, menu_settings_.config().hud_fight);
       } else if (key == "skip_intro_videos") {
         narutorise::SetSkipIntroVideos(menu_settings_.config().skip_intro_videos);
       } else if (key == "native_backend" || key == "graphics_device") {
@@ -1709,6 +1750,9 @@ class NarutoriseApp : public rex::ReXApp {
   int restart_wait_fd_ = -1;  // Deliberately held until process exit (lease teardown).
 #endif
   FullscreenShortcuts fullscreen_shortcuts_;
+#ifdef NARUTORISE_NATIVE_RENDERER_BOOTSTRAP
+  WidescreenWindow widescreen_window_;
+#endif
   std::unique_ptr<rex::ui::ImmediateDrawer> native_drawer_;  // Before ui_: it outlives the Ui.
   narutorise::menu::Ui ui_;
   narutorise::menu::Settings menu_settings_;

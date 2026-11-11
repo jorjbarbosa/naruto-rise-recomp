@@ -11,6 +11,7 @@
 #include "gpu/textures/textures.h"
 #include "gpu/buffers/buffers.h"
 #include "gpu/settings.h"
+#include "widescreen/widescreen.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -79,6 +80,7 @@ extern "C" void __imp__sub_8212D330(PPCContext& __restrict, uint8_t*);
 REX_HOOK_RAW(sub_8212D330) {
   if (!gpu::Active()) { __imp__sub_8212D330(ctx, base); return; }
   HookScope scope("D330-CreateSurface");
+  widescreen::AdjustSurfaceCreate(ctx, base);  // The game's targets at the logical screen; before args.
   const std::array<uint32_t, 8> args{ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32,
                                      ctx.r7.u32, ctx.r8.u32, ctx.r9.u32, ctx.r10.u32};
   const uint32_t lr = ctx.lr;
@@ -123,6 +125,7 @@ extern "C" void __imp__sub_8212D210(PPCContext& __restrict, uint8_t*);
 REX_HOOK_RAW(sub_8212D210) {
   if (!gpu::Active()) { __imp__sub_8212D210(ctx, base); return; }
   HookScope scope("D210-CreateTexture");
+  widescreen::AdjustTextureCreate(ctx, base);  // The front buffer at the logical screen; before args.
   const std::array<uint32_t, 8> args{ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32,
                                      ctx.r7.u32, ctx.r8.u32, ctx.r9.u32, ctx.r10.u32};
   const uint32_t lr = ctx.lr;
@@ -170,6 +173,18 @@ bool ReleaseRegistered(uint32_t key, std::string& evidence) {
     evidence = "{\"registry\":\"generation-changed\"}";
     return false;
   }
+  texture_content.Forget(key);
+  return true;
+}
+bool ReleaseResolveDestination(uint32_t key, std::string& evidence) {
+  ResourceRegistry::Entry entry{};
+  if (resources.Find(key, entry)) return ReleaseRegistered(key, evidence);
+  // Never registered: the engine may still hold the own texture its resolves
+  // created under the key (none: released at once, own_texture false).
+  auto* dispatcher = host::ActiveDispatcher();
+  if (!dispatcher || !dispatcher->Run([key](Engine& engine, std::string& out) {
+        return engine.ReleaseTexture(key, out); }, evidence))
+    return false;
   texture_content.Forget(key);
   return true;
 }

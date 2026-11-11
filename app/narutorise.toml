@@ -109,6 +109,12 @@ brightness = 0.5
 internal_resolution_scale = 0.0
 max_frame_latency = 1
 triple_buffering = false
+# Screen aspect: "auto" follows the window (the monitor in fullscreen), from
+# 4:3 to 32:9, without stretching; "16:9" keeps the game's own screen.
+aspect_ratio = "auto"
+# HUD on screens wider than 16:9: "edges" or "center" (the 16:9 middle).
+hud_world = "edges"
+hud_fight = "center"
 
 # Anamorphic Ultrawide (Hells Gate / Xenia Canary style patch).
 # 0.0 = native 16:9; 2.3889 = 21:9 (3440x1440); 3.5556 = 32:9.

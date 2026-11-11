@@ -77,6 +77,12 @@ struct GameConfig {
   double internal_resolution_scale = 0.0;  // fractional scale; 0 = resolution_scale
   int max_frame_latency = 1;
   bool triple_buffering = false;
+  // The widescreen mode (native only): "auto" follows the window from 4:3 to
+  // 32:9, "16:9" keeps the game's screen; the HUD of each mode at the "edges"
+  // or in the 16:9 "center".
+  std::string aspect_ratio = "auto";
+  std::string hud_world = "edges";
+  std::string hud_fight = "center";
 
   std::string swap_post_effect = "fxaa";
   std::string present_effect = "cas";

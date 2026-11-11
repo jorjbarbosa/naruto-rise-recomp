@@ -9,6 +9,7 @@
 #include "../menu/graphics_devices.h"
 #include "menu/folders.h"
 #include "../menu/key_names.h"
+#include "widescreen/layout.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -180,11 +181,17 @@ void Settings::Redraw(std::string focus) {
 }
 std::vector<PanelRow> Settings::Rows(int group) {
   std::vector<PanelRow> rows;
+  // A row of values with its label and description already translated
+  // (TextId through Tr, or a key of the text table through Text).
+  const auto text_choice = [&](std::string key, const char* label, const char* description, std::vector<std::string> values,
+                               int selected, bool modified, bool restart, std::function<void(GameConfig&, int)> set) {
+    selected = std::clamp(selected, 0, int(values.size()) - 1);
+    rows.push_back({key, label, values[size_t(selected)], description, modified, restart, values, selected,
+        [this, key, set](int value) { Change(key, [set, value](GameConfig& config) { set(config, value); }); }, {}});
+  };
   const auto choice = [&](std::string key, TextId label, TextId description, std::vector<std::string> values,
                            int selected, bool modified, bool restart, std::function<void(GameConfig&, int)> set) {
-    selected = std::clamp(selected, 0, int(values.size()) - 1);
-    rows.push_back({key, Tr(label), values[size_t(selected)], Tr(description), modified, restart, values, selected,
-        [this, key, set](int value) { Change(key, [set, value](GameConfig& config) { set(config, value); }); }, {}});
+    text_choice(std::move(key), Tr(label), Tr(description), std::move(values), selected, modified, restart, std::move(set));
   };
   const auto toggle = [&](const char* key, TextId label, TextId description, bool GameConfig::* member, bool restart = true) {
     choice(key, label, description, {Text("off"), Text("on")}, config_.*member ? 1 : 0,
@@ -236,8 +243,18 @@ std::vector<PanelRow> Settings::Rows(int group) {
     constexpr double scales[] = {1, 1.5, 2, 3, 4};
     const double current = config_.internal_resolution_scale > 0 ? config_.internal_resolution_scale : config_.resolution_scale;
     int scale = 0; for (int i = 1; i < 5; ++i) if (std::abs(scales[i] - current) < std::abs(scales[scale] - current)) scale = i;
-    choice("resolution_scale", TextId::ResolutionLabel, TextId::ResolutionDescription,
-        {"1280×720 (1x)", "1920×1080 (1.5x)", "2560×1440 (2x)", "3840×2160 (3x)", "5120×2880 (4x)"}, scale,
+    // The sizes of the screen the aspect option gives at each scale (1280 x 720
+    // at 16:9; narrowed where the surface would pass the engine's limit).
+    const auto aspect = widescreen::ParseAspectMode(config_.aspect_ratio);
+    std::vector<std::string> sizes;
+    for (const double k : scales) {
+      const auto screen = kNativeRendererBuilt
+          ? widescreen::LogicalSize(aspect, display_width_, display_height_, float(k), float(k))
+          : widescreen::kStandardSize;
+      sizes.push_back(std::to_string(std::lround(screen.width * k)) + "×" + std::to_string(std::lround(screen.height * k)) +
+                      (k == 1.5 ? " (1.5x)" : " (" + std::to_string(int(k)) + "x)"));
+    }
+    choice("resolution_scale", TextId::ResolutionLabel, TextId::ResolutionDescription, sizes, scale,
         config_.resolution_scale != initial_.resolution_scale || config_.internal_resolution_scale != initial_.internal_resolution_scale,
         true, [](GameConfig& config, int value) {
           constexpr int integer[] = {1, 1, 2, 3, 4};
@@ -255,6 +272,23 @@ std::vector<PanelRow> Settings::Rows(int group) {
         config_.vsync ? 1 : 0, config_.vsync != initial_.vsync, true,
         [](GameConfig& config, int value) { config.vsync = config.d3d12_host_vsync = value != 0; });
     toggle("fullscreen", TextId::FullscreenLabel, TextId::FullscreenDescription, &GameConfig::fullscreen, false);
+    if (kNativeRendererBuilt) {
+      // The widescreen mode, without a restart: the HUD options apply at the
+      // next frame, the aspect recreates the game's targets between two frames.
+      text_choice("aspect_ratio", Text("aspect-ratio"), Text("aspect-ratio-help"), {Text("aspect-auto"), Text("aspect-16x9")},
+          aspect == widescreen::AspectMode::kStandard ? 1 : 0, config_.aspect_ratio != initial_.aspect_ratio, false,
+          [](GameConfig& config, int value) { config.aspect_ratio = value ? "16:9" : "auto"; });
+      const std::vector<std::string> placements{Text("hud-edges"), Text("hud-center")};
+      const auto placement = [](const std::string& value, widescreen::HudPlacement fallback) {
+        return widescreen::ParseHudPlacement(value, fallback) == widescreen::HudPlacement::kCenter ? 1 : 0;
+      };
+      text_choice("hud_world", Text("hud-world"), Text("hud-help"), placements,
+          placement(config_.hud_world, widescreen::HudPlacement::kEdges), config_.hud_world != initial_.hud_world, false,
+          [](GameConfig& config, int value) { config.hud_world = value ? "center" : "edges"; });
+      text_choice("hud_fight", Text("hud-fight"), Text("hud-help"), placements,
+          placement(config_.hud_fight, widescreen::HudPlacement::kCenter), config_.hud_fight != initial_.hud_fight, false,
+          [](GameConfig& config, int value) { config.hud_fight = value ? "center" : "edges"; });
+    }
   } else if (group == 2) {
     choice("msaa_samples", TextId::MsaaLabel, TextId::MsaaDescription, {"2x", Tr(TextId::MsaaOriginal), "8x"},
         config_.msaa_samples == 2 ? 0 : config_.msaa_samples >= 8 ? 2 : 1, config_.msaa_samples != initial_.msaa_samples, true,
