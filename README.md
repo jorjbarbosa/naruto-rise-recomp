@@ -28,7 +28,7 @@
   <a href="https://github.com/jorjbarbosa/naruto-rise-recomp/stargazers"><img src="https://img.shields.io/github/stars/jorjbarbosa/naruto-rise-recomp" alt="Stars"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/jorjbarbosa/naruto-rise-recomp" alt="License"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue" alt="Platforms">
-  <a href="https://buymeacoffee.com/jorjbarbosa"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy Me a Coffee"></a>
+  <a href="https://ko-fi.com/jorjbarbosa"><img src="https://img.shields.io/badge/Ko--fi-support-FF5E5B?logo=kofi&logoColor=white" alt="Ko-fi"></a>
 </p>
 
 > [!WARNING]
@@ -148,7 +148,7 @@ Keep game files, content packages, derived shader data, and generated recompiled
 
 ## Support
 
-If you enjoy the project, you can [buy me a coffee](https://buymeacoffee.com/jorjbarbosa). It's optional and unlocks nothing; releases stay free for everyone.
+If you enjoy the project, you can [support me on Ko-fi](https://ko-fi.com/jorjbarbosa). It's optional and unlocks nothing; releases stay free for everyone.
 
 ## Credits
 
