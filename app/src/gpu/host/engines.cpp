@@ -42,10 +42,17 @@ bool InitializeEngines(PPCContext& ctx) {
   auto* ts = rex::runtime::ThreadState::Get();
   auto* thread = rex::system::XThread::GetCurrentThread();
   // Coverage is one known caller/thread/CPU/signature, not the general Vd ABI.
-  if (!ts || !thread || ts->thread_id() != 4 || thread->active_cpu() != 4 ||
+  // The thread is the title's entry-point thread; its guest id depends on how
+  // many host threads the runtime created before it (the SDK's audio made it 4).
+  if (!ts || !thread || !thread->main_thread() || thread->active_cpu() != 4 ||
       ctx.lr != 0x8213ED3C || ctx.r3.u32 != 0x18820000 || ctx.r4.u32 != 0x8213ECA0 ||
-      ctx.r5.u32 != 0 || ctx.r6.u32 != 0x8206DCE0 || ctx.r7.u32 != 0x8206E160)
+      ctx.r5.u32 != 0 || ctx.r6.u32 != 0x8206DCE0 || ctx.r7.u32 != 0x8206E160) {
+    REXLOG_WARN("[narutorise] VdInitializeEngines outside the reviewed signature: thread {} (entry {}), cpu {}, "
+                "lr 0x{:08X}, r3 0x{:08X}, r4 0x{:08X}, r5 0x{:08X}, r6 0x{:08X}, r7 0x{:08X}",
+                ts ? ts->thread_id() : 0, thread && thread->main_thread(), thread ? thread->active_cpu() : 0,
+                static_cast<uint32_t>(ctx.lr), ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, ctx.r7.u32);
     Stop("VdInitializeEngines-outside-reviewed-signature", &ctx);
+  }
   // The device of the 8213ECE8 in progress (its r3 at the entry, kept by the
   // device owner): the caller's r31 is a local there, not in the context.
   const uint32_t guest_device = gpu::EnteredDevice();

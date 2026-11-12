@@ -160,6 +160,27 @@ The menu enumerates graphics cards through the selected API (**Settings → Disp
 
 The executable also exports `NvOptimusEnablement` and `AmdPowerXpressRequestHighPerformance`, so hybrid laptops (NVIDIA Optimus, AMD PowerXpress) run the game on the dedicated card. The log names the card in use: `DXGI adapter:` for Xenos, `Native renderer adapter:` for the native renderer.
 
+## Audio
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `audio_backend` | `"native"` | `"native"`: the port's own audio output and XMA decoding. `"sdk"`: the SDK's audio, as in earlier versions. Takes effect on the next launch |
+| `audio_mute` | `false` | Silence (both backends) |
+| `audio_maxqframes` | `8` | SDK backend only: frames of 5.33 ms kept ahead of the sound device (4 to 64). The native output keeps the device's largest block plus two frames |
+
+The native output plays on the system's default playback device, in stereo or 5.1 as the device reports, and follows a change of the default device. The game mixes in 5.1: a stereo device gets each side's front, center and surround folded together (the LFE is left out), and a 5.1 device gets the six channels with a common headroom gain, because the game's center channel goes past full scale. When no device opens, or the device is lost, the game keeps running without sound and tries the device again every 5 seconds. The log names the backend (`Audio backend:`), the device (`Audio device-open:`) or why it did not open (`Audio device-open-failed:`), and lists the audio counters at the close (`[narutorise] Audio:`).
+
+With `native`, the game's XMA sounds are decoded by the port too: the XMA contexts and their hardware registers are the port's, and each sound is decoded when the game asks for it, on the game's own thread, by FFmpeg's XMA frame decoder built into the executable. A sound's output starts and ends where the console's does (the decoder's first 192 samples and its last frame's tail are not played), and looping sounds go back to their loop start at the subframe the game asks for. The log lists the XMA counters at the close (`[narutorise] Audio XMA:`): contexts, Kicks, frames, loops, Kick durations, and errors, which should all be zero.
+
+For tests, `NARUTORISE_AUDIO_BACKEND=native|sdk` in the environment overrides the setting, and `NARUTORISE_AUDIO_CAPTURE=<file.wav>` records what the native output sends to the device (32-bit float, the first `NARUTORISE_AUDIO_CAPTURE_SECONDS`, 120 by default). For XMA investigation, all off by default and holding game data, so kept out of the repository:
+
+| Variable | Effect |
+| --- | --- |
+| `NARUTORISE_AUDIO_XMA_TRACE=1` | One log line per XMA sound when it ends (`Audio XMA stream:`): rate, channels, frames, loops, Kicks |
+| `NARUTORISE_AUDIO_XMA_DUMP=<folder>` | The input and output of the first 40 XMA sounds, for `narutorise_audio_xma_trace_test <folder>`, which plays them again and checks start, end and loops sample for sample |
+| `NARUTORISE_AUDIO_DUMP_LOOPS=1` | With the dumps, only looping sounds |
+| `NARUTORISE_AUDIO_MEASURE=1`, `NARUTORISE_AUDIO_MEASURE_DUMP=<folder>` | What the game asks of the XMA hardware (voices, registers, context profiles), every 10 s in the log; the dump keeps what the register owner writes for each sound, with either backend, to compare them |
+
 ## Keyboard and mouse
 
 Choose **Keyboard and mouse** for the desired player under **Configure controls**. Each port stores independent controller and keyboard/mouse mappings. One device belongs to one player; transferring an occupied device requires confirmation and leaves its previous port without a device, preserving both ports' adjustments. These ports do not add multiplayer modes to the game.

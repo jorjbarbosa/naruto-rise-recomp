@@ -156,7 +156,7 @@ $SdkDir = Join-Path $RootDir 'sdk'
 $SourceRevisions = @(
     @{ Name = 'Naruto: Rise of a Ninja PC port (SDK patches: patches\sdk)'; Url = 'https://github.com/jorjbarbosa/naruto-rise-recomp'; Revision = Get-SourceRevision $RootDir }
     @{ Name = 'ReXGlue SDK (rexruntime.dll)'; Url = 'https://github.com/rexglue/rexglue-sdk'; Revision = Get-SourceRevision $SdkDir }
-    @{ Name = 'FFmpeg'; Url = 'https://github.com/wmarti/FFmpeg'; Revision = Get-SourceRevision (Join-Path $SdkDir 'thirdparty\FFmpeg') }
+    @{ Name = 'FFmpeg'; Url = 'https://github.com/wmarti/FFmpeg'; Revision = Get-SourceRevision (Join-Path $RootDir 'third_party\ffmpeg') }
     @{ Name = 'libmspack'; Url = 'https://github.com/kyz/libmspack'; Revision = Get-SourceRevision (Join-Path $SdkDir 'thirdparty\libmspack') }
 )
 

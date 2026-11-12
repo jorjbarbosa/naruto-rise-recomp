@@ -23,6 +23,7 @@ set(NARUTORISE_SOURCES
     src/save_thumbnail.cpp
     src/dlc_refusal.cpp
     src/engine_free.cpp
+    src/title_thread.cpp
     src/input_replay.cpp
     src/graphics_device.cpp
     src/crash_report.cpp
@@ -38,7 +39,29 @@ set(NARUTORISE_SOURCES
     src/menu/setup_gate.cpp src/menu/setup_screen.cpp
     src/menu/game_choice.cpp
     src/menu/dlc.cpp
+    # The port's own audio (audio/audio.h), with the SDK's audio exports behind its gate.
+    src/audio/runtime.cpp src/audio/kernel_audio.cpp src/audio/diagnostics.cpp
+    src/audio/kernel_xma.cpp src/audio/measure.cpp src/audio/xma_runtime.cpp
 )
+# The XMA frames decoder of the native audio (stage 2b), static and embedded.
+enable_language(C)
+include(cmake/ffmpeg.cmake)
+add_executable(narutorise_audio_ffmpeg_test EXCLUDE_FROM_ALL tests/audio_ffmpeg_test.cpp)
+target_link_libraries(narutorise_audio_ffmpeg_test PRIVATE narutorise_ffmpeg)
+# The parts of the native audio that do not need the runtime, for its tests.
+add_library(narutorise_audio_core STATIC src/audio/pacing.cpp src/audio/mix.cpp src/audio/output.cpp
+    src/audio/device.cpp src/audio/xma/stream.cpp src/audio/xma/decoder.cpp src/audio/xma/context.cpp
+    src/audio/xma/pool.cpp)
+target_link_libraries(narutorise_audio_core PUBLIC narutorise_ffmpeg)
+target_include_directories(narutorise_audio_core PUBLIC src)
+target_link_libraries(narutorise_audio_core PUBLIC rex::runtime)
+rexglue_apply_target_settings(narutorise_audio_core)
+foreach(_audio_test IN ITEMS pacing mix output xma_stream xma_context xma_trace)
+    add_executable(narutorise_audio_${_audio_test}_test EXCLUDE_FROM_ALL tests/audio_${_audio_test}_test.cpp)
+    target_link_libraries(narutorise_audio_${_audio_test}_test PRIVATE narutorise_audio_core)
+    # The SDK's conversion, which the mix test compares against, needs its SIMD flags.
+    rexglue_apply_target_settings(narutorise_audio_${_audio_test}_test)
+endforeach()
 # The files that menu/assets.cpp embeds (#embed): a change rebuilds it.
 file(GLOB_RECURSE NARUTORISE_UI_FILES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/ui/*)
 set_source_files_properties(src/menu/assets.cpp PROPERTIES OBJECT_DEPENDS "${NARUTORISE_UI_FILES}")
@@ -216,6 +239,7 @@ else()
     add_executable(narutorise ${NARUTORISE_SOURCES})
 endif()
 target_link_libraries(narutorise PRIVATE narutorise::json RmlUi::Core narutorise_data_migration)
+target_link_libraries(narutorise PRIVATE narutorise_audio_core)
 add_library(narutorise_menu_components STATIC src/menu/text.cpp src/menu/panel.cpp src/menu/pad_input.cpp
             src/controls/config.cpp
             src/controls/service.cpp

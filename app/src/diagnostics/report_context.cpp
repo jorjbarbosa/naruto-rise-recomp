@@ -215,6 +215,25 @@ void SetAdapter(std::string_view api, std::string_view name, uint32_t vendor_id,
                          {"version", std::string(driver)}, {"api_type", std::string(api)}});
 }
 
+void SetAudio(std::string_view backend, std::string_view device_kind, std::string_view device_name,
+              std::string_view driver, int channels, int endpoint_channels, std::string_view open_error,
+              uint64_t open_failures) {
+  auto& state = Facts();
+  std::lock_guard lock(state.mutex);
+  Tag(state, "audio_backend", std::string(backend));
+  if (device_kind.empty()) {
+    Context(state, "audio", {{"backend", std::string(backend)}});
+    return;
+  }
+  Tag(state, "audio_device", std::string(device_kind));
+  Context(state, "audio", {{"backend", std::string(backend)}, {"device", std::string(device_kind)},
+                           {"name", std::string(device_name)}, {"driver", std::string(driver)},
+                           {"channels", std::to_string(channels)},
+                           {"endpoint_channels", std::to_string(endpoint_channels)},
+                           {"open_error", std::string(open_error)},
+                           {"open_failures", std::to_string(open_failures)}});
+}
+
 void SetThreadRole(const char* role) {
   if (thread_role) return;
   thread_role = role;

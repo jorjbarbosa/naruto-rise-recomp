@@ -28,6 +28,7 @@ PowerPC code is translated ahead of time into C++. The ReXGlue runtime provides 
 | --- | --- |
 | `app/src/` | Runtime integration, ultrawide, intros, DLCs, overlay, graphics card selection, save thumbnail guard, and input recording for tests |
 | `app/src/gpu/` | Native renderer (built with `NARUTORISE_NATIVE_RENDERER_BOOTSTRAP=ON`); see [Native renderer](#native-renderer) |
+| `app/src/audio/` | Native audio at the kernel boundary, behind a gate over the SDK's audio exports (`audio_backend`, see [Audio](configuration.md#audio)): the render driver client, its clock and the SDL/mute device; the XMA contexts, their registers at `0x7FEA0000` and the `XMA*` exports, decoded on the calling title thread by FFmpeg's `xmaframes` (`third_party/ffmpeg`, built static by `app/cmake/ffmpeg.cmake`) |
 | `app/src/menu/`, `app/ui/` | Setup and in-game UI, configuration/content models, localization, update notices and embedded assets |
 | `app/narutorise_manifest.toml` | Entrypoint and modules to recompile |
 | `app/*-seeds.toml` | Adjustments and information for analysis/code generation |

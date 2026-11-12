@@ -26,8 +26,8 @@
            Url = 'https://github.com/rexglue/rexglue-sdk'; File = 'sdk/LICENSE'; Target = 'rexglue-sdk.txt'
            Usage = 'narutorise.exe, rexruntime.dll, rexgpu-xenos.dll' }
         @{ Name = 'FFmpeg (libavcodec, libavutil)'; License = 'LGPL-2.1-or-later'
-           Url = 'https://github.com/wmarti/FFmpeg'; File = 'sdk/thirdparty/FFmpeg/COPYING.LGPLv2.1'; Target = 'ffmpeg.txt'
-           Usage = 'rexruntime.dll' }
+           Url = 'https://github.com/wmarti/FFmpeg'; File = 'third_party/ffmpeg/COPYING.LGPLv2.1'; Target = 'ffmpeg.txt'
+           Usage = 'narutorise.exe, rexruntime.dll' }
         @{ Name = 'libmspack (LZX decompressor)'; License = 'LGPL-2.1-only'
            Url = 'https://github.com/kyz/libmspack'; File = 'sdk/thirdparty/libmspack/libmspack/COPYING.LIB'; Target = 'libmspack.txt'
            Usage = 'rexruntime.dll' }
