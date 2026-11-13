@@ -32,6 +32,7 @@
 #include <rex/ui/presenter.h>
 #include <rex/ui/window.h>
 
+#include "audio/audio.h"
 #include "crash_report.h"
 #include "sentry_reporting.h"
 #include "diagnostics/incident.h"
@@ -159,6 +160,9 @@ class NarutoriseApp : public rex::ReXApp {
 
   void OnPreSetup(rex::RuntimeConfig& config) override {
     runtime_config_ = &config;
+    // The audio backend, before the title runs (audio/audio.h).
+    narutorise::audio::Configure();
+    narutorise::audio::ConfigureRuntime(config);
     // Configured native ports and optional input recording/replay for test
     // boots. Legacy renderer paths retain the SDK's default assignment.
     config.input_factory = CreateInputSystem;
@@ -554,6 +558,7 @@ class NarutoriseApp : public rex::ReXApp {
   }
 
   void FinishExit() {
+    narutorise::audio::Closing();
     // OnClosing hard-exits before normal OnShutdown teardown. Stop haptics
     // here, and block new guest motor commands while shutdown joins it.
     narutorise::menu::input_blocked = true;
@@ -596,6 +601,8 @@ class NarutoriseApp : public rex::ReXApp {
 
   void OnClosing(rex::ui::UIEvent& event) override {
     // The SDK uses _Exit here, so destructors and OnShutdown cannot flush it.
+    // The audio first: its callback thread stops, then its device closes.
+    narutorise::audio::Shutdown();
     narutorise::reporting::Close();
     narutorise::incident::ExpectedExit("window-close");
     rex::ReXApp::OnClosing(event);

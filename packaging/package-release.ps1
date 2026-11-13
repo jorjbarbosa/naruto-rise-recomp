@@ -145,8 +145,11 @@ foreach ($component in $Licenses) {
         throw "Missing license text for $($component.Name): $($component.File)"
     }
 }
-# The LGPL libraries are statically linked into rexruntime.dll: name the exact
-# source revisions it is built from, so it can be rebuilt with modified copies.
+# The LGPL libraries are statically linked: FFmpeg into narutorise.exe (its own
+# copy, third_party\ffmpeg, for the native audio's XMA) and into rexruntime.dll
+# (the SDK's copy, sdk\thirdparty\FFmpeg), libmspack into rexruntime.dll. Name
+# the exact source revisions of each binary, so it can be rebuilt with modified
+# copies.
 function Get-SourceRevision([string]$Path) {
     $revision = git -C $Path rev-parse HEAD
     if ($LASTEXITCODE -ne 0 -or -not $revision) { throw "Cannot read the source revision of $Path." }
@@ -154,10 +157,11 @@ function Get-SourceRevision([string]$Path) {
 }
 $SdkDir = Join-Path $RootDir 'sdk'
 $SourceRevisions = @(
-    @{ Name = 'Naruto: Rise of a Ninja PC port (SDK patches: patches\sdk)'; Url = 'https://github.com/jorjbarbosa/naruto-rise-recomp'; Revision = Get-SourceRevision $RootDir }
+    @{ Name = 'Naruto: Rise of a Ninja PC port (narutorise.exe; SDK patches: patches\sdk)'; Url = 'https://github.com/jorjbarbosa/naruto-rise-recomp'; Revision = Get-SourceRevision $RootDir }
     @{ Name = 'ReXGlue SDK (rexruntime.dll)'; Url = 'https://github.com/rexglue/rexglue-sdk'; Revision = Get-SourceRevision $SdkDir }
-    @{ Name = 'FFmpeg'; Url = 'https://github.com/wmarti/FFmpeg'; Revision = Get-SourceRevision (Join-Path $SdkDir 'thirdparty\FFmpeg') }
-    @{ Name = 'libmspack'; Url = 'https://github.com/kyz/libmspack'; Revision = Get-SourceRevision (Join-Path $SdkDir 'thirdparty\libmspack') }
+    @{ Name = 'FFmpeg in narutorise.exe (third_party\ffmpeg)'; Url = 'https://github.com/wmarti/FFmpeg'; Revision = Get-SourceRevision (Join-Path $RootDir 'third_party\ffmpeg') }
+    @{ Name = 'FFmpeg in rexruntime.dll (sdk\thirdparty\FFmpeg)'; Url = 'https://github.com/wmarti/FFmpeg'; Revision = Get-SourceRevision (Join-Path $SdkDir 'thirdparty\FFmpeg') }
+    @{ Name = 'libmspack in rexruntime.dll (sdk\thirdparty\libmspack)'; Url = 'https://github.com/kyz/libmspack'; Revision = Get-SourceRevision (Join-Path $SdkDir 'thirdparty\libmspack') }
 )
 
 # Build into a fresh staging directory. A failed compile leaves the previous
@@ -202,15 +206,21 @@ data is not distributed with this port.
 $componentText
 
 LGPL SOURCE CODE:
-FFmpeg (LGPL-2.1-or-later) and libmspack (LGPL-2.1-only) are statically linked
-into rexruntime.dll, which is built from the ReXGlue SDK (BSD-3-Clause). The
-complete source code of these libraries and of rexruntime.dll, at the revisions
-this release was built from:
+FFmpeg (LGPL-2.1-or-later) is statically linked into two binaries, each with
+its own copy:
+- narutorise.exe, built from this port's source (GPL-3.0-only), which includes
+  FFmpeg's XMA decoder for the native audio;
+- rexruntime.dll, built from the ReXGlue SDK (BSD-3-Clause).
+libmspack (LGPL-2.1-only) is statically linked into rexruntime.dll.
+The complete source code of these libraries and of both binaries, at the
+revisions this release was built from:
 
 $sourceText
 
-You may modify these libraries, rebuild rexruntime.dll from these sources and
-replace the rexruntime.dll of this package with it.
+You may modify these libraries, rebuild either binary from these sources and
+replace the binary of this package with it: narutorise.exe through this port's
+build (docs/build-and-run.md in its source; the code generation step needs your
+own copy of the game), rexruntime.dll through the ReXGlue SDK's build.
 "@
     Set-Content (Join-Path $Portable 'README.txt') -Encoding UTF8 -Value @"
 NARUTO: RISE OF A NINJA - PC PORT ($Version)

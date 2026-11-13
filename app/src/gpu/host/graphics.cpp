@@ -80,9 +80,8 @@ class GraphicsSystem final : public rex::system::IGraphicsSystem {
   bool HasInitializerRegistration(uint32_t device) const {
     std::lock_guard lock(engine_mutex);
     return native_engine && interrupt_ && engine_registration.device == device &&
-        engine_registration.guest_thread == 4 && engine_registration.cpu == 4 &&
-        interrupt_->callback == 0x8212F950 && interrupt_->user_data == device &&
-        interrupt_->guest_thread == 4 && interrupt_->cpu == 4 &&
+        engine_registration.cpu == 4 && interrupt_->callback == 0x8212F950 && interrupt_->user_data == device &&
+        interrupt_->guest_thread == engine_registration.guest_thread && interrupt_->cpu == 4 &&
         interrupt_->code == kInterruptCallbackCode && dispatcher_ && kernel_state_;
   }
   void ValidateInterruptRegistration(PPCContext& ctx) {
@@ -90,7 +89,8 @@ class GraphicsSystem final : public rex::system::IGraphicsSystem {
     auto* thread = rex::system::XThread::GetCurrentThread();
     // r4 is the device ("mr r4,r31" at 8213ED60; r31 is a local of 8213ECE8,
     // not in the context): the registration check below pins it.
-    if (!ts || !thread || ts->thread_id() != 4 || thread->active_cpu() != 4 ||
+    // The title's entry-point thread, as for VdInitializeEngines (engines.cpp).
+    if (!ts || !thread || !thread->main_thread() || thread->active_cpu() != 4 ||
         ctx.lr != 0x8213ED64 || ctx.r3.u32 != 0x8212F950)
       Stop("VdSetGraphicsInterruptCallback-outside-reviewed-signature", &ctx);
     bool valid = false;

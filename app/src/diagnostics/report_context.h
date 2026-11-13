@@ -36,6 +36,14 @@ void SetContent(const std::vector<std::string>& packages);
 void SetAdapter(std::string_view api, std::string_view name, uint32_t vendor_id, uint32_t device_id,
                 std::string_view driver);
 
+// The audio backend (native or sdk) and, with the native one, its device: the
+// kind (sdl, mute), the endpoint's name and SDL driver, the channels submitted
+// and the endpoint's, and why the device last failed to open. Empty kind:
+// not known yet.
+void SetAudio(std::string_view backend, std::string_view device_kind, std::string_view device_name,
+              std::string_view driver, int channels, int endpoint_channels, std::string_view open_error,
+              uint64_t open_failures);
+
 // The calling thread's role (render, main, effects, engine, translate), once;
 // a guest thread is also renamed "Guest <role> (handle)". The role of a thread
 // that has none is "other". ThreadRole is safe in a crash handler.

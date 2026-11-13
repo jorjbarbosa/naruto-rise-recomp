@@ -20,6 +20,9 @@ show_startup_menu = true
 graphics_device = ""
 d3d12_readback_resolve = true
 skip_intro_videos = true
+# Audio output: "native" (the port's own, the default) or "sdk" (the SDK's,
+# as in earlier versions). Takes effect on the next launch.
+audio_backend = "native"
 
 # Optional uploads of native crash dumps, technical details and startup timing.
 # Dumps may contain personal data. Saves and game files are never attached.
