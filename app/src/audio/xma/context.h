@@ -45,11 +45,17 @@
 #include <string>
 
 namespace narutorise::audio::xma {
+// The physical address stored for a buffer whose virtual address did not
+// translate (xma_runtime.cpp): outside guest physical memory, so a Kick finds
+// no memory there and counts a bad address. Not 0: physical 0 is real memory,
+// and the ring would be written over whatever the title keeps there.
+constexpr uint32_t kBadAddress = 0xFFFFFFFF;
+
 class GuestMemory {
  public:
   virtual ~GuestMemory() = default;
   // The host address of guest physical [address, address + size), or null
-  // when that range is not guest physical memory.
+  // when that range is not guest physical memory (always for kBadAddress).
   virtual uint8_t* Physical(uint32_t address, uint32_t size) = 0;
 };
 

@@ -5,25 +5,6 @@
 #include <fmt/format.h>
 
 namespace narutorise::audio::diagnostics {
-namespace {
-// JSON string content: quotes, backslashes and control characters escaped.
-std::string Escape(std::string_view text) {
-  std::string out;
-  out.reserve(text.size());
-  for (const char ch : text) {
-    if (ch == '"' || ch == '\\') {
-      out += '\\';
-      out += ch;
-    } else if (static_cast<unsigned char>(ch) < 0x20) {
-      out += fmt::format("\\u{:04x}", static_cast<unsigned char>(ch));
-    } else {
-      out += ch;
-    }
-  }
-  return out;
-}
-}  // namespace
-
 std::string ChannelJson(const ChannelUse& u) {
   return fmt::format(
       "{{\"frames\":{},\"active\":[{},{},{},{},{},{}],\"peak\":[{:.4f},{:.4f},{:.4f},{:.4f},{:.4f},{:.4f}],"
@@ -35,8 +16,7 @@ std::string ChannelJson(const ChannelUse& u) {
 std::string Json(std::string_view backend, const OutputCounters& c) {
   const LayoutCheck& l = c.layout;
   return fmt::format(
-      "{{\"backend\":\"{}\",\"device\":{{\"kind\":\"{}\",\"name\":\"{}\",\"driver\":\"{}\",\"channels\":{},"
-      "\"endpoint_channels\":{},\"endpoint_frequency\":{},\"block_samples\":{}}},"
+      "{{\"backend\":\"{}\",\"device\":{},"
       "\"device_opens\":{},\"open_failures\":{},\"last_open_error\":\"{}\",\"device_lost\":{},\"device_stalls\":{},"
       "\"registers\":{},\"unregisters\":{},\"register_refused\":{},\"register_overflow\":{},"
       "\"unregister_unknown\":{},\"first_callback\":\"0x{:08X}\",\"first_argument\":\"0x{:08X}\","
@@ -46,9 +26,7 @@ std::string Json(std::string_view backend, const OutputCounters& c) {
       "\"layout\":{{\"frames\":{},\"silent\":{},\"plausible\":{},\"implausible\":{},"
       "\"peak\":[{:.4f},{:.4f},{:.4f},{:.4f},{:.4f},{:.4f}]}},"
       "\"thread_started\":{},\"thread_start_failed\":{},\"thread_joined\":{},\"shut_down\":{},\"channel_use\":{}}}",
-      backend, c.device.kind, Escape(c.device.name), Escape(c.device.driver), c.device.channels,
-      c.device.endpoint_channels, c.device.endpoint_frequency, c.device.block_samples, c.device_opens,
-      c.open_failures, Escape(c.last_open_error), c.device_lost, c.device_stalls, c.registers, c.unregisters,
+      backend, DeviceJson(c.device), c.device_opens, c.open_failures, JsonEscape(c.last_open_error), c.device_lost, c.device_stalls, c.registers, c.unregisters,
       c.register_refused, c.register_overflow, c.unregister_unknown, c.first_callback, c.first_argument,
       c.callbacks, c.periods, c.double_periods, c.skipped_periods, c.grid_restarts, c.queue_empty_periods,
       c.queue_empty_closing, c.queue_min, c.submits,

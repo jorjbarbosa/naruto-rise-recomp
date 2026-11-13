@@ -13,8 +13,10 @@
 // - Registering never fails for a callback the title gives, and always fills
 //   the handle; the device is not opened there.
 // - A device that does not open, or that is lost, becomes the mute device: the
-//   callback keeps its clock and the frames are counted and dropped. The thread
-//   tries the device again every `retry`; nothing of this reaches the title.
+//   callback keeps its clock and the frames are counted and dropped. The device
+//   is tried again every `retry`, on a thread of its own: an open can take long
+//   to fail (a driver's connect timeout), and the callback's clock never waits
+//   for it. Nothing of this reaches the title.
 // - A frame address the title gives is checked before it is read; a bad one is
 //   counted and dropped.
 // - Shutdown stops the callback thread first, then releases the device, then
@@ -30,12 +32,14 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace narutorise::audio {
@@ -126,14 +130,33 @@ class Output {
     uint32_t callback = 0, argument = 0;
     uint64_t generation = 0;  // A new registration resets the slot's pacer.
   };
+  // A retry's open, filled by the opener thread and taken by the callback
+  // thread. The opener touches only this and the host, never the Output.
+  struct PendingOpen {
+    std::mutex mutex;
+    std::condition_variable done_signal;
+    bool done = false;
+    std::unique_ptr<Device> device;
+    std::string error;
+  };
   void Run();
-  void OpenDevice(bool first);
+  // Puts an opened device in place, or counts and notes the failure.
+  void Opened(std::unique_ptr<Device> device, std::string error, bool first);
+  // The callback thread's: starts a retry's open, and takes its result.
+  void StartRetry();
+  void CollectRetry();
+  // Shutdown, once the callback thread is joined: waits up to `join` for a
+  // retry in flight and closes what it opened.
+  void StopRetry();
   // Replaces a failed device with the mute one. Under device_mutex_.
   void LoseDevice(std::string_view reason);
   void Pump(size_t index, std::chrono::steady_clock::time_point now);
 
   OutputHost& host_;
   const OutputOptions options_;
+  // The callback thread's own (Shutdown's once that thread is joined).
+  std::thread opener_;
+  std::shared_ptr<PendingOpen> pending_;  // A retry in flight.
 
   mutable std::mutex clients_mutex_;
   std::array<Client, kMaximumClients> clients_{};

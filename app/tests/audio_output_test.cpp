@@ -1,6 +1,7 @@
 // The render driver client of the native audio (audio/output.h), with a fake
 // guest and fake devices: registering never fails, a device that does not
-// open or is lost becomes the mute device and is tried again, bad addresses
+// open or is lost becomes the mute device and is tried again (beside the
+// callback, which keeps its clock while a retry takes long), bad addresses
 // and handles are counted, and shutdown goes thread, device, clients.
 #include "audio/output.h"
 
@@ -90,7 +91,8 @@ class FakeDevice final : public Device {
 class FakeHost final : public OutputHost {
  public:
   Events events;
-  std::atomic<int> opens_failing{0};  // The next opens that fail.
+  std::atomic<int> opens_failing{0};  // The next opens that fail...
+  std::chrono::milliseconds fail_delay{0};  // ...each after this long.
   std::atomic<int> opens{0};
   bool fail_put = false;
   bool consume = true;
@@ -139,6 +141,7 @@ class FakeHost final : public OutputHost {
     opens.fetch_add(1);
     if (opens_failing.load() > 0) {
       opens_failing.fetch_sub(1);
+      std::this_thread::sleep_for(fail_delay);
       error = "forced failure";
       return nullptr;
     }
@@ -222,6 +225,43 @@ void DeviceThatOpensLater() {
   const auto c = output.Counters();
   Check(c.open_failures == 2 && c.device_opens == 1 && c.device.kind == "fake", "Two failures, then the device");
   output.Shutdown();
+}
+
+// A driver whose open takes long to fail (a connect timeout): the retries run
+// beside the callback, one at a time, and its clock does not wait for them.
+void SlowRetry() {
+  FakeHost host;
+  host.opens_failing = 1000;
+  host.fail_delay = 300ms;
+  Output output(host, OutputOptions{.retry = 20ms});
+  Register(host, output);
+  Check(WaitFor([&] { return host.opens.load() >= 2; }), "A retry is under way");
+  const uint64_t calls = host.calls.load();
+  const int opens = host.opens.load();
+  const auto start = Clock::now();
+  std::this_thread::sleep_for(1200ms);
+  const double seconds = std::chrono::duration<double>(Clock::now() - start).count();
+  const double rate = (host.calls.load() - calls) / seconds;
+  Check(rate > 120 && rate < 260, "The callback keeps its clock while retries take long: " + std::to_string(rate));
+  const int retries = host.opens.load() - opens;
+  Check(retries >= 2 && retries <= 6, "The retries go one at a time: " + std::to_string(retries));
+  output.Shutdown();  // With a retry in flight: it waits for it, within `join`.
+  Check(output.Counters().thread_joined && host.events.Index("note-shutdown") < 0, "The retry finished in time");
+}
+
+void DeviceFactsJson() {
+  DeviceFacts facts;
+  facts.kind = "sdl";
+  facts.name = "Fake \"device\"";
+  facts.driver = "a\\b\n";
+  facts.channels = 2;
+  facts.endpoint_channels = 6;
+  facts.endpoint_frequency = 48000;
+  facts.block_samples = 480;
+  const std::string json = DeviceJson(facts);
+  Check(json == R"({"kind":"sdl","name":"Fake \"device\"","driver":"a\\b\u000a","channels":2,)"
+                R"("endpoint_channels":6,"endpoint_frequency":48000,"block_samples":480})",
+        "The device's facts as JSON, its strings escaped: " + json);
 }
 
 void DeviceLost() {
@@ -314,6 +354,8 @@ int main() {
       {"device opens and frames arrive", DeviceOpensAndFramesArrive},
       {"device that does not open", DeviceThatDoesNotOpen},
       {"device that opens later", DeviceThatOpensLater},
+      {"a retry that takes long", SlowRetry},
+      {"device facts as JSON", DeviceFactsJson},
       {"device lost", DeviceLost},
       {"device stalled", DeviceStalled},
       {"bad addresses and handles", BadAddressesAndHandles},

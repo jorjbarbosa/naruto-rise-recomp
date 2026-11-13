@@ -116,13 +116,14 @@ uint32_t Get(uint32_t context, F field) {
 uint32_t Big(const uint8_t* p, uint32_t offset) {
   return (uint32_t(p[offset]) << 24) | (uint32_t(p[offset + 1]) << 16) | (uint32_t(p[offset + 2]) << 8) | p[offset + 3];
 }
-// A buffer's physical address; 0 stays 0 (no buffer), a bad one is counted.
+// A buffer's physical address; 0 stays 0 (no buffer). One that does not
+// translate is counted and stored as kBadAddress, which a Kick refuses.
 uint32_t Physical(uint32_t virtual_address) {
   if (!virtual_address) return 0;
   const uint32_t physical = memory.PhysicalOf(virtual_address);
   if (physical == UINT32_MAX) {
     bad_buffers.fetch_add(1, std::memory_order_relaxed);
-    return 0;
+    return kBadAddress;
   }
   return physical;
 }

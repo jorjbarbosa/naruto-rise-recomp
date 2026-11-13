@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 
 namespace narutorise::audio {
 struct DeviceFacts {
@@ -27,6 +28,12 @@ struct DeviceFacts {
   int block_samples = 0;  // What the device takes at once.
   int channels = 0;       // Submitted per sample: 2 or 6; 0 for the mute device.
 };
+
+// The facts as one JSON object, for the device's log lines and the counters
+// (diagnostics.h).
+std::string DeviceJson(const DeviceFacts& facts);
+// JSON string content: quotes, backslashes and control characters escaped.
+std::string JsonEscape(std::string_view text);
 
 class Device {
  public:

@@ -85,4 +85,28 @@ std::unique_ptr<Device> OpenSdlDevice(std::string& error) {
 }
 
 std::unique_ptr<Device> MuteDevice() { return std::make_unique<MuteOutput>(); }
+
+std::string JsonEscape(std::string_view text) {
+  std::string out;
+  out.reserve(text.size());
+  for (const char ch : text) {
+    if (ch == '"' || ch == '\\') {
+      out += '\\';
+      out += ch;
+    } else if (static_cast<unsigned char>(ch) < 0x20) {
+      out += fmt::format("\\u{:04x}", static_cast<unsigned char>(ch));
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+std::string DeviceJson(const DeviceFacts& f) {
+  return fmt::format(
+      "{{\"kind\":\"{}\",\"name\":\"{}\",\"driver\":\"{}\",\"channels\":{},\"endpoint_channels\":{},"
+      "\"endpoint_frequency\":{},\"block_samples\":{}}}",
+      JsonEscape(f.kind), JsonEscape(f.name), JsonEscape(f.driver), f.channels, f.endpoint_channels,
+      f.endpoint_frequency, f.block_samples);
+}
 }  // namespace narutorise::audio

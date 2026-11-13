@@ -330,6 +330,20 @@ void BadAddresses() {
   Check(s.counters.bad_addresses.load() == 2 && !s.Load().input_buffer_0_valid,
         "An input outside memory: given back as consumed, counted");
   Check(s.Load().output_buffer_write_offset == 0, "And nothing written");
+  // What the runtime stores for a buffer whose address did not translate.
+  d.input_buffer_0_ptr = kInputAt;
+  d.output_buffer_ptr = kBadAddress;
+  s.Store(d);
+  s.Kick();
+  Check(s.counters.bad_addresses.load() == 3 && decoder.decodes == 0, "An output that did not translate is refused");
+  d.output_buffer_ptr = kRingAt;
+  d.input_buffer_0_ptr = kBadAddress;
+  d.input_buffer_0_valid = 1;
+  s.Store(d);
+  s.Kick();
+  Check(s.counters.bad_addresses.load() == 4 && !s.Load().input_buffer_0_valid && decoder.decodes == 0,
+        "An input that did not translate is refused");
+  Check(s.Load().output_buffer_write_offset == 0, "And nothing written");
 }
 
 void ResetStartsOver() {

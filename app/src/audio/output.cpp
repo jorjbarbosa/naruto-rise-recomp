@@ -2,17 +2,12 @@
 #include "audio/output.h"
 
 #include <fmt/format.h>
+#include <system_error>
+#include <utility>
 
 namespace narutorise::audio {
 namespace {
 using Clock = std::chrono::steady_clock;
-
-std::string FactsJson(const DeviceFacts& facts) {
-  return fmt::format("\"kind\":\"{}\",\"driver\":\"{}\",\"endpoint_channels\":{},\"endpoint_frequency\":{},"
-                     "\"block_samples\":{},\"channels\":{}",
-                     facts.kind, facts.driver, facts.endpoint_channels, facts.endpoint_frequency,
-                     facts.block_samples, facts.channels);
-}
 }  // namespace
 
 Output::Output(OutputHost& host, OutputOptions options) : host_(host), options_(options) {
@@ -118,16 +113,14 @@ void Output::Submit(uint32_t handle, uint32_t samples) {
 
 void Output::LoseDevice(std::string_view reason) {
   device_lost_.fetch_add(1);
-  host_.Note("device-lost", fmt::format("{}; {}", reason, FactsJson(device_facts_)));
+  host_.Note("device-lost", fmt::format("{}; {}", reason, DeviceJson(device_facts_)));
   device_ = MuteDevice();
   device_facts_ = device_->Facts();
   device_failed_ = true;
   retry_at_ = Clock::now() + options_.retry;
 }
 
-void Output::OpenDevice(bool first) {
-  std::string error;
-  std::unique_ptr<Device> device = host_.OpenDevice(error);
+void Output::Opened(std::unique_ptr<Device> device, std::string error, bool first) {
   std::lock_guard lock(device_mutex_);
   if (!running_.load()) return;  // Shut down while opening: leave it closed.
   if (device) {
@@ -136,7 +129,7 @@ void Output::OpenDevice(bool first) {
     device_failed_ = false;
     reset_pacers_ = true;
     device_opens_.fetch_add(1);
-    host_.Note(first ? "device-open" : "device-reopen", FactsJson(device_facts_));
+    host_.Note(first ? "device-open" : "device-reopen", DeviceJson(device_facts_));
     return;
   }
   const uint64_t failures = open_failures_.fetch_add(1) + 1;
@@ -147,6 +140,53 @@ void Output::OpenDevice(bool first) {
   if (first || failures == 1 || failures % 100 == 0)
     host_.Note("device-open-failed", fmt::format("{} (failure {}; mute until a retry opens it)", last_open_error_,
                                                  failures));
+}
+
+void Output::StartRetry() {
+  if (opener_.joinable()) opener_.join();  // The last retry's: it has handed over its result.
+  auto pending = std::make_shared<PendingOpen>();
+  try {
+    opener_ = std::thread([&host = host_, pending] {
+      std::string error;
+      std::unique_ptr<Device> device = host.OpenDevice(error);
+      std::lock_guard lock(pending->mutex);
+      pending->device = std::move(device);
+      pending->error = std::move(error);
+      pending->done = true;
+      pending->done_signal.notify_all();
+    });
+  } catch (const std::system_error&) {
+    Opened(nullptr, "no thread to open the device on", false);  // Counted; tried again at the next retry.
+    return;
+  }
+  pending_ = std::move(pending);
+}
+
+void Output::CollectRetry() {
+  std::unique_ptr<Device> device;
+  std::string error;
+  {
+    std::lock_guard lock(pending_->mutex);
+    if (!pending_->done) return;
+    device = std::move(pending_->device);
+    error = std::move(pending_->error);
+  }
+  pending_.reset();
+  Opened(std::move(device), std::move(error), false);
+}
+
+void Output::StopRetry() {
+  if (const std::shared_ptr<PendingOpen> pending = std::exchange(pending_, nullptr)) {
+    std::unique_lock lock(pending->mutex);
+    if (!pending->done_signal.wait_for(lock, options_.join, [&] { return pending->done; })) {
+      lock.unlock();
+      host_.Note("shutdown", "the device retry did not finish in time");
+      opener_.detach();  // It touches only `pending` and the host; what it opens closes with `pending`.
+      return;
+    }
+  }
+  if (opener_.joinable()) opener_.join();
+  // A device a retry opened after the shutdown began closed with its PendingOpen, unused.
 }
 
 void Output::Pump(size_t index, Clock::time_point now) {
@@ -206,7 +246,12 @@ void Output::Pump(size_t index, Clock::time_point now) {
 }
 
 void Output::Run() {
-  OpenDevice(true);
+  {
+    // The first open, here before the clock starts: the first callback waits for it.
+    std::string error;
+    std::unique_ptr<Device> device = host_.OpenDevice(error);
+    Opened(std::move(device), std::move(error), true);
+  }
   Grid grid(Clock::now());
   while (running_.load()) {
     host_.SleepUntil(grid.Next());
@@ -222,7 +267,11 @@ void Output::Run() {
         for (auto& pacer : pacers_) pacer.Reset();
       }
     }
-    if (retry) OpenDevice(false);
+    // A retry opens on its own thread; the callbacks below keep their time.
+    if (pending_)
+      CollectRetry();
+    else if (retry)
+      StartRetry();
     for (size_t index = 0; index < kMaximumClients && running_.load(); ++index) Pump(index, now);
   }
 }
@@ -237,9 +286,10 @@ void Output::Shutdown() {
     shut_down_ = true;
     started = thread_started_;
   }
-  // 1. The callback thread.
+  // 1. The callback thread, then a device retry it left in flight.
   running_.store(false);
   const bool joined = !started || host_.JoinThread(options_.join);
+  if (joined) StopRetry();
   // 2. The device: a straggling Submit finds none and drops its frame.
   {
     std::lock_guard lock(device_mutex_);
