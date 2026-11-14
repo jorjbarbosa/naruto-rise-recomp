@@ -1,0 +1,251 @@
+diff --git a/XenonRecomp/recompiler.cpp b/XenonRecomp/recompiler.cpp
+index f5eb7b1..10ce8f9 100644
+--- a/XenonRecomp/recompiler.cpp
++++ b/XenonRecomp/recompiler.cpp
+@@ -712,6 +712,15 @@ bool Recompiler::Recompile(
+         println("\tif ({}.u32 != 0 && !{}.eq) goto loc_{:X};", ctr(), cr(insn.operands[0] / 4), insn.operands[1]);
+         break;
+ 
++    case PPC_INST_BDNZT:
++    {
++        // operands[0] is the CR bit (BI): field BI / 4, bit BI % 4
++        static constexpr const char* crBits[] = { "lt", "gt", "eq", "so" };
++        println("\t--{}.u64;", ctr());
++        println("\tif ({}.u32 != 0 && {}.{}) goto loc_{:X};", ctr(), cr(insn.operands[0] / 4), crBits[insn.operands[0] % 4], insn.operands[1]);
++        break;
++    }
++
+     case PPC_INST_BEQ:
+         printConditionalBranch(false, "eq");
+         break;
+@@ -756,7 +765,16 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_BLRL:
+-        println("__builtin_debugtrap();");
++        if (config.skipLr)
++        {
++            // mtlr is not emitted with skip_lr, so the call target is unknown
++            println("__builtin_debugtrap();");
++            break;
++        }
++        println("\t{}.u64 = ctx.lr;", temp());
++        println("\tctx.lr = 0x{:X};", base + 4);
++        println("\tPPC_CALL_INDIRECT_FUNC({}.u32);", temp());
++        csrState = CSRState::Unknown; // the call could change it
+         break;
+ 
+     case PPC_INST_BLT:
+@@ -848,6 +866,10 @@ bool Recompiler::Recompile(
+         // no op
+         break;
+ 
++    case PPC_INST_DCBST:
++        // no op
++        break;
++
+     case PPC_INST_DCBT:
+         // no op
+         break;
+@@ -1029,6 +1051,11 @@ bool Recompiler::Recompile(
+         println("\t{}.f64 = float(1.0 / {}.f64);", f(insn.operands[0]), f(insn.operands[1]));
+         break;
+ 
++    case PPC_INST_FRSQRTE:
++        printSetFlushMode(false);
++        println("\t{}.f64 = 1.0 / sqrt({}.f64);", f(insn.operands[0]), f(insn.operands[1]));
++        break;
++
+     case PPC_INST_FRSP:
+         printSetFlushMode(false);
+         println("\t{}.f64 = double(float({}.f64));", f(insn.operands[0]), f(insn.operands[1]));
+@@ -1349,6 +1376,12 @@ bool Recompiler::Recompile(
+         println("\t{}.s64 = (int64_t({}.s32) * int64_t({}.s32)) >> 32;", r(insn.operands[0]), r(insn.operands[1]), r(insn.operands[2]));
+         break;
+ 
++    case PPC_INST_MULHDU:
++        println("\t{}.u64 = uint64_t((static_cast<unsigned __int128>({}.u64) * {}.u64) >> 64);", r(insn.operands[0]), r(insn.operands[1]), r(insn.operands[2]));
++        if (strchr(insn.opcode->name, '.'))
++            println("\t{}.compare<int64_t>({}.s64, 0, {});", cr(0), r(insn.operands[0]), xer());
++        break;
++
+     case PPC_INST_MULHWU:
+         println("\t{}.u64 = (uint64_t({}.u32) * uint64_t({}.u32)) >> 32;", r(insn.operands[0]), r(insn.operands[1]), r(insn.operands[2]));
+         if (strchr(insn.opcode->name, '.'))
+@@ -1373,6 +1406,12 @@ bool Recompiler::Recompile(
+         println("\t{}.u64 = ~({}.u64 & {}.u64);", r(insn.operands[0]), r(insn.operands[1]), r(insn.operands[2]));
+         break;
+ 
++    case PPC_INST_EQV:
++        println("\t{}.u64 = ~({}.u64 ^ {}.u64);", r(insn.operands[0]), r(insn.operands[1]), r(insn.operands[2]));
++        if (strchr(insn.opcode->name, '.'))
++            println("\t{}.compare<int32_t>({}.s32, 0, {});", cr(0), r(insn.operands[0]), xer());
++        break;
++
+     case PPC_INST_NEG:
+         println("\t{}.s64 = -{}.s64;", r(insn.operands[0]), r(insn.operands[1]));
+         if (strchr(insn.opcode->name, '.'))
+@@ -1813,6 +1852,7 @@ bool Recompiler::Recompile(
+         println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_and_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
+         break;
+ 
++    case PPC_INST_VANDC:
+     case PPC_INST_VANDC128:
+         println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_andnot_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)));", v(insn.operands[0]), v(insn.operands[2]), v(insn.operands[1]));
+         break;
+@@ -1839,6 +1879,15 @@ bool Recompiler::Recompile(
+             println("simde_mm_load_ps({}.f32)));", v(insn.operands[1]));
+         break;
+ 
++    case PPC_INST_VCTUXS:
++        printSetFlushMode(true);
++        print("\tsimde_mm_store_si128((simde__m128i*){}.u32, simde_mm_vctuxs(", v(insn.operands[0]));
++        if (insn.operands[2] != 0)
++            println("simde_mm_mul_ps(simde_mm_load_ps({}.f32), simde_mm_set1_ps({}))));", v(insn.operands[1]), 1u << insn.operands[2]);
++        else
++            println("simde_mm_load_ps({}.f32)));", v(insn.operands[1]));
++        break;
++
+     case PPC_INST_VCFSX:
+     case PPC_INST_VCSXWFP128:
+     {
+@@ -2058,6 +2107,14 @@ bool Recompiler::Recompile(
+             println("\t{}.u32[{}] = {}.u32;", v(insn.operands[0]), insn.operands[4], temp());
+             break;
+ 
++        case 3: // float16_2: X in the high half, Y in the low half of one word
++            if (insn.operands[3] != 1)
++                fmt::println("Unexpected float16_2 pack instruction at {:X}", base);
++
++            println("\t{}.u32 = (uint32_t(ppcFloatToHalf({}.f32[3])) << 16) | ppcFloatToHalf({}.f32[2]);", temp(), v(insn.operands[1]), v(insn.operands[1]));
++            println("\t{}.u32[{}] = {}.u32;", v(insn.operands[0]), insn.operands[4], temp());
++            break;
++
+         case 5: // float16_4
+             if (insn.operands[3] != 2 || insn.operands[4] > 2)
+                 fmt::println("Unexpected float16_4 pack instruction at {:X}", base);
+@@ -2086,6 +2143,10 @@ bool Recompiler::Recompile(
+         }
+         break;
+ 
++    case PPC_INST_VPKSWSS:
++        println("\tsimde_mm_store_si128((simde__m128i*){}.s16, simde_mm_packs_epi32(simde_mm_load_si128((simde__m128i*){}.s32), simde_mm_load_si128((simde__m128i*){}.s32)));", v(insn.operands[0]), v(insn.operands[2]), v(insn.operands[1]));
++        break;
++
+     case PPC_INST_VPKSHUS:
+     case PPC_INST_VPKSHUS128:
+         println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_packus_epi16(simde_mm_load_si128((simde__m128i*){}.s16), simde_mm_load_si128((simde__m128i*){}.s16)));", v(insn.operands[0]), v(insn.operands[2]), v(insn.operands[1]));
+@@ -2132,6 +2193,7 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_VSEL:
++    case PPC_INST_VSEL128: // the mask is vD, which the disassembler repeats as operands[3]
+         println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_or_si128(simde_mm_andnot_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)), simde_mm_and_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8))));", v(insn.operands[0]), v(insn.operands[3]), v(insn.operands[1]), v(insn.operands[3]), v(insn.operands[2]));
+         break;
+ 
+@@ -2256,6 +2318,20 @@ bool Recompiler::Recompile(
+             println("\t{} = {};", v(insn.operands[0]), vTemp());
+             break;
+ 
++        case 3: // float16_2: X = W.hi, Y = W.lo, Z = 0, W = 1
++            println("\t{}.f32[3] = ppcHalfToFloat({}.u16[1]);", vTemp(), v(insn.operands[1]));
++            println("\t{}.f32[2] = ppcHalfToFloat({}.u16[0]);", vTemp(), v(insn.operands[1]));
++            println("\t{}.f32[1] = 0.0f;", vTemp());
++            println("\t{}.f32[0] = 1.0f;", vTemp());
++            println("\t{} = {};", v(insn.operands[0]), vTemp());
++            break;
++
++        case 5: // float16_4: X = Z.hi, Y = Z.lo, Z = W.hi, W = W.lo (XMConvertHalfToFloatStream)
++            for (size_t i = 0; i < 4; i++)
++                println("\t{}.f32[{}] = ppcHalfToFloat({}.u16[{}]);", vTemp(), i, v(insn.operands[1]), i);
++            println("\t{} = {};", v(insn.operands[0]), vTemp());
++            break;
++
+         default:
+             println("\t__builtin_debugtrap();");
+             break;
+diff --git a/XenonUtils/ppc_context.h b/XenonUtils/ppc_context.h
+index 31a86cd..abab91a 100644
+--- a/XenonUtils/ppc_context.h
++++ b/XenonUtils/ppc_context.h
+@@ -682,6 +682,80 @@ inline simde__m128i simde_mm_vctsxs(simde__m128 src1)
+     return simde_mm_andnot_si128(simde_mm_castps_si128(xmm2), simde_mm_castps_si128(dest));
+ }
+ 
++inline simde__m128i simde_mm_vctuxs(simde__m128 src1)
++{
++    // NaN and values below 1 give 0, values at or above 2^32 saturate, the rest truncate
++    alignas(16) float in[4];
++    alignas(16) uint32_t out[4];
++    simde_mm_store_ps(in, src1);
++    for (size_t i = 0; i < 4; i++)
++    {
++        if (!(in[i] > 0.0f))
++            out[i] = 0;
++        else if (in[i] >= 4294967296.0f)
++            out[i] = UINT_MAX;
++        else
++            out[i] = uint32_t(in[i]);
++    }
++    return simde_mm_load_si128((simde__m128i*)out);
++}
++
++// Xbox 360 half floats, converted like the XDK reference code (xmconvert.inl):
++// exponent 31 is a regular number (no inf/NaN), float -> half saturates to 0x7FFF
++// and rounds to nearest even.
++inline float ppcHalfToFloat(uint16_t value)
++{
++    uint32_t mantissa = value & 0x3FF;
++    uint32_t exponent;
++
++    if ((value & 0x7C00) != 0)
++    {
++        exponent = (value >> 10) & 0x1F;
++    }
++    else if (mantissa != 0)
++    {
++        exponent = 1;
++        do
++        {
++            exponent--;
++            mantissa <<= 1;
++        } while ((mantissa & 0x400) == 0);
++        mantissa &= 0x3FF;
++    }
++    else
++    {
++        exponent = uint32_t(-112);
++    }
++
++    uint32_t result = ((value & 0x8000u) << 16) | ((exponent + 112) << 23) | (mantissa << 13);
++    float f;
++    memcpy(&f, &result, sizeof(f));
++    return f;
++}
++
++inline uint16_t ppcFloatToHalf(float value)
++{
++    uint32_t bits;
++    memcpy(&bits, &value, sizeof(bits));
++    uint32_t iValue = bits & 0x7FFFFFFF;
++    uint32_t sign = (bits & 0x80000000) >> 16;
++
++    if (iValue > 0x47FFEFFF)
++        return uint16_t(sign | 0x7FFF);
++
++    if (iValue < 0x38800000)
++    {
++        uint32_t shift = 113 - (iValue >> 23);
++        iValue = shift < 32 ? ((0x800000 | (iValue & 0x7FFFFF)) >> shift) : 0;
++    }
++    else
++    {
++        iValue += 0xC8000000;
++    }
++
++    return uint16_t(sign | ((iValue + 0x0FFF + ((iValue >> 13) & 1)) >> 13));
++}
++
+ inline simde__m128i simde_mm_vsr(simde__m128i a, simde__m128i b)
+ {
+     b = simde_mm_srli_epi64(simde_mm_slli_epi64(b, 61), 61);

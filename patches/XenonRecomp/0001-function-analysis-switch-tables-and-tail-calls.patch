@@ -1,0 +1,202 @@
+diff --git a/XenonAnalyse/function.cpp b/XenonAnalyse/function.cpp
+index 34add40..4d1ebbe 100644
+--- a/XenonAnalyse/function.cpp
++++ b/XenonAnalyse/function.cpp
+@@ -38,10 +38,17 @@ size_t Function::SearchBlock(size_t address) const
+     return -1;
+ }
+ 
+-Function Function::Analyze(const void* code, size_t size, size_t base)
++Function Function::Analyze(const void* code, size_t size, size_t base, const FunctionAnalyzeHints* hints)
+ {
+     Function fn{ base, 0 };
+ 
++    // A branch to another known entry point leaves this function (tail call).
++    auto isOtherFunction = [&](size_t address)
++        {
++            return hints != nullptr && hints->functionStarts != nullptr &&
++                address != base && hints->functionStarts->count(address) != 0;
++        };
++
+     if (*((uint32_t*)code + 1) == 0x04000048) // shifted ptr tail call
+     {
+         fn.size = 0x8;
+@@ -126,7 +133,7 @@ Function Function::Analyze(const void* code, size_t size, size_t base)
+             }
+ 
+             size_t rBlock = fn.SearchBlock(base + rBase);
+-            if (rBlock == -1)
++            if (rBlock == -1 && !isOtherFunction(branchDest)) // conditional tail calls stay outside
+             {
+                 blocks.emplace_back(branchDest - base, 0);
+                 rBlock = blocks.size() - 1;
+@@ -151,9 +158,9 @@ Function Function::Analyze(const void* code, size_t size, size_t base)
+                     const size_t branchBase = branchDest - base;
+                     const size_t branchBlock = fn.SearchBlock(branchDest);
+ 
+-                    if (branchDest < base)
++                    if (branchDest < base || isOtherFunction(branchDest))
+                     {
+-                        // Branches before base are just tail calls, no need to chase after those
++                        // Branches before base or into another known function are just tail calls, no need to chase after those
+                         RESTORE_DATA();
+                         continue;
+                     }
+@@ -198,6 +205,23 @@ Function Function::Analyze(const void* code, size_t size, size_t base)
+                             continue;
+                         }
+                     }
++                    else if (xop == 528 && hints != nullptr && hints->switchTargets != nullptr)
++                    {
++                        // bctr of a known jump table: every case belongs to this function
++                        auto switchTable = hints->switchTargets->find(addr);
++                        if (switchTable != hints->switchTargets->end())
++                        {
++                            for (size_t label : switchTable->second)
++                            {
++                                if (label < base || label >= base + size || fn.SearchBlock(label) != -1)
++                                    continue;
++
++                                blocks.emplace_back(label - base, 0).isSwitchCase = true;
++                                DEBUG(blocks.back().parent = blockBase);
++                                blockStack.emplace_back(blocks.size() - 1);
++                            }
++                        }
++                    }
+                 }
+ 
+                 RESTORE_DATA();
+@@ -226,6 +250,12 @@ Function Function::Analyze(const void* code, size_t size, size_t base)
+                 continue;
+             }
+ 
++            // Inline jump tables put data between the bctr and the cases
++            if (blocks[i + 1].isSwitchCase)
++            {
++                continue;
++            }
++
+             discontinuity = i + 1;
+             break;
+         }
+diff --git a/XenonAnalyse/function.h b/XenonAnalyse/function.h
+index 7df1c6a..94cef7f 100644
+--- a/XenonAnalyse/function.h
++++ b/XenonAnalyse/function.h
+@@ -1,6 +1,8 @@
+ #pragma once
+ 
+ #include <cstddef>
++#include <unordered_map>
++#include <unordered_set>
+ #include <vector>
+ 
+ #ifdef _DEBUG
+@@ -9,6 +11,19 @@
+ #define DEBUG(X)
+ #endif
+ 
++// Optional knowledge the caller already has about the image.
++struct FunctionAnalyzeHints
++{
++    // Address of a bctr -> labels of its jump table. Without this, a bctr ends
++    // the function and the switch cases that follow it are left out.
++    const std::unordered_map<size_t, std::vector<size_t>>* switchTargets{};
++
++    // Known function entry points (.pdata, bl targets, configured functions).
++    // A branch to one of them is a tail call, so the analysis must not walk
++    // into that function.
++    const std::unordered_set<size_t>* functionStarts{};
++};
++
+ struct Function
+ {
+     struct Block
+@@ -16,6 +31,7 @@ struct Function
+         size_t base{};
+         size_t size{};
+         size_t projectedSize{ static_cast<size_t>(-1) }; // scratch
++        bool isSwitchCase{}; // reached through a jump table, may follow table data
+         DEBUG(size_t parent{});
+ 
+         Block() 
+@@ -47,5 +63,5 @@ struct Function
+     }
+     
+     size_t SearchBlock(size_t address) const;
+-    static Function Analyze(const void* code, size_t size, size_t base);
++    static Function Analyze(const void* code, size_t size, size_t base, const FunctionAnalyzeHints* hints = nullptr);
+ };
+diff --git a/XenonRecomp/recompiler.cpp b/XenonRecomp/recompiler.cpp
+index fa91527..f5eb7b1 100644
+--- a/XenonRecomp/recompiler.cpp
++++ b/XenonRecomp/recompiler.cpp
+@@ -193,6 +193,50 @@ void Recompiler::Analyse()
+         }
+     }
+ 
++    // Hints for Function::Analyze. Jump tables are keyed by the first instruction of
++    // their pattern in the config, the analyzer needs the address of their bctr.
++    std::unordered_map<size_t, std::vector<size_t>> switchTargets;
++    for (const auto& [tableBase, table] : config.switchTables)
++    {
++        for (size_t offset = 0; offset < 0x40; offset += 4)
++        {
++            auto* code = reinterpret_cast<const uint32_t*>(image.Find(tableBase + offset));
++            if (code == nullptr)
++                break;
++
++            if (ByteSwap(*code) == 0x4E800420) // bctr
++            {
++                switchTargets.emplace(tableBase + offset, std::vector<size_t>(table.labels.begin(), table.labels.end()));
++                break;
++            }
++        }
++    }
++
++    // Every entry point known before the analysis: helpers, configured functions,
++    // .pdata and all bl targets. A branch into one of them is a tail call.
++    std::unordered_set<size_t> functionStarts;
++    for (const auto& fn : functions)
++        functionStarts.emplace(fn.base);
++
++    for (const auto& section : image.sections)
++    {
++        if (!(section.flags & SectionFlags_Code))
++            continue;
++
++        for (size_t offset = 0; offset + 4 <= section.size; offset += 4)
++        {
++            uint32_t insn = ByteSwap(*(uint32_t*)(section.data + offset));
++            if (PPC_OP(insn) == PPC_OP_B && PPC_BL(insn) && !PPC_BA(insn))
++            {
++                size_t address = section.base + offset + PPC_BI(insn);
++                if (address >= section.base && address < section.base + section.size)
++                    functionStarts.emplace(address);
++            }
++        }
++    }
++
++    FunctionAnalyzeHints hints{ &switchTargets, &functionStarts };
++
+     for (const auto& section : image.sections)
+     {
+         if (!(section.flags & SectionFlags_Code))
+@@ -213,7 +257,7 @@ void Recompiler::Analyse()
+                 if (address >= section.base && address < section.base + section.size && image.symbols.find(address) == image.symbols.end())
+                 {
+                     auto data = section.data + address - section.base;
+-                    auto& fn = functions.emplace_back(Function::Analyze(data, section.base + section.size - address, address));
++                    auto& fn = functions.emplace_back(Function::Analyze(data, section.base + section.size - address, address, &hints));
+                     image.symbols.emplace(fmt::format("sub_{:X}", fn.base), fn.base, fn.size, Symbol_Function);
+                 }
+             }
+@@ -242,7 +286,7 @@ void Recompiler::Analyse()
+             }
+             else
+             {
+-                auto& fn = functions.emplace_back(Function::Analyze(data, dataEnd - data, base));
++                auto& fn = functions.emplace_back(Function::Analyze(data, dataEnd - data, base, &hints));
+                 image.symbols.emplace(fmt::format("sub_{:X}", fn.base), fn.base, fn.size, Symbol_Function);
+ 
+                 base += fn.size;
