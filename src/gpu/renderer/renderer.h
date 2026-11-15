@@ -71,11 +71,12 @@ namespace gpu
     };
 
     // The shared constant buffer of the translated shaders (register b2, space4), as laid out by
-    // tools/XenosRecomp/XenosRecomp/shader_common.h with patches/XenosRecomp/0003 and 0005.
+    // tools/XenosRecomp/XenosRecomp/shader_common.h with patches/XenosRecomp/0003, 0005 and 0006.
     struct SharedConstants
     {
         static constexpr uint32_t kFetchSlots = 32;
         static constexpr uint32_t kVertexElements = 16;
+        static constexpr uint32_t kClipPlaneCount = 6;
 
         // Descriptor indices by texture fetch constant: 2D, 3D and cube textures, samplers.
         uint32_t texture2D[kFetchSlots] = {};
@@ -88,8 +89,11 @@ namespace gpu
         float alphaThreshold = 0.0f;
         uint32_t reserved[3] = {};
         uint32_t vertexFetch[kVertexElements] = {}; // fetch descriptor of each vertex element (vfetch)
+        // User clip planes in clip space (x, y, z, w; a point is kept where the dot product is
+        // not negative); a disabled plane is zero and clips nothing.
+        float clipPlanes[kClipPlaneCount][4] = {};
     };
-    static_assert(sizeof(SharedConstants) == 38 * 16);
+    static_assert(sizeof(SharedConstants) == 44 * 16);
 
     // SPEC_CONSTANT_ALPHA_TEST: the pixel shader discards pixels whose alpha is below the threshold.
     constexpr uint32_t kSpecAlphaTest = 2;
@@ -187,6 +191,11 @@ namespace gpu
         std::vector<uint8_t> rgba;
     };
 
+    // The title's gamma ramp (D3DGAMMARAMP): 256 red, then 256 green, then 256 blue entries, each a
+    // 10-bit value in the high bits of a 16-bit word.
+    using GammaRamp = std::array<uint16_t, 3 * 256>;
+    constexpr uint32_t kGammaRampShift = 6;
+
     // A draw: shaders, targets, state, and copies of the vertices, indices and constants it reads.
     // Everything is a triangle list by then.
     struct DrawOp
@@ -260,6 +269,8 @@ namespace gpu
         // Presents the texture resolved at the given GPU address, fitted to the window (black when
         // nothing was resolved there).
         void Present(uint32_t frontAddress);
+        // The ramp the presents posted after it map the front buffer through.
+        void SetGammaRamp(const GammaRamp& ramp);
 
         class Impl;
 

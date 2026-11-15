@@ -41,6 +41,13 @@ namespace gpu::textures
 
         bool Decompresses() const { return conversion >= Conversion::DXT1ToRGBA8; }
         bool HostCompressed() const { return block > 1 && !Decompresses(); }
+        // Float and depth formats (a float on the host) have no unsigned variant, so a signed fetch
+        // of them reads the same values.
+        bool SignFree() const
+        {
+            return host == plume::RenderFormat::R16G16B16A16_FLOAT || host == plume::RenderFormat::R32_FLOAT ||
+                host == plume::RenderFormat::R32G32_FLOAT || host == plume::RenderFormat::R32G32B32A32_FLOAT;
+        }
     };
 
     // The format of a guest texture, or null when it is not covered. decompressed: the host format

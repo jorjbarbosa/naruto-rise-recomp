@@ -248,4 +248,9 @@ namespace gpu
             impl->presenter->Present(*impl->passes, impl->targets->Resolved(frontAddress));
         });
     }
+
+    void Renderer::SetGammaRamp(const GammaRamp& ramp)
+    {
+        impl_->Post([impl = impl_.get(), ramp] { impl->presenter->SetGammaRamp(ramp); });
+    }
 }

@@ -1,0 +1,65 @@
+diff --git a/XenosRecomp/shader_common.h b/XenosRecomp/shader_common.h
+index 25210be..8c67527 100644
+--- a/XenosRecomp/shader_common.h
++++ b/XenosRecomp/shader_common.h
+@@ -35,6 +35,7 @@ struct PushConstants
+ #define g_HalfPixelOffset          vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 520)
+ #define g_AlphaThreshold           vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 528)
+ #define g_VertexFetchDescriptor(INDEX) vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 544 + (INDEX) * 4)
++#define g_ClipPlane(INDEX)         vk::RawBufferLoad<float4>(g_PushConstants.SharedConstants + 608 + (INDEX) * 16)
+ 
+ #else
+ 
+@@ -45,10 +46,12 @@ struct PushConstants
+     uint g_SpecConstantValues : packoffset(c32.y); \
+     float2 g_HalfPixelOffset : packoffset(c32.z); \
+     float g_AlphaThreshold : packoffset(c33.x); \
+-    uint4 g_VertexFetchDescriptors[4] : packoffset(c34);
++    uint4 g_VertexFetchDescriptors[4] : packoffset(c34); \
++    float4 g_ClipPlanes[6] : packoffset(c38);
+ 
+ #define g_SpecConstants() g_SpecConstantValues
+ #define g_VertexFetchDescriptor(INDEX) g_VertexFetchDescriptors[(INDEX) / 4][(INDEX) % 4]
++#define g_ClipPlane(INDEX) g_ClipPlanes[INDEX]
+ 
+ #endif
+ 
+diff --git a/XenosRecomp/shader_recompiler.cpp b/XenosRecomp/shader_recompiler.cpp
+index 1d342db..9e81321 100644
+--- a/XenosRecomp/shader_recompiler.cpp
++++ b/XenosRecomp/shader_recompiler.cpp
+@@ -1359,6 +1359,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+ 
+         for (auto& [usage, usageIndex] : INTERPOLATORS)
+             print(",\n\tout float4 o{0}{1} : {2}{1}", USAGE_VARIABLES[uint32_t(usage)], usageIndex, USAGE_SEMANTICS[uint32_t(usage)]);
++
++        // The six user clip planes (PA_CL_UCP), after the interpolators so that the pixel shader
++        // inputs keep their registers.
++        out += ",\n\tout float4 oClipDistance0 : SV_ClipDistance0";
++        out += ",\n\tout float2 oClipDistance1 : SV_ClipDistance1";
+     }
+ 
+     out += ")\n";
+@@ -1462,6 +1467,9 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+         for (auto& [usage, usageIndex] : INTERPOLATORS)
+             println("\to{}{} = 0.0;", USAGE_VARIABLES[uint32_t(usage)], usageIndex);
+ 
++        out += "\toClipDistance0 = 0.0;\n";
++        out += "\toClipDistance1 = 0.0;\n";
++
+         out += "\n";
+     }
+ 
+@@ -1840,6 +1848,12 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+                     if (!hasMtxProjection)
+                 #endif
+                     {
++                        // The user clip planes are in the clip space of the exported position,
++                        // before the host's half-pixel offset. A disabled plane is zero and clips
++                        // nothing.
++                        out += "\toClipDistance0 = float4(dot(oPos, g_ClipPlane(0)), dot(oPos, g_ClipPlane(1)), "
++                            "dot(oPos, g_ClipPlane(2)), dot(oPos, g_ClipPlane(3)));\n";
++                        out += "\toClipDistance1 = float2(dot(oPos, g_ClipPlane(4)), dot(oPos, g_ClipPlane(5)));\n";
+                         out += "\toPos.xy += g_HalfPixelOffset * oPos.w;\n";
+                     }
+                 }

@@ -54,6 +54,8 @@ namespace gpu
             plume::RenderBufferReference Reference() const { return { buffer, offset }; }
         };
         Upload Allocate(uint64_t size, uint64_t alignment);
+        // The alignment of a constant buffer view's data.
+        static constexpr uint64_t kConstantAlignment = 256;
 
     private:
         struct List

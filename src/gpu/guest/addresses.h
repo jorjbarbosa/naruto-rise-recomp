@@ -70,6 +70,10 @@ namespace gpu::guest
         constexpr uint32_t kVertexBooleans = 10112;
         constexpr uint32_t kPixelBooleans = 10128;
 
+        // The user clip planes D3DDevice_SetClipPlane keeps, PA_CL_UCP_0..5 in clip space: 4 floats
+        // each. A plane applies when its bit of PA_CL_CLIP_CNTL is set.
+        constexpr uint32_t kClipPlanes = 10272;
+
         // Register blocks: register base + i at offset + 4 i.
         constexpr uint32_t kRegisters2000 = 10368; // 0x2000..0x200F, then 0x2080..0x2082 (window offset, scissor)
         constexpr uint32_t kRegisters2100 = 10444; // 0x2100..0x2114
@@ -122,7 +126,11 @@ namespace gpu::guest
         // Fence of the previous frame, set by D3DDevice_Swap; StartNewSegment waits for it.
         constexpr uint32_t kFrameFence = 14924;
 
-        // Changes the next Swap applies. Bit 1: the gamma ramp at +14988 was set.
+        // The gamma ramp D3DDevice_SetGammaRamp keeps for the display: D3DGAMMARAMP, 768 16-bit
+        // words.
+        constexpr uint32_t kGammaRamp = 14988;
+
+        // Changes the next Swap applies. Bit 1: the gamma ramp at kGammaRamp was set.
         constexpr uint32_t kSwapPending = 16692;
         constexpr uint32_t kSwapPendingGamma = 2;
 

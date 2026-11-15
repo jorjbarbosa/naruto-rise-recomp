@@ -25,8 +25,14 @@ namespace gpu
         std::unique_ptr<plume::RenderDescriptorSet> CreateTextureSet(const plume::RenderTexture& texture,
             const plume::RenderTextureView* view) const;
 
-        // Draws the image over the bound framebuffer's viewport.
-        void Present(plume::RenderCommandList& list, plume::RenderDescriptorSet& image) const;
+        // The present's gamma ramp: 256 entries of (red, green, blue, unused) 10-bit values, a
+        // constant buffer of this many bytes.
+        static constexpr uint32_t kRampBytes = 256 * 16;
+
+        // Draws the image through the ramp (kRampBytes in a buffer the list reads) over the bound
+        // framebuffer's viewport.
+        void Present(plume::RenderCommandList& list, plume::RenderDescriptorSet& image,
+            plume::RenderBufferReference ramp) const;
         // Draws over the bound framebuffer's viewport: each pixel reads the source at its position
         // plus the offset.
         void DrawResolve(plume::RenderCommandList& list, Resolve kind, plume::RenderDescriptorSet& source,

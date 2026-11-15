@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace gpu
 {
@@ -21,6 +22,22 @@ namespace gpu
         constexpr uint32_t kFrameLatency = 1;
         // Longest wait for the swap chain to accept another frame.
         constexpr DWORD kLatencyWaitMs = 100;
+    }
+
+    Presenter::Presenter(Context& context) : context_(context)
+    {
+        // The identity ramp: 8-bit index i to 10-bit i * 1023 / 255, which the 8-bit back buffer
+        // rounds back to i.
+        for (uint32_t i = 0; i < 256; i++)
+            for (uint32_t channel = 0; channel < 3; channel++)
+                ramp_[4 * i + channel] = (i * 1023 + 127) / 255;
+    }
+
+    void Presenter::SetGammaRamp(const GammaRamp& ramp)
+    {
+        for (uint32_t channel = 0; channel < 3; channel++)
+            for (uint32_t i = 0; i < 256; i++)
+                ramp_[4 * i + channel] = ramp[256 * channel + i] >> kGammaRampShift;
     }
 
     std::unique_ptr<Presenter> Presenter::Create(Context& context, void* window, const Settings& settings)
@@ -97,7 +114,10 @@ namespace gpu
             const plume::RenderRect scissor(int32_t(x), int32_t(y), int32_t(x + fitWidth), int32_t(y + fitHeight));
             list.setViewports(&viewport, 1);
             list.setScissors(&scissor, 1);
-            passes.Present(list, *image->sampling);
+            static_assert(sizeof(ramp_) == Passes::kRampBytes);
+            Context::Upload ramp = context_.Allocate(Passes::kRampBytes, Context::kConstantAlignment);
+            memcpy(ramp.data, ramp_.data(), sizeof(ramp_));
+            passes.Present(list, *image->sampling, ramp.Reference());
         }
         list.barriers(plume::RenderBarrierStage::NONE,
             plume::RenderTextureBarrier(backBuffer, plume::RenderTextureLayout::PRESENT));

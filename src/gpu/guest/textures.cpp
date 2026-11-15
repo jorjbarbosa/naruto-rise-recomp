@@ -106,13 +106,19 @@ namespace gpu::guest
                 Log("gpu: a texture (format %u) is not covered, it reads as zero: %s", format, reason);
         }
 
-        // Fetch fields the host does not apply yet.
+        // Fetch fields the host does not apply yet. A component the swizzle reads with a sign is
+        // uncovered, except a signed one of a float or depth format, which has no unsigned variant:
+        // it reads the same data (the game's k_16_16_16_16_FLOAT textures are fetched signed).
         void CheckUnapplied(const textures::Fetch& fetch)
         {
+            constexpr uint32_t kSignSigned = 1;
+            const textures::Format* format = textures::FindFormat(fetch.Format());
+            bool signFree = format != nullptr && format->SignFree();
             for (uint32_t i = 0; i < 4; i++)
             {
                 uint32_t select = (fetch.Swizzle() >> (3 * i)) & 7;
-                if (select < 4 && ((fetch.Signs() >> (2 * select)) & 3) != 0)
+                uint32_t sign = select < 4 ? (fetch.Signs() >> (2 * select)) & 3 : 0;
+                if (sign != 0 && !(sign == kSignSigned && signFree))
                     LOG_ONCE("gpu: texture signs (signed, biased, gamma) are not applied yet; format %u", fetch.Format());
             }
             if (fetch.ExpAdjust() != 0)

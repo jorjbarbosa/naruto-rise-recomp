@@ -201,6 +201,16 @@ and the branch on it is uniform. The library target of `DxcCompiler::compile` is
 
 Result: 3,322 of 3,322 compile, with one DXIL per shader.
 
+### 0006: user clip planes
+
+The game's planar reflection pass (a 640x360 4x target in the village) enables user clip plane 0
+(`PA_CL_CLIP_CNTL` `0x00080001`), which upstream drops: on the GPU it is fixed function, after the vertex
+shader. Every vertex shader now writes `SV_ClipDistance0` (planes 0-3) and `SV_ClipDistance1` (planes 4-5), the
+dot product of the exported position with each plane, before the host's half-pixel offset, so in the clip space
+the GPU clips in. The planes live in the shared constants at `c38`-`c43` (byte 608 on SPIR-V); a disabled plane
+is zero and clips nothing. The clip distances come after the interpolators, so the pixel shader inputs keep
+their registers.
+
 ## ffmpeg
 
 FFmpeg n7.1.5, shallow. The runtime builds only libavutil and libavcodec with the `xma1` decoder, from the

@@ -16,6 +16,10 @@ namespace gpu
 {
     namespace
     {
+        // The gamma ramp of the present (present_ps.hlsl): a root constant buffer, b0 in space 2.
+        constexpr uint32_t kRampRoot = 0;
+        constexpr uint32_t kRampSpace = 2;
+
         // Root constants of the resolve pass (resolve_ps.hlsl).
         struct ResolveConstants
         {
@@ -62,11 +66,16 @@ namespace gpu
         sampler.shaderVisibility = plume::RenderShaderVisibility::PIXEL;
         sampler_ = device.createSampler(sampler);
 
-        // Present: the image in set 0, the bilinear sampler (immutable) in set 1.
+        // Present: the image in set 0, the sampler (immutable; the pass gathers with its clamp) in
+        // set 1, the gamma ramp as a root constant buffer.
         const plume::RenderSampler* samplers[] = { sampler_.get() };
         const plume::RenderDescriptorRange samplerRange(plume::RenderDescriptorRangeType::SAMPLER, 0, 1, samplers);
         const plume::RenderDescriptorSetDesc presentSets[] = { kTextureSet, plume::RenderDescriptorSetDesc(&samplerRange, 1) };
-        presentLayout_ = device.createPipelineLayout(plume::RenderPipelineLayoutDesc(nullptr, 0, presentSets, 2));
+        const plume::RenderRootDescriptorDesc ramp(kRampRoot, kRampSpace, plume::RenderRootDescriptorType::CONSTANT_BUFFER);
+        plume::RenderPipelineLayoutDesc presentDesc(nullptr, 0, presentSets, 2);
+        presentDesc.rootDescriptorDescs = &ramp;
+        presentDesc.rootDescriptorDescsCount = 1;
+        presentLayout_ = device.createPipelineLayout(presentDesc);
 
         // Resolve: the constants, then the source in set 0.
         const plume::RenderPushConstantRange constants(0, 0, 0, sizeof(ResolveConstants), plume::RenderShaderStageFlag::PIXEL);
@@ -90,11 +99,13 @@ namespace gpu
         return set;
     }
 
-    void Passes::Present(plume::RenderCommandList& list, plume::RenderDescriptorSet& image) const
+    void Passes::Present(plume::RenderCommandList& list, plume::RenderDescriptorSet& image,
+        plume::RenderBufferReference ramp) const
     {
         list.setGraphicsPipelineLayout(presentLayout_.get());
         list.setPipeline(present_.get());
         list.setGraphicsDescriptorSet(&image, 0);
+        list.setGraphicsRootDescriptor(ramp, kRampRoot);
         list.drawInstanced(3, 1, 0, 0);
     }
 

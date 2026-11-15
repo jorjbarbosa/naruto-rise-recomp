@@ -87,8 +87,12 @@ namespace gpu::guest
         constexpr uint32_t kVertexFormatD3D = 0x400;
         // PA_SU_VTX_CNTL: pixel centers at 0.5 (otherwise at integers, as in D3D9).
         constexpr uint32_t kPixelCenterHalf = 0x1;
-        // PA_CL_CLIP_CNTL: the user clip plane enables.
+        // PA_CL_CLIP_CNTL: the user clip plane enables, the pixel shader clip modes, clipping off,
+        // the cull-only mode.
         constexpr uint32_t kUserClipPlanes = 0x3F;
+        constexpr uint32_t kClipPixelShaderModes = 0xC000;
+        constexpr uint32_t kClipDisable = 0x10000;
+        constexpr uint32_t kClipCullOnly = 0x20000;
 
         struct DrawCall
         {
@@ -295,6 +299,30 @@ namespace gpu::guest
             state.depthBiasSlope = scale != 0 ? scale / 16.0f : 0.0f;
         }
 
+        // The enabled user clip planes (PA_CL_CLIP_CNTL bits 0..5) for the vertex shader's clip
+        // distances; the disabled ones stay zero and clip nothing. The game's reflection pass
+        // enables plane 0 alone, with the plain clip mode.
+        void ReadClipPlanes(const Device& device, uint32_t devAddress, SharedConstants& shared)
+        {
+            uint32_t clipControl = device.Register(reg::kClipControl);
+            uint32_t planes = clipControl & kUserClipPlanes;
+            // With clipping disabled no plane applies, whatever enables are left set.
+            if (planes == 0 || (clipControl & kClipDisable) != 0)
+                return;
+            if ((clipControl & kClipPixelShaderModes) != 0 || (clipControl & kClipCullOnly) != 0)
+                LOG_ONCE("gpu: user clip plane mode %08X is not covered; the planes clip vertices", clipControl);
+            for (uint32_t plane = 0; plane < SharedConstants::kClipPlaneCount; plane++)
+            {
+                if ((planes & (1u << plane)) == 0)
+                    continue;
+                for (uint32_t i = 0; i < 4; i++)
+                {
+                    uint32_t bits = mem::Load32(devAddress + dev::kClipPlanes + 16 * plane + 4 * i);
+                    memcpy(&shared.clipPlanes[plane][i], &bits, 4);
+                }
+            }
+        }
+
         // The fixed-function state, viewport and scissor of the draw. False when the draw is not
         // covered (logged).
         bool ReadState(const Device& device, uint32_t devAddress, DrawOp& op)
@@ -325,8 +353,7 @@ namespace gpu::guest
                 LOG_ONCE("gpu: polygon mode %u is drawn filled", (rasterControl >> 3) & 3);
             if ((depthControl & kDepthEnable) != 0)
                 ReadPolygonOffset(device, rasterControl, op.state);
-            if ((device.Register(reg::kClipControl) & kUserClipPlanes) != 0)
-                LOG_ONCE("gpu: user clip planes are not applied yet");
+            ReadClipPlanes(device, devAddress, op.shared);
 
             // Alpha test: the pixel shader discards alpha below the threshold, which is GEQUAL;
             // GREATER differs only at the reference itself.

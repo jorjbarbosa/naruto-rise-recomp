@@ -22,7 +22,6 @@ namespace gpu
         constexpr uint32_t kVertexConstantsRoot = 0;
         constexpr uint32_t kPixelConstantsRoot = 1;
         constexpr uint32_t kSharedConstantsRoot = 2;
-        constexpr uint64_t kConstantAlignment = 256;
 
         // RB_DEPTHCONTROL: stencil test on.
         constexpr uint32_t kStencilEnable = 0x1;
@@ -94,8 +93,8 @@ namespace gpu
         targets_.BindForDraw(list, op.color, op.depth);
 
         // Per-draw data in the upload buffers.
-        constexpr uint64_t kSharedBytes = (sizeof(SharedConstants) + kConstantAlignment - 1) & ~(kConstantAlignment - 1);
-        Context::Upload constants = context_.Allocate(2 * op.vertexConstants.size() + kSharedBytes, kConstantAlignment);
+        constexpr uint64_t kSharedBytes = (sizeof(SharedConstants) + Context::kConstantAlignment - 1) & ~(Context::kConstantAlignment - 1);
+        Context::Upload constants = context_.Allocate(2 * op.vertexConstants.size() + kSharedBytes, Context::kConstantAlignment);
         memcpy(constants.data, op.vertexConstants.data(), op.vertexConstants.size());
         memcpy(constants.data + op.vertexConstants.size(), op.pixelConstants.data(), op.pixelConstants.size());
         memcpy(constants.data + 2 * op.vertexConstants.size(), &shared, sizeof(shared));

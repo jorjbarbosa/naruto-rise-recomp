@@ -137,9 +137,17 @@ namespace gpu
         guest::TextureFetch front = guest::ReadTextureFetch(frontBufferFetch);
         LOG_ONCE("gpu: front buffer at %08X, %ux%u, format %u", front.address, front.width, front.height, front.format);
 
+        // A ramp the title set since the last Swap (D3DDevice_SetGammaRamp, through the Options
+        // brightness) applies from this frame on.
         uint32_t device = guest::GetDevice().Address();
-        if (device != 0 && (mem::Load32(device + guest::dev::kSwapPending) & guest::dev::kSwapPendingGamma) != 0)
-            LOG_ONCE("gpu: the title set a gamma ramp; it is not applied yet");
+        if (g_renderer && device != 0 &&
+            (mem::Load32(device + guest::dev::kSwapPending) & guest::dev::kSwapPendingGamma) != 0)
+        {
+            GammaRamp ramp;
+            for (uint32_t i = 0; i < ramp.size(); i++)
+                ramp[i] = mem::Load16(device + guest::dev::kGammaRamp + 2 * i);
+            g_renderer->SetGammaRamp(ramp);
+        }
 
         if (g_renderer)
             g_renderer->Present(front.address);
