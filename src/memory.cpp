@@ -43,6 +43,12 @@ namespace mem
         VirtualAlloc(g_base + begin, size_t(end - begin), MEM_COMMIT, PAGE_READWRITE);
     }
 
+    uint32_t AtomicLoad32(uint32_t a)
+    {
+        std::atomic_ref<uint32_t> value(*reinterpret_cast<uint32_t*>(g_base + a));
+        return __builtin_bswap32(value.load(std::memory_order_acquire));
+    }
+
     int32_t AtomicAdd32(uint32_t a, int32_t delta)
     {
         std::atomic_ref<uint32_t> value(*reinterpret_cast<uint32_t*>(g_base + a));

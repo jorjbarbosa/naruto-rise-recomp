@@ -40,6 +40,9 @@ namespace mem
     inline void Store32(uint32_t a, uint32_t v) { v = __builtin_bswap32(v); memcpy(g_base + a, &v, 4); }
     inline void Store64(uint32_t a, uint64_t v) { v = __builtin_bswap64(v); memcpy(g_base + a, &v, 8); }
 
+    // Atomic (acquire) load of a big-endian 32-bit guest value, for host code that waits for a store
+    // made by another thread.
+    uint32_t AtomicLoad32(uint32_t a);
     // Atomic add on a big-endian 32-bit guest value; returns the new value.
     int32_t AtomicAdd32(uint32_t a, int32_t delta);
     // Atomic compare-exchange on a big-endian 32-bit guest value.
