@@ -8,6 +8,7 @@
 #include "gpu/renderer/passes.h"
 #include "gpu/renderer/presenter.h"
 #include "gpu/renderer/targets.h"
+#include "gpu/renderer/textures.h"
 #include "gpu/settings.h"
 #include "log.h"
 
@@ -84,6 +85,7 @@ namespace gpu
         std::unique_ptr<Descriptors> descriptors;
         std::unique_ptr<Passes> passes;
         std::unique_ptr<Targets> targets;
+        std::unique_ptr<Textures> textures;
         std::unique_ptr<Draws> draws;
         std::unique_ptr<Presenter> presenter;
         Renderer::BeforePost beforePost;
@@ -162,7 +164,8 @@ namespace gpu
         impl->descriptors = std::make_unique<Descriptors>(impl->context->Device());
         impl->passes = std::make_unique<Passes>(impl->context->Device(), Presenter::kFormat);
         impl->targets = std::make_unique<Targets>(*impl->context, *impl->passes, *impl->descriptors);
-        impl->draws = std::make_unique<Draws>(*impl->context, *impl->targets, *impl->descriptors);
+        impl->textures = std::make_unique<Textures>(*impl->context, *impl->targets, *impl->descriptors);
+        impl->draws = std::make_unique<Draws>(*impl->context, *impl->targets, *impl->descriptors, *impl->textures);
         impl->Start();
         return std::unique_ptr<Renderer>(new Renderer(std::move(impl)));
     }
@@ -192,6 +195,13 @@ namespace gpu
         impl_->Post([impl = impl_.get(), op = std::shared_ptr<DrawOp>(std::move(op))] { impl->draws->Draw(*op); });
     }
 
+    void Renderer::UploadTexture(std::unique_ptr<TextureUpload> upload)
+    {
+        impl_->Post([impl = impl_.get(), upload = std::shared_ptr<TextureUpload>(std::move(upload))] {
+            impl->textures->Upload(*upload);
+        });
+    }
+
     void Renderer::ReleaseSurface(uint32_t key)
     {
         impl_->Post([impl = impl_.get(), key] { impl->targets->ReleaseSurface(key); });
@@ -199,7 +209,10 @@ namespace gpu
 
     void Renderer::ReleaseTexture(uint32_t address, uint32_t header)
     {
-        impl_->Post([impl = impl_.get(), address, header] { impl->targets->ReleaseTexture(address, header); });
+        impl_->Post([impl = impl_.get(), address, header] {
+            impl->targets->ReleaseTexture(address, header);
+            impl->textures->Release(address);
+        });
     }
 
     void Renderer::Present(uint32_t frontAddress)

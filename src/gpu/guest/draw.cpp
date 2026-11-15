@@ -11,6 +11,7 @@
 #include "gpu/guest/device.h"
 #include "gpu/guest/resources.h"
 #include "gpu/guest/shaders.h"
+#include "gpu/guest/textures.h"
 #include "gpu/guest/vertex_input.h"
 #include "gpu/renderer/renderer.h"
 #include "kernel/kernel.h"
@@ -44,10 +45,9 @@ namespace gpu::guest
         constexpr uint32_t kEndian8in32 = 2;
         constexpr uint32_t kEndian16in32 = 3;
 
-        // Fetch constants: dword 0 holds the type in bits 0..1 (2: texture, 3: vertex). A vertex
-        // fetch constant has the address in dword 0, the endian swap in bits 0..1 and the size in
-        // dwords in bits 2..25 of dword 1.
-        constexpr uint32_t kFetchTypeTexture = 2;
+        // Fetch constants: dword 0 holds the type in bits 0..1 (3: vertex). A vertex fetch constant
+        // has the address in dword 0, the endian swap in bits 0..1 and the size in dwords in bits
+        // 2..25 of dword 1.
         constexpr uint32_t kFetchTypeVertex = 3;
 
         // A draw copies at most this much vertex data; past it the draw is not plausible.
@@ -509,14 +509,8 @@ namespace gpu::guest
             }
             op->shared.booleans = (mem::Load32(devAddress + dev::kVertexBooleans) & 0xFFFF) |
                 (mem::Load32(devAddress + dev::kPixelBooleans) & 0xFFFF) << 16;
-            for (uint32_t slot = 0; slot < SharedConstants::kFetchSlots; slot++)
-            {
-                uint32_t fetch = devAddress + dev::kFetchConstants + 24 * slot;
-                if ((mem::Load32(fetch) & 3) != kFetchTypeTexture)
-                    continue;
-                TextureFetch texture = ReadTextureFetch(fetch);
-                op->textures[slot] = { texture.is2D ? texture.address : 0, mem::Load32(fetch), mem::Load32(fetch + 12) };
-            }
+            // Last: the uploads it posts are only needed by a draw that is posted.
+            ReadDrawTextures(devAddress, *op);
             return op;
         }
 

@@ -21,6 +21,7 @@
 #define D3D_END_TILING sub_8213AC80               // D3DDevice_EndTiling
 #define D3D_RESOLVE sub_821398C8                  // D3DDevice_Resolve
 #define D3D_DESTROY_RESOURCE sub_8212D750         // D3D::DestroyResource
+#define D3D_UNLOCK_RESOURCE sub_8212DBE0          // D3D::UnlockResource
 #define D3D_DRAW_INDEXED_VERTICES sub_82137E00    // D3DDevice_DrawIndexedVertices
 #define D3D_DRAW_VERTICES sub_82137A18            // D3DDevice_DrawVertices
 #define D3D_BEGIN_VERTICES sub_821375A0           // D3DDevice_BeginVertices (LTCG: fan, 4 vertices of 20 bytes)
@@ -134,6 +135,9 @@ namespace gpu::guest
         constexpr uint32_t kTypeMask = 0xF;
         constexpr uint32_t kTypeTexture = 3;
         constexpr uint32_t kTypeSurface = 4;
+        // Bits 8..11: the lock count, which UnlockResource decrements.
+        constexpr uint32_t kLockCountShift = 8;
+        constexpr uint32_t kLockCountMask = 0xF;
 
         // D3DSurface (48 bytes). Multisampling: halfword, bits 0..1 (0: none, 1: 2 samples, 2: 4).
         constexpr uint32_t kSurfaceSamples = 0x18;

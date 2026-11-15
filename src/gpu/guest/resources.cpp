@@ -5,6 +5,8 @@
 
 #include "gpu/gpu.h"
 #include "gpu/guest/addresses.h"
+#include "gpu/guest/textures.h"
+#include "gpu/textures/layout.h"
 #include "kernel/kernel.h"
 
 #include <mutex>
@@ -14,13 +16,8 @@ namespace gpu::guest
 {
     namespace
     {
-        // Texture fetch constant fields (Xenos xe_gpu_texture_fetch_t), by dword.
-        constexpr uint32_t kFetchBaseMask = 0xFFFFF000; // dword 1
-        constexpr uint32_t kFetchFormatMask = 0x3F;     // dword 1
-        constexpr uint32_t kFetchSizeMask = 0x1FFF;     // dword 2: width - 1, height - 1 above it
-        constexpr uint32_t kFetchSizeShift = 13;
-        constexpr uint32_t kFetchBorder = 0x80000000;   // dword 3: a one-texel border on every side
-        constexpr uint32_t kFetchDimensionShift = 9;    // dword 5, 2 bits
+        // Surface format word: GPUTEXTUREFORMAT in bits 0..5.
+        constexpr uint32_t kFormatMask = 0x3F;
         constexpr uint32_t kDimension2D = 1;
 
         void LogUncoveredFormat(uint32_t format)
@@ -36,7 +33,7 @@ namespace gpu::guest
     std::optional<SurfaceDesc> DescribeSurface(uint32_t header)
     {
         uint32_t size = mem::Load32(header + res::kSurfaceSize);
-        uint32_t format = mem::Load32(header + res::kSurfaceFormat) & kFetchFormatMask;
+        uint32_t format = mem::Load32(header + res::kSurfaceFormat) & kFormatMask;
         SurfaceDesc desc;
         desc.key = header;
         desc.width = (size >> 18) + 1;
@@ -63,15 +60,16 @@ namespace gpu::guest
 
     TextureFetch ReadTextureFetch(uint32_t fetch)
     {
-        uint32_t base = mem::Load32(fetch + 4);
-        uint32_t size = mem::Load32(fetch + 8);
-        uint32_t border = (mem::Load32(fetch + 12) & kFetchBorder) != 0 ? 2 : 0;
+        textures::Fetch dwords;
+        for (uint32_t i = 0; i < 6; i++)
+            dwords.d[i] = mem::Load32(fetch + 4 * i);
+        uint32_t border = dwords.Border() ? 2 : 0;
         TextureFetch texture;
-        texture.address = GpuAddress(base & kFetchBaseMask);
-        texture.format = base & kFetchFormatMask;
-        texture.width = (size & kFetchSizeMask) + 1 + border;
-        texture.height = ((size >> kFetchSizeShift) & kFetchSizeMask) + 1 + border;
-        texture.is2D = ((mem::Load32(fetch + 20) >> kFetchDimensionShift) & 3) == kDimension2D;
+        texture.address = GpuAddress(dwords.BaseAddress());
+        texture.format = dwords.Format();
+        texture.width = dwords.Width() + border;
+        texture.height = dwords.Height() + border;
+        texture.is2D = dwords.DimensionField() == kDimension2D;
         return texture;
     }
 }
@@ -93,7 +91,7 @@ PPC_FUNC(D3D_DESTROY_RESOURCE)
             renderer->ReleaseSurface(resource);
             break;
         case res::kTypeTexture:
-            renderer->ReleaseTexture(ReadTextureFetch(resource + res::kTextureFetch).address, resource);
+            ForgetTexture(resource);
             break;
         default:
             break;

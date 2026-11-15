@@ -24,10 +24,12 @@ namespace gpu
         bool depth = false;
         bool written = false; // a resolve has written it
         uint32_t header = 0;  // the guest texture header of the last resolve into it
+        plume::RenderFormat format = plume::RenderFormat::UNKNOWN;
         std::unique_ptr<plume::RenderTexture> texture;
         std::unique_ptr<plume::RenderFramebuffer> framebuffer; // for the resolve passes
         std::unique_ptr<plume::RenderDescriptorSet> sampling;  // for the present
         TextureDescriptor descriptor;                          // for the draws that sample it
+        TextureViews views; // for the draws that read it through another format's swizzle
     };
 
     // The host side of the guest surfaces and of the texture memory they are resolved into.

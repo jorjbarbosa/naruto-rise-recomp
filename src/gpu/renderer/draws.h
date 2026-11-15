@@ -14,6 +14,7 @@ namespace gpu
     class Context;
     class Descriptors;
     class Targets;
+    class Textures;
 
     // The guest draws: pipelines over the translated shaders, created on first use, and the
     // recording of each draw with its own copies of the vertices, indices and constants. Owner
@@ -21,7 +22,7 @@ namespace gpu
     class Draws
     {
     public:
-        Draws(Context& context, Targets& targets, Descriptors& descriptors);
+        Draws(Context& context, Targets& targets, Descriptors& descriptors, Textures& textures);
         ~Draws();
 
         // Records the draw; a draw whose shaders or pipeline are missing is skipped (logged).
@@ -53,6 +54,7 @@ namespace gpu
         Context& context_;
         Targets& targets_;
         Descriptors& descriptors_;
+        Textures& textures_;
         ShaderCache cache_;
         std::unique_ptr<plume::RenderPipelineLayout> layout_;
         std::unordered_map<uint64_t, std::unique_ptr<plume::RenderShader>> shaders_;

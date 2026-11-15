@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gpu/textures/layout.h"
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -127,6 +129,49 @@ namespace gpu
         bool operator==(const RenderState&) const = default;
     };
 
+    // The sampler state of a texture fetch constant. The levels sampled are part of the texture's
+    // view (DrawTexture::mipMin, mipMax), so few samplers cover every texture.
+    struct SamplerState
+    {
+        uint32_t clamp = 0;  // fetch dword 0 bits 10..18: the clamp modes of X, Y and Z
+        uint32_t filter = 0; // fetch dword 3 bits 19..27: mag, min, mip and anisotropic filters
+        int32_t lodBias = 0; // in 1/32
+        uint32_t border = 0; // fetch dword 5 bits 0..1
+    };
+
+    // How a draw samples the texture of a fetch constant.
+    struct DrawTexture
+    {
+        enum class Kind : uint8_t
+        {
+            None,   // no texture: the slot reads as zero
+            Planar, // a 1D or 2D texture (the 2D set)
+            Cube,
+        };
+
+        Kind kind = Kind::None;
+        // The texture resolved at the address, or the one uploaded for (address, layout).
+        bool resolved = false;
+        uint32_t address = 0;
+        uint64_t layout = 0;
+        uint32_t format = 0;  // GPUTEXTUREFORMAT
+        uint32_t swizzle = 0; // fetch swizzle: 3 bits per component (x, y, z, w, 0, 1)
+        uint32_t mipMin = 0;  // the levels sampled (uploaded textures)
+        uint32_t mipMax = 0;
+        SamplerState sampler;
+    };
+
+    // The content of a guest texture, copied from guest memory for the host texture of (address,
+    // layout key): the ranges of memory its layout reads, back to back in data.
+    struct TextureUpload
+    {
+        uint32_t address = 0;
+        uint64_t layoutKey = 0;
+        textures::Layout layout;
+        std::vector<std::pair<uint32_t, uint32_t>> ranges; // GPU address, bytes
+        std::vector<uint8_t> data;
+    };
+
     // A draw: shaders, targets, state, and copies of the vertices, indices and constants it reads.
     // Everything is a triangle list by then.
     struct DrawOp
@@ -148,15 +193,7 @@ namespace gpu
         std::array<uint8_t, 4096> vertexConstants{};
         std::array<uint8_t, 4096> pixelConstants{};
         SharedConstants shared; // descriptor indices filled by the renderer from textures
-        // Each texture fetch constant: the GPU address of its 2D texture (0: none, or a texture
-        // that is not 2D) and the dwords with its sampler state (0 and 3).
-        struct Texture
-        {
-            uint32_t address = 0;
-            uint32_t sampler0 = 0;
-            uint32_t sampler3 = 0;
-        };
-        std::array<Texture, SharedConstants::kFetchSlots> textures{};
+        std::array<DrawTexture, SharedConstants::kFetchSlots> textures{}; // by texture fetch constant
 
         float viewport[6] = {}; // x, y, width, height, min depth, max depth
         Rect scissor;
@@ -185,11 +222,15 @@ namespace gpu
         void Clear(const ClearOp& op);
         void Resolve(const ResolveOp& op);
         void Draw(std::unique_ptr<DrawOp> op);
+        // Fills the host texture of (address, layout key) with new content; draws posted after it
+        // sample it.
+        void UploadTexture(std::unique_ptr<TextureUpload> upload);
 
         // The guest surface is gone; its host texture is released once the GPU no longer uses it.
         void ReleaseSurface(uint32_t key);
-        // A guest texture header is gone. The texture resolved at its address is released if that
-        // header made it; other headers over the same memory leave it alone.
+        // A guest texture header is gone. The textures uploaded from its address are released, and
+        // the texture resolved there if that header made it (other headers over the same memory
+        // leave a resolved texture alone).
         void ReleaseTexture(uint32_t address, uint32_t header);
 
         // Presents the texture resolved at the given GPU address, fitted to the window (black when

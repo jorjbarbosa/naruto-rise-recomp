@@ -72,13 +72,13 @@ namespace gpu
         resolved.width = width;
         resolved.height = height;
         resolved.depth = depth;
+        resolved.format = depth ? kResolvedDepthFormat : kColorFormat;
         // A render target too: the resolve passes draw into it.
-        resolved.texture = device.createTexture(
-            plume::RenderTextureDesc::ColorTarget(width, height, depth ? kResolvedDepthFormat : kColorFormat));
+        resolved.texture = device.createTexture(plume::RenderTextureDesc::ColorTarget(width, height, resolved.format));
         const plume::RenderTexture* attachment = resolved.texture.get();
         resolved.framebuffer = device.createFramebuffer(plume::RenderFramebufferDesc(&attachment, 1));
         resolved.sampling = passes_.CreateTextureSet(*resolved.texture, nullptr);
-        resolved.descriptor = TextureDescriptor(descriptors_, *resolved.texture);
+        resolved.descriptor = TextureDescriptor(descriptors_, TextureSet::k2D, *resolved.texture);
         return resolved;
     }
 

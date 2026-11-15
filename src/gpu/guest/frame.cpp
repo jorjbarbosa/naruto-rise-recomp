@@ -9,6 +9,7 @@
 #include "gpu/guest/device.h"
 #include "gpu/guest/draw.h"
 #include "gpu/guest/resources.h"
+#include "gpu/guest/textures.h"
 #include "gpu/renderer/renderer.h"
 #include "gpu/settings.h"
 #include "host/window.h"
@@ -132,6 +133,7 @@ namespace gpu
 
         if (g_renderer)
             g_renderer->Present(front.address);
+        guest::EndTextureFrame();
         g_limiter.Pace(device != 0 ? mem::Load32(device + guest::dev::kPresentInterval) : 1);
     }
 }

@@ -7,6 +7,7 @@
 #include "gpu/guest/addresses.h"
 #include "gpu/guest/device.h"
 #include "gpu/guest/resources.h"
+#include "gpu/guest/textures.h"
 #include "gpu/renderer/renderer.h"
 #include "kernel/kernel.h"
 
@@ -146,7 +147,10 @@ namespace gpu::guest
                         op.destHeight = texture.height;
                         op.destHeader = dest;
                         if (Renderer* renderer = ActiveRenderer())
+                        {
                             renderer->Resolve(op);
+                            NoteResolved(texture.address, dest);
+                        }
                     }
                     else
                     {

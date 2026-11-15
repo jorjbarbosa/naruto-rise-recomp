@@ -5,6 +5,7 @@
 #include "gpu/renderer/context.h"
 #include "gpu/renderer/descriptors.h"
 #include "gpu/renderer/targets.h"
+#include "gpu/renderer/textures.h"
 #include "log.h"
 
 #include <plume_d3d12.h>
@@ -144,8 +145,8 @@ namespace gpu
         return size_t(hash);
     }
 
-    Draws::Draws(Context& context, Targets& targets, Descriptors& descriptors)
-        : context_(context), targets_(targets), descriptors_(descriptors)
+    Draws::Draws(Context& context, Targets& targets, Descriptors& descriptors, Textures& textures)
+        : context_(context), targets_(targets), descriptors_(descriptors), textures_(textures)
     {
         const plume::RenderRootDescriptorDesc roots[] = {
             { kVertexConstantsRoot, kConstantSpace, plume::RenderRootDescriptorType::CONSTANT_BUFFER },
@@ -271,25 +272,9 @@ namespace gpu
             return;
         plume::RenderCommandList& list = context_.Commands();
 
-        // Textures: the ones resolved at their addresses, otherwise none (they read as zero).
         SharedConstants shared = op.shared;
         for (uint32_t slot = 0; slot < SharedConstants::kFetchSlots; slot++)
-        {
-            const DrawOp::Texture& texture = op.textures[slot];
-            if (texture.address == 0)
-                continue;
-            shared.sampler[slot] = descriptors_.Sampler(texture.sampler0, texture.sampler3);
-            if (ResolvedTexture* resolved = targets_.Resolved(texture.address))
-            {
-                list.barriers(plume::RenderBarrierStage::GRAPHICS,
-                    plume::RenderTextureBarrier(resolved->texture.get(), plume::RenderTextureLayout::SHADER_READ));
-                shared.texture2D[slot] = resolved->descriptor.Index();
-            }
-            else
-            {
-                LOG_ONCE("gpu: textures other than resolved surfaces are not uploaded yet; they read as zero");
-            }
-        }
+            textures_.Bind(list, slot, op.textures[slot], shared);
         targets_.BindForDraw(list, op.color, op.depth);
 
         // Per-draw data in the upload buffers.
