@@ -131,6 +131,73 @@ GUEST_FUNC(XamNotifyCreateListener)
 GUEST_FUNC(XNotifyGetNext) { ctx.r3.u64 = 0; }
 GUEST_FUNC(XNotifyPositionUI) {}
 
+// ---- XMsg: the XMP system music player (app 0xFA) ----
+// No user music plays here, so the title always controls background music. The XDK's
+// XMPTitleHasPlaybackControl reads the controller and a flag from XMPGetPlaybackController into
+// uninitialized locals and grants control only when both are 0; the game polls it every frame and
+// pauses its music while control is reported elsewhere.
+
+namespace
+{
+    constexpr uint32_t kXmpApp = 0xFA;
+    constexpr uint32_t kXmpSetVolume = 0x7000C;
+    constexpr uint32_t kXmpSetPlaybackController = 0x7001A;
+    constexpr uint32_t kXmpGetPlaybackController = 0x7001B;
+    constexpr uint32_t kXmpControllerTitle = 0;
+
+    // Requests that only change the system player, which does not exist: done.
+    bool IsXmpRequest(uint32_t app, uint32_t message)
+    {
+        return app == kXmpApp && (message == kXmpSetVolume || message == kXmpSetPlaybackController);
+    }
+}
+
+// XMsgInProcessCall(app, message, param1, param2)
+GUEST_FUNC(XMsgInProcessCall)
+{
+    uint32_t app = ctx.r3.u32;
+    uint32_t message = ctx.r4.u32;
+    uint32_t params = ctx.r5.u32;
+    if (app == kXmpApp && message == kXmpGetPlaybackController && params != 0)
+    {
+        // { client, controller*, flag* }
+        uint32_t controller = mem::Load32(params + 4);
+        uint32_t flag = mem::Load32(params + 8);
+        if (controller != 0)
+            mem::Store32(controller, kXmpControllerTitle);
+        if (flag != 0)
+            mem::Store32(flag, 0);
+        ctx.r3.u64 = X_STATUS_SUCCESS;
+        return;
+    }
+    LOG_ONCE("unimplemented: XMsgInProcessCall(app %X, message %X)", app, message);
+    ctx.r3.u64 = X_STATUS_NOT_IMPLEMENTED;
+}
+
+// XMsgStartIORequest(app, message, overlapped, buffer, size)
+GUEST_FUNC(XMsgStartIORequest)
+{
+    if (!IsXmpRequest(ctx.r3.u32, ctx.r4.u32))
+    {
+        LOG_ONCE("unimplemented: XMsgStartIORequest(app %X, message %X)", ctx.r3.u32, ctx.r4.u32);
+        ctx.r3.u64 = X_STATUS_NOT_IMPLEMENTED;
+        return;
+    }
+    ctx.r3.u64 = CompleteOverlapped(ctx.r5.u32, X_ERROR_SUCCESS);
+}
+
+// XMsgStartIORequestEx(app, message, overlapped, buffer, size, extra)
+GUEST_FUNC(XMsgStartIORequestEx)
+{
+    if (!IsXmpRequest(ctx.r3.u32, ctx.r4.u32))
+    {
+        LOG_ONCE("unimplemented: XMsgStartIORequestEx(app %X, message %X)", ctx.r3.u32, ctx.r4.u32);
+        ctx.r3.u64 = X_STATUS_NOT_IMPLEMENTED;
+        return;
+    }
+    ctx.r3.u64 = CompleteOverlapped(ctx.r5.u32, X_ERROR_SUCCESS);
+}
+
 // ---- Loader ----
 
 GUEST_FUNC(XamLoaderGetLaunchDataSize)

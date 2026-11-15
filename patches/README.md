@@ -200,3 +200,17 @@ of the shared constants (`c32.y`, replacing `g_SwappedTexcoords`): every shader 
 and the branch on it is uniform. The library target of `DxcCompiler::compile` is gone.
 
 Result: 3,322 of 3,322 compile, with one DXIL per shader.
+
+## ffmpeg
+
+FFmpeg n7.1.5, shallow. The runtime builds only libavutil and libavcodec with the `xma1` decoder, from the
+configuration `scripts/ffmpeg-configure.ps1` writes to `cmake/ffmpeg` (see that script).
+
+### 0001: XMA, a single stream without the 4096-sample hold-back
+
+`xma_decode_packet` (`libavcodec/wmaprodec.c`) keeps the last 4096 samples in its FIFOs until the end of the
+input, so they can be trimmed at the end of a file and the streams of a multi-stream file stay aligned. The
+runtime feeds one stream of an XMA hardware context packet by packet and never ends it: with the hold-back,
+short sounds (one 2048-byte packet is often less than 4096 samples) would come out only with the next
+sound. With a single stream the samples now come out as soon as their packet is decoded; several streams
+keep the hold-back.

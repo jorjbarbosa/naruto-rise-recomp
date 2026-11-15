@@ -93,6 +93,27 @@ target_include_directories(zstd_decompress PUBLIC "${XENOS_THIRDPARTY_DIR}/zstd/
 target_compile_definitions(zstd_decompress PRIVATE ZSTD_DISABLE_ASM)
 target_compile_options(zstd_decompress PRIVATE -Wno-everything)
 
+# FFmpeg's XMA1 decoder (libavutil + libavcodec with the xma1 decoder only), built from the sources
+# and configuration that scripts/ffmpeg-configure.ps1 wrote to cmake/ffmpeg, as FFmpeg's make would.
+set(FFMPEG_DIR "${CMAKE_SOURCE_DIR}/thirdparty/ffmpeg")
+set(FFMPEG_CONFIG_DIR "${CMAKE_SOURCE_DIR}/cmake/ffmpeg")
+include("${FFMPEG_CONFIG_DIR}/sources.cmake")
+function(add_ffmpeg_library name)
+    list(TRANSFORM ARGN PREPEND "${FFMPEG_DIR}/")
+    add_library(ffmpeg_${name} STATIC ${ARGN})
+    target_include_directories(ffmpeg_${name} PUBLIC "${FFMPEG_CONFIG_DIR}" "${FFMPEG_DIR}"
+        PRIVATE "${FFMPEG_DIR}/compat/stdbit")
+    target_compile_definitions(ffmpeg_${name} PRIVATE HAVE_AV_CONFIG_H BUILDING_${name} _ISOC11_SOURCE
+        _FILE_OFFSET_BITS=64 _LARGEFILE_SOURCE WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES _CRT_SECURE_NO_WARNINGS
+        _CRT_NONSTDC_NO_WARNINGS _WIN32_WINNT=0x0600)
+    target_compile_options(ffmpeg_${name} PRIVATE /std:c17 -utf-8 -Wno-everything)
+endfunction()
+add_ffmpeg_library(avutil ${FFMPEG_AVUTIL_SOURCES})
+target_link_libraries(ffmpeg_avutil PUBLIC user32 bcrypt)
+add_ffmpeg_library(avcodec ${FFMPEG_AVCODEC_SOURCES})
+# codec_list.c and the other lists are included by allcodecs.c and its siblings, from the config dir.
+target_link_libraries(ffmpeg_avcodec PUBLIC ffmpeg_avutil ole32 user32)
+
 # Every kernel/XAM import of the recompiled modules gets a weak logging stub (src/kernel/stubs.cpp);
 # the runtime overrides the implemented ones. The list comes from the generated headers.
 set(IMPORT_NAMES "")
@@ -141,7 +162,7 @@ file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
 add_executable(roan-xenon ${SOURCES} ${GPU_SHADER_HEADERS} ${PPC_MODULE_OBJECTS} $<TARGET_OBJECTS:shader_cache>)
 target_include_directories(roan-xenon PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_BINARY_DIR}/generated"
     "${PPC_OUTPUT_DIR}" "${XENOS_THIRDPARTY_DIR}/xxHash")
-target_link_libraries(roan-xenon PRIVATE ppc_common XenonUtils plume zstd_decompress SDL3::SDL3-static dbghelp)
+target_link_libraries(roan-xenon PRIVATE ppc_common XenonUtils plume zstd_decompress SDL3::SDL3-static ffmpeg_avcodec dbghelp)
 target_compile_options(roan-xenon PRIVATE /EHsc /Z7 -Wno-unused-parameter -Wno-null-arithmetic)
 target_link_options(roan-xenon PRIVATE /DEBUG /STACK:16777216)
 set_target_properties(roan-xenon PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

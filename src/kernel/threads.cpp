@@ -6,6 +6,7 @@
 #include "loader.h"
 
 #include <atomic>
+#include <bit>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -20,9 +21,9 @@ namespace kernel
         {
             std::mutex suspendMutex;
             std::condition_variable suspendCv;
-            PPCFunc* entry = nullptr;
-            uint32_t arg0 = 0;
-            uint32_t arg1 = 0;
+            // What the thread runs once its stack and KPCR are in ctx: a guest entry point, or
+            // host code for system threads.
+            std::function<void(PPCContext&)> body;
         };
 
         std::mutex g_threadsMutex;
@@ -34,8 +35,28 @@ namespace kernel
         uint64_t g_tlsUsed = 0;
 
         constexpr uint32_t kDispatcherThread = 6;
+        constexpr uint32_t kPcrProcessor = 0x10C;
+        constexpr uint32_t kHardwareThreads = 6;
 
-        HostThread* NewThread(uint32_t stackSize)
+        // Processor (hardware thread) of the calling guest thread: a new thread without an
+        // affinity starts on the processor of the thread that creates it.
+        uint8_t CurrentProcessor()
+        {
+            HostThread* thread = t_current;
+            return thread != nullptr ? mem::Load8(thread->pcr + kPcrProcessor) : 0;
+        }
+
+        // The lowest hardware thread of an affinity mask, or fallback when the mask names none.
+        uint8_t ProcessorFromAffinity(uint32_t affinity, uint8_t fallback)
+        {
+            affinity &= (1u << kHardwareThreads) - 1;
+            return affinity != 0 ? uint8_t(std::countr_zero(affinity)) : fallback;
+        }
+
+        // KPCR+0x10C holds the processor number. Each guest thread has its own KPCR here, so the
+        // number follows the thread: XAudio's processing threads index per-processor state with
+        // it and wait for the processors they were created on.
+        HostThread* NewThread(uint32_t stackSize, uint8_t processor)
         {
             auto thread = std::make_unique<HostThread>();
             thread->id = g_nextThreadId++;
@@ -60,7 +81,7 @@ namespace kernel
             mem::Store32(thread->pcr + 0x70, stackTop);
             mem::Store32(thread->pcr + 0x74, thread->stackBase);
             mem::Store32(thread->pcr + 0x100, thread->kthread);
-            mem::Store8(thread->pcr + 0x10C, 0); // current processor
+            mem::Store8(thread->pcr + kPcrProcessor, processor);
 
             // KTHREAD fields read by XAPI.
             mem::Store32(thread->kthread + 0x5C, stackTop);
@@ -78,10 +99,19 @@ namespace kernel
             PPCContext ctx{};
             ctx.r1.u64 = thread->stackBase + thread->stackSize - 0x100;
             ctx.r13.u64 = thread->pcr;
-            ctx.r3.u64 = thread->arg0;
-            ctx.r4.u64 = thread->arg1;
             ctx.fpscr.loadFromHost();
-            thread->entry(ctx, mem::g_base);
+            thread->body(ctx);
+        }
+
+        // A body that calls a guest entry point with r3 and r4.
+        std::function<void(PPCContext&)> GuestEntry(PPCFunc* entry, uint32_t arg0, uint32_t arg1)
+        {
+            return [=](PPCContext& ctx)
+            {
+                ctx.r3.u64 = arg0;
+                ctx.r4.u64 = arg1;
+                entry(ctx, mem::g_base);
+            };
         }
 
         DWORD WINAPI HostThreadMain(void* parameter)
@@ -94,6 +124,14 @@ namespace kernel
             RunGuest(thread);
             SignalObject(thread->object);
             return 0;
+        }
+
+        void StartHostThread(HostThread* thread)
+        {
+            HANDLE host = CreateThread(nullptr, 16 * 1024 * 1024, HostThreadMain, thread, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+            if (host == nullptr)
+                Fatal("cannot create the host thread of guest thread %u", thread->id);
+            ::CloseHandle(host);
         }
     }
 
@@ -131,10 +169,19 @@ namespace kernel
 
     void RunMainThread(PPCFunc* entry, uint32_t stackSize)
     {
-        HostThread* thread = NewThread(stackSize);
+        HostThread* thread = NewThread(stackSize, 0);
         thread->name = "main";
-        thread->entry = entry;
+        thread->body = GuestEntry(entry, 0, 0);
         RunGuest(thread);
+    }
+
+    GuestThread* StartSystemThread(const char* name, std::function<void(PPCContext&)> body)
+    {
+        HostThread* thread = NewThread(g_module.stackSize, CurrentProcessor());
+        thread->name = name;
+        thread->body = std::move(body);
+        StartHostThread(thread);
+        return thread;
     }
 
     int32_t ResumeThread(GuestThread* guestThread)
@@ -174,19 +221,17 @@ GUEST_FUNC(ExCreateThread)
     if (function == nullptr)
         Fatal("ExCreateThread: entry %08X is not a known function", entry);
 
-    auto* thread = NewThread(stackSize != 0 ? stackSize : g_module.stackSize);
-    thread->entry = function;
-    thread->arg0 = xapiStartup != 0 ? startAddress : startContext;
-    thread->arg1 = xapiStartup != 0 ? startContext : 0;
+    // Bits 24-29 of the flags are the affinity (XAudio: (1 << hardwareThread) << 24 | suspended).
+    uint8_t processor = ProcessorFromAffinity(flags >> 24, CurrentProcessor());
+    auto* thread = NewThread(stackSize != 0 ? stackSize : g_module.stackSize, processor);
+    thread->body = GuestEntry(function, xapiStartup != 0 ? startAddress : startContext,
+        xapiStartup != 0 ? startContext : 0);
     thread->suspendCount = (flags & 1) ? 1 : 0; // CREATE_SUSPENDED
 
-    TRACE("ExCreateThread: thread %u entry %08X start %08X context %08X flags %08X",
-        thread->id, entry, startAddress, startContext, flags);
+    TRACE("ExCreateThread: thread %u entry %08X start %08X context %08X flags %08X processor %u",
+        thread->id, entry, startAddress, startContext, flags, processor);
 
-    HANDLE host = CreateThread(nullptr, 16 * 1024 * 1024, HostThreadMain, thread, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
-    if (host == nullptr)
-        Fatal("ExCreateThread: CreateThread failed");
-    ::CloseHandle(host);
+    StartHostThread(thread);
 
     if (handlePtr != 0)
         mem::Store32(handlePtr, CreateHandle(thread->object));
@@ -240,10 +285,24 @@ GUEST_FUNC(NtSuspendThread)
     ctx.r3.u64 = X_STATUS_SUCCESS;
 }
 
+// KeSetAffinityThread(thread, affinity, previousAffinity*): moves the thread to the lowest hardware
+// thread of the mask (XSetThreadProcessor passes a single bit). The thread may be running: the
+// processor byte is read by its own code, which sees the new value from then on.
 GUEST_FUNC(KeSetAffinityThread)
 {
+    GuestThread* thread = ThreadByObject(ctx.r3.u32);
+    uint32_t affinity = ctx.r4.u32 & ((1u << kHardwareThreads) - 1);
+    if (thread == nullptr || affinity == 0)
+    {
+        ctx.r3.u64 = X_STATUS_INVALID_PARAMETER;
+        return;
+    }
+    uint8_t previous = mem::Load8(thread->pcr + kPcrProcessor);
+    uint8_t processor = ProcessorFromAffinity(affinity, previous);
+    mem::Store8(thread->pcr + kPcrProcessor, processor);
     if (ctx.r5.u32 != 0)
-        mem::Store32(ctx.r5.u32, 1);
+        mem::Store32(ctx.r5.u32, 1u << previous);
+    TRACE("KeSetAffinityThread: thread %u, processor %u -> %u", thread->id, previous, processor);
     ctx.r3.u64 = X_STATUS_SUCCESS;
 }
 

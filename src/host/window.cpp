@@ -29,6 +29,9 @@ namespace host
         // Without gamepads the game still runs on the keyboard.
         if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD))
             Log("error: no gamepad support, keyboard only: %s", SDL_GetError());
+        // Without audio the game runs silent (host/audio.cpp keeps time instead).
+        if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
+            Log("error: no audio support: %s", SDL_GetError());
         g_window = SDL_CreateWindow(title, width, height, SDL_WINDOW_RESIZABLE);
         if (g_window == nullptr)
         {

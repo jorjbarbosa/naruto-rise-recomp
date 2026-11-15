@@ -3,6 +3,7 @@
 // usage: roan-xenon [game folder]   (default: <repository>/game)
 // ROAN_TRACE=1 logs every traced kernel call.
 
+#include "apu/xma.h"
 #include "host/input.h"
 #include "host/window.h"
 #include "kernel/kernel.h"
@@ -116,6 +117,8 @@ int main(int argc, char** argv)
     kernel::SetPaths(gameDir.string(), (exeDir / "userdata").string());
     if (!LoadExecutable(gameDir / "default.xex"))
         return 1;
+    // XAudioInitialize reads the XMA context base early in the title's startup.
+    apu::InitializeXma();
 
     if (!host::CreateMainWindow("roan-xenon", 1280, 720))
         return 1;

@@ -4,7 +4,8 @@
 
 namespace host
 {
-    // Initializes SDL video and opens the window. False on failure (logged).
+    // Initializes SDL (video, and gamepads and audio when available) and opens the window. False
+    // on failure (logged).
     bool CreateMainWindow(const char* title, int width, int height);
     // HWND of the window, or null before it exists. Any thread.
     void* MainWindowHandle();

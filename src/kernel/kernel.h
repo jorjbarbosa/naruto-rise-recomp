@@ -183,6 +183,12 @@ namespace kernel
     // Runs the main thread: sets up stack and KPCR, then calls entry (blocking).
     void RunMainThread(PPCFunc* entry, uint32_t stackSize);
 
+    // Starts a guest thread that runs host code, for the runtime's own drivers. Like a title thread
+    // it has a KTHREAD, a KPCR and a guest stack, and it starts on the processor of the calling
+    // guest thread. body runs on a new host thread with r1 and r13 set up, so it can call guest
+    // functions with ctx; the guest thread ends when body returns. Returns the new thread.
+    GuestThread* StartSystemThread(const char* name, std::function<void(PPCContext&)> body);
+
     // Resumes a suspended thread; returns the previous suspend count.
     int32_t ResumeThread(GuestThread* thread);
 

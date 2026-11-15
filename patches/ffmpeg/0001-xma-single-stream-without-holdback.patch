@@ -1,0 +1,15 @@
+diff --git a/libavcodec/wmaprodec.c b/libavcodec/wmaprodec.c
+index a6c4a75..5845377 100644
+--- a/libavcodec/wmaprodec.c
++++ b/libavcodec/wmaprodec.c
+@@ -1923,7 +1923,9 @@ static int xma_decode_packet(AVCodecContext *avctx, AVFrame *frame,
+             nb_samples = FFMIN(nb_samples, av_audio_fifo_size(s->samples[0][i]));
+         }
+ 
+-        if (!eof && avpkt->size)
++        /* the tail kept for the end trim matters to files; a single stream fed packet by packet
++         * (a hardware context) needs every sample as soon as it is decoded */
++        if (!eof && avpkt->size && s->num_streams > 1)
+             nb_samples -= FFMIN(nb_samples, 4096);
+ 
+         /* copy samples from buffer to output if possible */
