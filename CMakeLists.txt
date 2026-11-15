@@ -63,11 +63,34 @@ foreach(line IN LISTS PPC_EXTERN_LINES)
 endforeach()
 file(CONFIGURE OUTPUT "${CMAKE_BINARY_DIR}/generated/imports.inc" CONTENT "${IMPORTS_INC}")
 
+# The renderer's own passes, compiled to DXIL headers with the DXC of the XenosRecomp submodule
+# (its dxil.dll signs them).
+set(DXC "${CMAKE_SOURCE_DIR}/tools/XenosRecomp/thirdparty/dxc-bin/bin/x64/dxc.exe")
+set(GPU_SHADER_DIR "${CMAKE_SOURCE_DIR}/src/gpu/renderer/shaders")
+set(GPU_SHADER_OUTPUT "${CMAKE_BINARY_DIR}/generated/shaders")
+file(MAKE_DIRECTORY "${GPU_SHADER_OUTPUT}")
+set(GPU_SHADER_HEADERS "")
+# add_gpu_shader(<header name> <array name> <source> <profile> [dxc options...])
+function(add_gpu_shader name variable source profile)
+    set(output "${GPU_SHADER_OUTPUT}/${name}.h")
+    add_custom_command(OUTPUT "${output}"
+        COMMAND "${DXC}" -nologo -T ${profile} -E main -O3 -Vn ${variable} -Fh "${output}" ${ARGN} "${GPU_SHADER_DIR}/${source}"
+        DEPENDS "${GPU_SHADER_DIR}/${source}"
+        COMMENT "Compiling shader ${name}"
+        VERBATIM)
+    set(GPU_SHADER_HEADERS ${GPU_SHADER_HEADERS} "${output}" PARENT_SCOPE)
+endfunction()
+add_gpu_shader(fullscreen_vs kFullscreenVs fullscreen_vs.hlsl vs_6_0)
+add_gpu_shader(present_ps kPresentPs present_ps.hlsl ps_6_0)
+add_gpu_shader(resolve_color_ms_ps kResolveColorMsPs resolve_ps.hlsl ps_6_0 -DMULTISAMPLE=1)
+add_gpu_shader(resolve_depth_ps kResolveDepthPs resolve_ps.hlsl ps_6_0 -DDEPTH=1)
+add_gpu_shader(resolve_depth_ms_ps kResolveDepthMsPs resolve_ps.hlsl ps_6_0 -DDEPTH=1 -DMULTISAMPLE=1)
+
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/*.h")
 
-add_executable(roan-xenon ${SOURCES} $<TARGET_OBJECTS:ppc_generated>)
+add_executable(roan-xenon ${SOURCES} ${GPU_SHADER_HEADERS} $<TARGET_OBJECTS:ppc_generated>)
 target_include_directories(roan-xenon PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_BINARY_DIR}/generated")
 target_link_libraries(roan-xenon PRIVATE ppc_common XenonUtils plume SDL3::SDL3-static dbghelp xinput)
 target_compile_options(roan-xenon PRIVATE /EHsc /Z7 -Wno-unused-parameter -Wno-null-arithmetic)

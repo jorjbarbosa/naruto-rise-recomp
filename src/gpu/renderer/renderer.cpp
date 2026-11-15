@@ -1,18 +1,20 @@
-// D3D12 renderer on Plume: owner thread, completion thread and present.
+// The renderer: device creation and the owner thread that runs the posted operations.
 
 #include "gpu/renderer/renderer.h"
 
+#include "gpu/renderer/context.h"
+#include "gpu/renderer/passes.h"
+#include "gpu/renderer/presenter.h"
+#include "gpu/renderer/targets.h"
 #include "gpu/settings.h"
 #include "log.h"
 
 #include <plume_d3d12.h>
 
-#include <array>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
 #include <thread>
-#include <vector>
 
 namespace plume
 {
@@ -23,219 +25,86 @@ namespace gpu
 {
     namespace
     {
-        constexpr uint32_t kSwapBuffers = 3;
-        constexpr uint32_t kFrameLatency = 1;
-        constexpr uint32_t kFramesInFlight = 2;
-        constexpr plume::RenderFormat kSwapFormat = plume::RenderFormat::B8G8R8A8_UNORM;
-        // Placeholder image until the guest front buffer is presented.
-        const plume::RenderColor kClearColor(0.0f, 0.25f, 0.5f, 1.0f);
-
-        void NameThread(std::thread& thread, const wchar_t* name)
+        // Debug layer: the guest clears to any value, so the hint that a clear does not match the
+        // value given at the target's creation is noise.
+        void FilterDebugMessages(plume::RenderDevice& device)
         {
-            SetThreadDescription(static_cast<HANDLE>(thread.native_handle()), name);
+            ID3D12InfoQueue* queue = nullptr;
+            if (FAILED(static_cast<plume::D3D12Device&>(device).d3d->QueryInterface(IID_PPV_ARGS(&queue))))
+                return;
+            D3D12_MESSAGE_ID ignored[] = { D3D12_MESSAGE_ID_CLEARRENDERTARGETVIEW_MISMATCHINGCLEARVALUE,
+                D3D12_MESSAGE_ID_CLEARDEPTHSTENCILVIEW_MISMATCHINGCLEARVALUE };
+            D3D12_INFO_QUEUE_FILTER filter = {};
+            filter.DenyList.NumIDs = UINT(std::size(ignored));
+            filter.DenyList.pIDList = ignored;
+            queue->AddStorageFilterEntries(&filter);
+            queue->Release();
         }
     }
 
-    struct Renderer::State
+    class Renderer::Impl
     {
-        Completion completion;
-
-        std::unique_ptr<plume::RenderInterface> api;
-        std::unique_ptr<plume::RenderDevice> device;
-        std::unique_ptr<plume::RenderCommandQueue> queue;
-        std::unique_ptr<plume::RenderSwapChain> swapChain;
-        std::vector<std::unique_ptr<plume::RenderFramebuffer>> framebuffers;
-
-        struct Frame
+    public:
+        ~Impl()
         {
-            std::unique_ptr<plume::RenderCommandList> list;
-            uint64_t submission = 0; // submission that last used the list
-        };
-        std::array<Frame, kFramesInFlight> frames;
-        uint32_t nextFrame = 0;
-        // Empty list submitted to fence the queue after the last Present.
-        std::unique_ptr<plume::RenderCommandList> idleList;
-        uint64_t submitted = 0; // owner thread
-        bool presentFailed = false;
+            if (owner_.joinable())
+            {
+                {
+                    std::lock_guard lock(mutex_);
+                    stopping_ = true;
+                }
+                cv_.notify_all();
+                owner_.join();
+            }
+            if (context)
+                context->WaitIdle();
+        }
 
-        // Owner thread and its task queue.
-        std::thread owner;
-        std::mutex taskMutex;
-        std::condition_variable taskCv;
-        std::deque<std::function<void()>> tasks;
-        bool stopping = false;
-
-        // Completion thread. A pending entry is a submission to wait for (fence) or a token to
-        // report; the queue keeps posting order.
-        struct Pending
+        void Start()
         {
-            plume::RenderCommandFence* fence = nullptr;
-            bool hasToken = false;
-            uint32_t token = 0;
-        };
-        std::thread completer;
-        std::mutex pendingMutex;
-        std::condition_variable pendingCv;
-        std::condition_variable completedCv;
-        std::deque<Pending> pending;
-        std::vector<std::unique_ptr<plume::RenderCommandFence>> fences;
-        std::vector<plume::RenderCommandFence*> freeFences;
-        uint64_t completed = 0; // submissions the GPU has finished
-        bool completerStopping = false;
+            owner_ = std::thread([this] { OwnerMain(); });
+            SetThreadDescription(static_cast<HANDLE>(owner_.native_handle()), L"gpu owner");
+        }
 
         void Post(std::function<void()> task)
         {
             {
-                std::lock_guard lock(taskMutex);
-                tasks.push_back(std::move(task));
+                std::lock_guard lock(mutex_);
+                tasks_.push_back(std::move(task));
             }
-            taskCv.notify_one();
+            cv_.notify_one();
         }
 
+        // Destroyed in reverse order: the device outlives everything created on it.
+        std::unique_ptr<plume::RenderInterface> api;
+        std::unique_ptr<Context> context;
+        std::unique_ptr<Passes> passes;
+        std::unique_ptr<Targets> targets;
+        std::unique_ptr<Presenter> presenter;
+
+    private:
         void OwnerMain()
         {
             for (;;)
             {
                 std::function<void()> task;
                 {
-                    std::unique_lock lock(taskMutex);
-                    taskCv.wait(lock, [&] { return stopping || !tasks.empty(); });
-                    if (tasks.empty())
+                    std::unique_lock lock(mutex_);
+                    cv_.wait(lock, [&] { return stopping_ || !tasks_.empty(); });
+                    if (tasks_.empty())
                         return;
-                    task = std::move(tasks.front());
-                    tasks.pop_front();
+                    task = std::move(tasks_.front());
+                    tasks_.pop_front();
                 }
                 task();
             }
         }
 
-        void CompleterMain()
-        {
-            for (;;)
-            {
-                Pending entry;
-                {
-                    std::unique_lock lock(pendingMutex);
-                    pendingCv.wait(lock, [&] { return completerStopping || !pending.empty(); });
-                    if (pending.empty())
-                        return;
-                    entry = pending.front();
-                    pending.pop_front();
-                }
-                if (entry.fence != nullptr)
-                {
-                    queue->waitForCommandFence(entry.fence);
-                    {
-                        std::lock_guard lock(pendingMutex);
-                        freeFences.push_back(entry.fence);
-                        completed++;
-                    }
-                    completedCv.notify_all();
-                }
-                if (entry.hasToken)
-                    completion(entry.token);
-            }
-        }
-
-        void PushPending(const Pending& entry)
-        {
-            {
-                std::lock_guard lock(pendingMutex);
-                pending.push_back(entry);
-            }
-            pendingCv.notify_one();
-        }
-
-        // Owner thread: submits a command list; returns its submission number.
-        uint64_t Submit(plume::RenderCommandList* list)
-        {
-            plume::RenderCommandFence* fence;
-            {
-                std::lock_guard lock(pendingMutex);
-                if (freeFences.empty())
-                {
-                    fences.push_back(device->createCommandFence());
-                    freeFences.push_back(fences.back().get());
-                }
-                fence = freeFences.back();
-                freeFences.pop_back();
-            }
-            const plume::RenderCommandList* lists[] = { list };
-            queue->executeCommandLists(lists, 1, nullptr, 0, nullptr, 0, fence);
-            PushPending({ fence, false, 0 });
-            return ++submitted;
-        }
-
-        // Owner thread: waits until the GPU has finished the given submission.
-        void WaitSubmission(uint64_t submission)
-        {
-            std::unique_lock lock(pendingMutex);
-            completedCv.wait(lock, [&] { return completed >= submission; });
-        }
-
-        // Owner thread: waits until the queue is idle, Presents included (they follow the last
-        // command list, so its fence does not cover them).
-        void WaitIdle()
-        {
-            idleList->begin();
-            idleList->end();
-            WaitSubmission(Submit(idleList.get()));
-        }
-
-        void CreateFramebuffers()
-        {
-            framebuffers.clear();
-            for (uint32_t i = 0; i < swapChain->getTextureCount(); i++)
-            {
-                const plume::RenderTexture* attachment = swapChain->getTexture(i);
-                framebuffers.push_back(device->createFramebuffer(plume::RenderFramebufferDesc(&attachment, 1)));
-            }
-        }
-
-        // Owner thread.
-        void PresentClear()
-        {
-            if (swapChain->needsResize())
-            {
-                WaitIdle();
-                framebuffers.clear();
-                if (swapChain->resize())
-                    CreateFramebuffers();
-                else if (swapChain->getWidth() != 0 && swapChain->getHeight() != 0)
-                    Log("gpu: swap chain resize to %ux%u failed", swapChain->getWidth(), swapChain->getHeight());
-            }
-            if (swapChain->isEmpty() || framebuffers.empty())
-                return; // minimized
-
-            // Frame latency: wait (bounded) until the swap chain queue has room for this frame.
-            auto* native = static_cast<plume::D3D12SwapChain*>(swapChain.get());
-            if (native->waitableObject != nullptr)
-                WaitForSingleObject(native->waitableObject, 100);
-
-            Frame& frame = frames[nextFrame];
-            nextFrame = (nextFrame + 1) % kFramesInFlight;
-            WaitSubmission(frame.submission);
-
-            uint32_t index = 0;
-            swapChain->acquireTexture(nullptr, &index);
-            plume::RenderTexture* texture = swapChain->getTexture(index);
-            plume::RenderCommandList* list = frame.list.get();
-            list->begin();
-            list->barriers(plume::RenderBarrierStage::GRAPHICS,
-                plume::RenderTextureBarrier(texture, plume::RenderTextureLayout::COLOR_WRITE));
-            list->setFramebuffer(framebuffers[index].get());
-            list->clearColor(0, kClearColor);
-            list->barriers(plume::RenderBarrierStage::NONE,
-                plume::RenderTextureBarrier(texture, plume::RenderTextureLayout::PRESENT));
-            list->end();
-            frame.submission = Submit(list);
-
-            if (!swapChain->present(index, nullptr, 0) && !presentFailed)
-            {
-                presentFailed = true;
-                Log("gpu: Present failed");
-            }
-        }
+        std::thread owner_;
+        std::mutex mutex_;
+        std::condition_variable cv_;
+        std::deque<std::function<void()>> tasks_;
+        bool stopping_ = false;
     };
 
     std::unique_ptr<Renderer> Renderer::Create(void* window, const Settings& settings, Completion completion)
@@ -256,76 +125,71 @@ namespace gpu
             }
         }
 
-        auto state = std::make_unique<State>();
-        state->completion = std::move(completion);
-        state->api = plume::CreateD3D12Interface();
-        if (!state->api)
+        auto impl = std::make_unique<Impl>();
+        impl->api = plume::CreateD3D12Interface();
+        if (!impl->api)
         {
             Log("gpu: error: cannot create the D3D12 interface");
             return nullptr;
         }
-        for (const std::string& name : state->api->getDeviceNames())
+        for (const std::string& name : impl->api->getDeviceNames())
             Log("gpu: adapter \"%s\"", name.c_str());
 
-        state->device = state->api->createDevice(settings.adapter);
-        if (!state->device)
+        std::unique_ptr<plume::RenderDevice> device = impl->api->createDevice(settings.adapter);
+        if (!device)
         {
             Log("gpu: error: cannot create the D3D12 device");
             return nullptr;
         }
-        const auto& description = state->device->getDescription();
+        const auto& description = device->getDescription();
         Log("gpu: device \"%s\", %llu MB", description.name.c_str(),
             (unsigned long long)(description.dedicatedVideoMemory >> 20));
+        if (settings.debugLayer)
+            FilterDebugMessages(*device);
 
-        state->queue = state->device->createCommandQueue(plume::RenderCommandListType::DIRECT);
-        state->swapChain = state->queue->createSwapChain(plume::RenderSwapChainDesc(
-            static_cast<plume::RenderWindow>(window), kSwapFormat, kSwapBuffers, false, kFrameLatency));
-        if (static_cast<plume::D3D12SwapChain*>(state->swapChain.get())->d3d == nullptr)
-        {
-            Log("gpu: error: cannot create the swap chain");
+        impl->context = std::make_unique<Context>(std::move(device), std::move(completion));
+        impl->presenter = Presenter::Create(*impl->context, window, settings);
+        if (!impl->presenter)
             return nullptr;
-        }
-        state->swapChain->setVsyncEnabled(settings.vsync);
-        state->CreateFramebuffers();
-        for (auto& frame : state->frames)
-            frame.list = state->queue->createCommandList();
-        state->idleList = state->queue->createCommandList();
-
-        state->owner = std::thread([s = state.get()] { s->OwnerMain(); });
-        state->completer = std::thread([s = state.get()] { s->CompleterMain(); });
-        NameThread(state->owner, L"gpu owner");
-        NameThread(state->completer, L"gpu completion");
-        Log("gpu: swap chain %ux%u, vsync %s", state->swapChain->getWidth(), state->swapChain->getHeight(),
-            settings.vsync ? "on" : "off");
-        return std::unique_ptr<Renderer>(new Renderer(std::move(state)));
+        impl->passes = std::make_unique<Passes>(impl->context->Device(), Presenter::kFormat);
+        impl->targets = std::make_unique<Targets>(*impl->context, *impl->passes);
+        impl->Start();
+        return std::unique_ptr<Renderer>(new Renderer(std::move(impl)));
     }
 
-    Renderer::Renderer(std::unique_ptr<State> state) : state_(std::move(state)) {}
+    Renderer::Renderer(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 
-    Renderer::~Renderer()
-    {
-        {
-            std::lock_guard lock(state_->taskMutex);
-            state_->stopping = true;
-        }
-        state_->taskCv.notify_all();
-        state_->owner.join();
-        {
-            std::lock_guard lock(state_->pendingMutex);
-            state_->completerStopping = true;
-        }
-        state_->pendingCv.notify_all();
-        state_->completer.join();
-    }
+    Renderer::~Renderer() = default;
 
     void Renderer::Kick(uint32_t token)
     {
-        // Through the owner thread, so the token follows every submission posted before it.
-        state_->Post([s = state_.get(), token] { s->PushPending({ nullptr, true, token }); });
+        impl_->Post([impl = impl_.get(), token] { impl->context->Report(token); });
     }
 
-    void Renderer::Present()
+    void Renderer::Clear(const ClearOp& op)
     {
-        state_->Post([s = state_.get()] { s->PresentClear(); });
+        impl_->Post([impl = impl_.get(), op] { impl->targets->Clear(op); });
+    }
+
+    void Renderer::Resolve(const ResolveOp& op)
+    {
+        impl_->Post([impl = impl_.get(), op] { impl->targets->Resolve(op); });
+    }
+
+    void Renderer::ReleaseSurface(uint32_t key)
+    {
+        impl_->Post([impl = impl_.get(), key] { impl->targets->ReleaseSurface(key); });
+    }
+
+    void Renderer::ReleaseTexture(uint32_t address, uint32_t header)
+    {
+        impl_->Post([impl = impl_.get(), address, header] { impl->targets->ReleaseTexture(address, header); });
+    }
+
+    void Renderer::Present(uint32_t frontAddress)
+    {
+        impl_->Post([impl = impl_.get(), frontAddress] {
+            impl->presenter->Present(*impl->passes, impl->targets->Resolved(frontAddress));
+        });
     }
 }

@@ -1,11 +1,13 @@
 // The frame: D3DDevice_Swap runs as the original and reaches the host through VdSwap, which presents
-// the frame and paces the game. The frame batch closes in the KickOff at the end of the Swap, and
-// the Swap waits for the previous frame's fence, so at most one frame is in flight.
+// the front buffer (the texture the title resolved its frame into) and paces the game. The frame
+// batch closes in the KickOff at the end of the Swap, and the Swap waits for the previous frame's
+// fence, so at most one frame is in flight.
 
 #include "gpu/gpu.h"
 
 #include "gpu/guest/addresses.h"
 #include "gpu/guest/device.h"
+#include "gpu/guest/resources.h"
 #include "gpu/renderer/renderer.h"
 #include "gpu/settings.h"
 #include "host/window.h"
@@ -118,15 +120,16 @@ namespace gpu
 
     void Swap(uint32_t frontBufferFetch)
     {
-        // Texture fetch constant of the front buffer: dword 1 holds the base address, dword 2 the
-        // size minus one (13 bits each).
-        uint32_t size = mem::Load32(frontBufferFetch + 8);
-        LOG_ONCE("gpu: front buffer %08X, %ux%u", mem::Load32(frontBufferFetch + 4) & 0xFFFFF000,
-            (size & 0x1FFF) + 1, ((size >> 13) & 0x1FFF) + 1);
+        // The front buffer is a texture the title resolved its frame into.
+        guest::TextureFetch front = guest::ReadTextureFetch(frontBufferFetch);
+        LOG_ONCE("gpu: front buffer at %08X, %ux%u, format %u", front.address, front.width, front.height, front.format);
+
+        uint32_t device = guest::GetDevice().Address();
+        if (device != 0 && (mem::Load32(device + guest::dev::kSwapPending) & guest::dev::kSwapPendingGamma) != 0)
+            LOG_ONCE("gpu: the title set a gamma ramp; it is not applied yet");
 
         if (g_renderer)
-            g_renderer->Present();
-        uint32_t device = guest::GetDevice().Address();
+            g_renderer->Present(front.address);
         g_limiter.Pace(device != 0 ? mem::Load32(device + guest::dev::kPresentInterval) : 1);
     }
 }
