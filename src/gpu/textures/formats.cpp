@@ -328,6 +328,14 @@ namespace gpu::textures
         // Bits of each guest component (X, Y, Z, W), from bit 0 of the block.
         static constexpr uint8_t k8888Bits[4] = { 8, 8, 8, 8 };
         static constexpr uint8_t k565Bits[4] = { 5, 6, 5, 0 };
+        // k_8 is sampled as red in every component: memory holds the red channel.
+        if (format == k8)
+        {
+            blocks.resize(rgba.size() / 4);
+            for (size_t i = 0; i < blocks.size(); i++)
+                blocks[i] = rgba[4 * i];
+            return true;
+        }
         const uint8_t* bits = format == k8_8_8_8 ? k8888Bits : format == k5_6_5 ? k565Bits : nullptr;
         if (bits == nullptr)
             return false;

@@ -177,8 +177,8 @@ namespace gpu
             list.barriers(plume::RenderBarrierStage::GRAPHICS,
                 plume::RenderTextureBarrier(resolved->texture.get(), plume::RenderTextureLayout::SHADER_READ));
             // A resolved color texture holds the surface's colors in order, whatever swizzle reads them
-            // back (k_5_6_5 has no alpha: it reads as one); depth resolves read their values through
-            // the format's host swizzle.
+            // back (k_5_6_5 has no alpha: it reads as one); k_8 and the depth resolves read their
+            // values through the format's host swizzle (every component takes red).
             if (texture.format == textures::k8_8_8_8)
             {
                 shared.texture2D[slot] = resolved->descriptor.Index();

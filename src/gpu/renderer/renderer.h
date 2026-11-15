@@ -125,6 +125,11 @@ namespace gpu
         uint32_t cullControl = 0;    // PA_SU_SC_MODE_CNTL bits 0..2: cull front, cull back, clockwise front
         uint32_t colorMask = 0;      // RB_COLOR_MASK bits 0..3 (render target 0)
         uint32_t alphaToCoverage = 0;
+        // Polygon offset as the host depth bias: the constant in the integer unit of a 24-bit
+        // depth buffer (which the host's float buffer scales by the depth's exponent), the slope
+        // per pixel; 0 without depth.
+        int32_t depthBias = 0;
+        float depthBiasSlope = 0;
 
         bool operator==(const RenderState&) const = default;
     };

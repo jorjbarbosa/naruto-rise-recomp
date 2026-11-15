@@ -144,12 +144,18 @@ namespace gpu::guest
     uint32_t Device::Register(uint32_t index) const
     {
         uint32_t device = Address();
+        if (index >= 0x2000 && index <= 0x200F)
+            return mem::Load32(device + dev::kRegisters2000 + 4 * (index - 0x2000));
+        if (index >= 0x2080 && index <= 0x2082)
+            return mem::Load32(device + dev::kRegisters2000 + 4 * (16 + index - 0x2080));
         if (index >= 0x2100 && index <= 0x2114)
             return mem::Load32(device + dev::kRegisters2100 + 4 * (index - 0x2100));
         if (index >= 0x2200 && index <= 0x220B)
             return mem::Load32(device + dev::kRegisters2200 + 4 * (index - 0x2200));
         if (index >= 0x2300 && index <= 0x2307)
             return mem::Load32(device + dev::kRegisters2300 + 4 * (index - 0x2300));
+        if (index >= 0x2380 && index <= 0x2383)
+            return mem::Load32(device + dev::kRegisters2380 + 4 * (index - 0x2380));
         Fatal("gpu: register %04X is not in the device's register blocks", index);
     }
 

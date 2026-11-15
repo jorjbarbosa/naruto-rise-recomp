@@ -12,6 +12,7 @@
 namespace gpu::textures
 {
     // GPUTEXTUREFORMAT of the color resolves.
+    constexpr uint32_t k8 = 2;
     constexpr uint32_t k5_6_5 = 4;
     constexpr uint32_t k8_8_8_8 = 6;
 
@@ -81,6 +82,6 @@ namespace gpu::textures
     // Colors (RGBA8, one texel after another) as the blocks of a color format that the fetch swizzle
     // reads back as those colors: each color goes to the guest component its swizzle selector names
     // (the first color, when several name one). This is what a resolve leaves in memory. Covered:
-    // k_8_8_8_8 and k_5_6_5; false for others.
+    // k_8_8_8_8, k_5_6_5 and k_8 (the red color, which every component samples); false for others.
     bool PackColors(uint32_t format, uint32_t swizzle, const std::vector<uint8_t>& rgba, std::vector<uint8_t>& blocks);
 }

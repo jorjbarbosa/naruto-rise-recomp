@@ -56,6 +56,8 @@ namespace gpu::guest
         // RB_MODECONTROL: color and depth (4) or depth only (5).
         constexpr uint32_t kEdramModeMask = 7;
         constexpr uint32_t kEdramDepthOnly = 5;
+        // RB_DEPTH_INFO: the depth format is k_24_8_FLOAT.
+        constexpr uint32_t kDepthInfoFloat = 0x10000;
         // RB_DEPTHCONTROL.
         constexpr uint32_t kStencilEnable = 0x1;
         constexpr uint32_t kDepthEnable = 0x2;
@@ -72,8 +74,11 @@ namespace gpu::guest
         constexpr uint32_t kCompareAlways = 7;
         // PA_SU_SC_MODE_CNTL.
         constexpr uint32_t kCullFields = 0x7; // cull front, cull back, clockwise front face
+        constexpr uint32_t kCullFront = 0x1;
+        constexpr uint32_t kCullBack = 0x2;
         constexpr uint32_t kPolygonMode = 0x18;
-        constexpr uint32_t kPolygonOffset = 0x1800;
+        constexpr uint32_t kPolygonOffsetFront = 0x800;
+        constexpr uint32_t kPolygonOffsetBack = 0x1000;
         constexpr uint32_t kMultiPrimitive = 1u << 21; // the reset index splits strips and fans
         // PA_CL_VTE_CNTL: the six viewport scale and offset enables, and the vertex formats (only W
         // given as 1/W, as D3D sets it: X, Y and Z are divided by W).
@@ -252,6 +257,44 @@ namespace gpu::guest
             }
         }
 
+        // Polygon offset (PA_SU_SC_MODE_CNTL bits 11 and 12, the scale and offset of each face) as one
+        // host depth bias: the front face's unless that face's offset is off or culled, then the back
+        // face's. The offset counts in guest depth units: of a 24-bit unorm buffer, or of a 20e4 float
+        // one (RB_DEPTH_INFO bit 16), whose 2^-24 / 8 step a shift of 3 turns into the integer unit
+        // of a 24-bit buffer. The host buffer is 32-bit float, which scales that integer by the
+        // exponent of the primitive's depth instead: exact for depths in [0.5, 1), smaller nearer, as
+        // in the reference renderer. The scale counts in 1/16 pixels, the subpixel unit of the slope.
+        void ReadPolygonOffset(const Device& device, uint32_t rasterControl, RenderState& state)
+        {
+            float scale = 0;
+            float offset = 0;
+            if ((rasterControl & kPolygonOffsetFront) != 0 && (rasterControl & kCullFront) == 0)
+            {
+                scale = device.RegisterFloat(reg::kPolyOffsetFront);
+                offset = device.RegisterFloat(reg::kPolyOffsetFront + 1);
+            }
+            if ((rasterControl & kPolygonOffsetBack) != 0 && (rasterControl & kCullBack) == 0 && scale == 0 && offset == 0)
+            {
+                scale = device.RegisterFloat(reg::kPolyOffsetBack);
+                offset = device.RegisterFloat(reg::kPolyOffsetBack + 1);
+            }
+            if (!std::isfinite(scale) || !std::isfinite(offset))
+            {
+                LOG_ONCE("gpu: a polygon offset that is not finite is not applied");
+                return;
+            }
+            bool float24 = (device.Register(reg::kDepthInfo) & kDepthInfoFloat) != 0;
+            double units = float24 ? double(1u << 24) / 8.0 : double((1u << 24) - 1);
+            // Clamped so that the shift and the sign stay in range.
+            double magnitude = std::min(std::ceil(std::fabs(double(offset)) * units), double(INT32_MAX >> 3));
+            int32_t bias = int32_t(magnitude);
+            if (float24)
+                bias <<= 3;
+            state.depthBias = offset < 0 ? -bias : bias;
+            // -0 would hash apart from the +0 it equals.
+            state.depthBiasSlope = scale != 0 ? scale / 16.0f : 0.0f;
+        }
+
         // The fixed-function state, viewport and scissor of the draw. False when the draw is not
         // covered (logged).
         bool ReadState(const Device& device, uint32_t devAddress, DrawOp& op)
@@ -280,8 +323,8 @@ namespace gpu::guest
             op.state.cullControl = rasterControl & kCullFields;
             if ((rasterControl & kPolygonMode) != 0)
                 LOG_ONCE("gpu: polygon mode %u is drawn filled", (rasterControl >> 3) & 3);
-            if ((rasterControl & kPolygonOffset) != 0)
-                LOG_ONCE("gpu: polygon offset is not applied yet");
+            if ((depthControl & kDepthEnable) != 0)
+                ReadPolygonOffset(device, rasterControl, op.state);
             if ((device.Register(reg::kClipControl) & kUserClipPlanes) != 0)
                 LOG_ONCE("gpu: user clip planes are not applied yet");
 

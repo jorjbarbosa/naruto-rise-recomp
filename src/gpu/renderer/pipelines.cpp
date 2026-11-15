@@ -20,8 +20,8 @@ namespace gpu
         // The list file: a header, then one record per pipeline (the key's bytes, the element count,
         // the elements, the stride count, the strides).
         constexpr uint32_t kListMagic = 0x4C505852; // "RXPL"
-        constexpr uint32_t kListVersion = 1;
-        static_assert(sizeof(PipelineKey) == 3 * 8 + 6 * 4 + 2 * 4, "PipelineKey changed: bump kListVersion");
+        constexpr uint32_t kListVersion = 2;
+        static_assert(sizeof(PipelineKey) == 3 * 8 + 8 * 4 + 2 * 4, "PipelineKey changed: bump kListVersion");
         static_assert(sizeof(VertexElement) == 8);
         constexpr uint32_t kMaxListed = 64; // elements or strides of one record
 
@@ -351,6 +351,8 @@ namespace gpu
             desc.cullMode = plume::RenderCullMode::NONE;
         desc.frontFace = (state.cullControl & kFrontClockwise) != 0 ? plume::RenderFrontFace::CLOCKWISE
                                                                       : plume::RenderFrontFace::COUNTER_CLOCKWISE;
+        desc.depthBias = state.depthBias;
+        desc.slopeScaledDepthBias = state.depthBiasSlope;
         if ((key.targets & 1) != 0)
         {
             desc.renderTargetFormat[0] = Targets::kColorFormat;

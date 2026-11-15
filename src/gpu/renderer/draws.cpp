@@ -76,6 +76,8 @@ namespace gpu
         {
             key.state.depthControl = 0;
             key.state.stencilMasks = 0;
+            key.state.depthBias = 0;
+            key.state.depthBiasSlope = 0;
         }
         const plume::RenderPipeline* pipeline = pipelines_->Get(key, op.input);
         if (pipeline == nullptr)

@@ -71,9 +71,11 @@ namespace gpu::guest
         constexpr uint32_t kPixelBooleans = 10128;
 
         // Register blocks: register base + i at offset + 4 i.
+        constexpr uint32_t kRegisters2000 = 10368; // 0x2000..0x200F, then 0x2080..0x2082 (window offset, scissor)
         constexpr uint32_t kRegisters2100 = 10444; // 0x2100..0x2114
         constexpr uint32_t kRegisters2200 = 10548; // 0x2200..0x220B
         constexpr uint32_t kRegisters2300 = 10680; // 0x2300..0x2307
+        constexpr uint32_t kRegisters2380 = 10832; // 0x2380..0x2383 (D3DRS_SLOPESCALEDEPTHBIAS, D3DRS_DEPTHBIAS)
 
         // Flags byte. Bit 0x80: a command buffer is being recorded, and kicks are not submitted.
         constexpr uint32_t kFlags10940 = 10940;
@@ -201,6 +203,7 @@ namespace gpu::guest
     // GPU registers, by number, in the register blocks of the device (dev::kRegisters*).
     namespace reg
     {
+        constexpr uint32_t kDepthInfo = 0x2002;        // RB_DEPTH_INFO
         constexpr uint32_t kResetIndex = 0x2103;       // VGT_MULTI_PRIM_IB_RESET_INDX
         constexpr uint32_t kColorMask = 0x2104;        // RB_COLOR_MASK
         constexpr uint32_t kBlendColor = 0x2105;       // RB_BLEND_RED..ALPHA (4 floats)
@@ -216,11 +219,14 @@ namespace gpu::guest
         constexpr uint32_t kViewportControl = 0x2206;  // PA_CL_VTE_CNTL
         constexpr uint32_t kEdramMode = 0x2208;        // RB_MODECONTROL
         constexpr uint32_t kVertexControl = 0x2302;    // PA_SU_VTX_CNTL
+        constexpr uint32_t kPolyOffsetFront = 0x2380;  // PA_SU_POLY_OFFSET_FRONT_SCALE, _OFFSET (floats)
+        constexpr uint32_t kPolyOffsetBack = 0x2382;   // PA_SU_POLY_OFFSET_BACK_SCALE, _OFFSET (floats)
     }
 
     // GPUTEXTUREFORMAT values of the surfaces and resolve destinations the renderer covers.
     namespace format
     {
+        constexpr uint32_t k8 = 2;
         constexpr uint32_t k5_6_5 = 4;
         constexpr uint32_t k8_8_8_8 = 6;
         constexpr uint32_t k24_8 = 22;
