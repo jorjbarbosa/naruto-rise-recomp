@@ -145,6 +145,7 @@ namespace gpu::guest
         // Common word. Bits 0..3: the resource type.
         constexpr uint32_t kCommon = 0;
         constexpr uint32_t kTypeMask = 0xF;
+        constexpr uint32_t kTypeVertexBuffer = 1;
         constexpr uint32_t kTypeTexture = 3;
         constexpr uint32_t kTypeSurface = 4;
         // Bits 8..11: the lock count, which UnlockResource decrements.
@@ -160,6 +161,10 @@ namespace gpu::guest
 
         // D3DBaseTexture: the texture fetch constant (6 dwords) of the texture.
         constexpr uint32_t kTextureFetch = 0x1C;
+
+        // D3DVertexBuffer: the vertex fetch constant (2 dwords, DecodeVertexFetch), with the buffer's guest
+        // address.
+        constexpr uint32_t kVertexBufferFetch = 0x18;
 
         // D3DIndexBuffer. Common word: bit 31 set for 32-bit indices, bits 29..30 the endian swap.
         constexpr uint32_t kIndex32 = 0x80000000;

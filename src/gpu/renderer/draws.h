@@ -10,18 +10,20 @@
 
 namespace gpu
 {
+    class Buffers;
     class Context;
     class Descriptors;
     class Targets;
     class Textures;
 
-    // The guest draws: the recording of each draw with its own copies of the vertices, indices and
-    // constants, over the pipelines of Pipelines. Owner thread only.
+    // The guest draws: the recording of each draw with its own copies of the indices and constants,
+    // and of the vertices the host keeps no copy of (Buffers), over the pipelines of Pipelines. Owner
+    // thread only.
     class Draws
     {
     public:
         // pipelineList: the file the pipelines are remembered in (Pipelines; empty: none).
-        Draws(Context& context, Targets& targets, Descriptors& descriptors, Textures& textures,
+        Draws(Context& context, Targets& targets, Descriptors& descriptors, Textures& textures, Buffers& buffers,
             const std::filesystem::path& pipelineList);
         ~Draws();
 
@@ -33,6 +35,7 @@ namespace gpu
         Targets& targets_;
         Descriptors& descriptors_;
         Textures& textures_;
+        Buffers& buffers_;
         std::unique_ptr<plume::RenderPipelineLayout> layout_;
         std::unique_ptr<Pipelines> pipelines_; // after layout_, which it uses
     };

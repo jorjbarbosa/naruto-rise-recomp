@@ -8,6 +8,7 @@
 
 #include "gpu/gpu.h"
 #include "gpu/guest/addresses.h"
+#include "gpu/guest/buffers.h"
 #include "gpu/guest/device.h"
 #include "gpu/guest/resources.h"
 #include "gpu/guest/shaders.h"
@@ -141,6 +142,18 @@ namespace gpu::guest
                     pixel ? "pixel" : "vertex", object);
         }
 
+        // Copies big-endian dwords as host dwords (a loop the compiler vectorizes).
+        void CopySwapped(uint8_t* out, const uint8_t* in, uint32_t bytes)
+        {
+            for (uint32_t i = 0; i < bytes; i += 4)
+            {
+                uint32_t value;
+                memcpy(&value, in + i, 4);
+                value = __builtin_bswap32(value);
+                memcpy(out + i, &value, 4);
+            }
+        }
+
         uint32_t Swap32(uint32_t value, uint32_t endian)
         {
             switch (endian)
@@ -159,15 +172,16 @@ namespace gpu::guest
             uint32_t d1 = mem::Load32(at + 4);
             if ((d0 & 3) != kFetchTypeVertex)
                 return false;
-            source.address = GuestPhysical(d0 & ~3u);
-            source.bytes = ((d1 >> 2) & 0xFFFFFF) * 4;
-            source.endian = d1 & 3;
+            VertexFetch decoded = DecodeVertexFetch(d0, d1);
+            source.address = GuestPhysical(decoded.address);
+            source.bytes = decoded.bytes;
+            source.endian = decoded.endian;
             return true;
         }
 
         // The indices the draw reads, before the base vertex. False when the index buffer is not
         // covered (logged).
-        bool ReadIndices(uint32_t device, const DrawCall& call, std::vector<uint32_t>& indices)
+        bool ReadIndices(uint32_t device, const DrawCall& call, CaptureVector<uint32_t>& indices)
         {
             indices.resize(call.count);
             if (!call.indexed)
@@ -215,8 +229,8 @@ namespace gpu::guest
 
         // The triangles of a draw's primitives as a list. reset splits strips and fans. False when
         // the primitive type is not covered (logged).
-        bool ToTriangleList(uint32_t primitive, const std::vector<uint32_t>& in, std::optional<uint32_t> reset,
-            std::vector<uint32_t>& out)
+        bool ToTriangleList(uint32_t primitive, const CaptureVector<uint32_t>& in, std::optional<uint32_t> reset,
+            CaptureVector<uint32_t>& out)
         {
             out.clear();
             auto forEachRun = [&](auto&& emit) {
@@ -500,21 +514,33 @@ namespace gpu::guest
             if (!layout)
                 return nullptr;
 
-            auto op = std::make_unique<DrawOp>();
+            std::unique_ptr<DrawOp> op = std::make_unique_for_overwrite<DrawOp>();
             op->vertexShader = vertexShader->key;
             op->pixelShader = pixelShader ? pixelShader->key : 0;
             op->input = layout->input;
             if (!ReadState(device, devAddress, *op) || !ReadTargets(device, *op, depthOnly))
                 return nullptr;
 
-            // Indices: a triangle list, rebased to the first vertex the draw reads.
-            std::vector<uint32_t> indices;
-            if (!ReadIndices(devAddress, call, indices))
-                return nullptr;
-            std::optional<uint32_t> reset;
-            if (call.indexed && (device.Register(reg::kRasterControl) & kMultiPrimitive) != 0)
-                reset = device.Register(reg::kResetIndex);
-            if (!ToTriangleList(call.primitive, indices, reset, op->indices) || op->indices.empty())
+            // Indices: a triangle list, rebased to the first vertex the draw reads. A list is read in place.
+            if (call.primitive == kTriangleList)
+            {
+                DrawCall whole = call;
+                whole.count -= whole.count % 3;
+                if (!ReadIndices(devAddress, whole, op->indices))
+                    return nullptr;
+            }
+            else
+            {
+                CaptureVector<uint32_t> indices;
+                if (!ReadIndices(devAddress, call, indices))
+                    return nullptr;
+                std::optional<uint32_t> reset;
+                if (call.indexed && (device.Register(reg::kRasterControl) & kMultiPrimitive) != 0)
+                    reset = device.Register(reg::kResetIndex);
+                if (!ToTriangleList(call.primitive, indices, reset, op->indices))
+                    return nullptr;
+            }
+            if (op->indices.empty())
                 return nullptr;
             auto [lowest, highest] = std::minmax_element(op->indices.begin(), op->indices.end());
             int64_t first = int64_t(*lowest) + call.baseVertex;
@@ -530,6 +556,7 @@ namespace gpu::guest
 
             // Vertex streams: the bytes of the vertices the draw reads, as they are in guest memory.
             const VertexInput& input = *layout->input;
+            op->hosted.resize(layout->streamFetch.size());
             for (size_t stream = 0; stream < layout->streamFetch.size(); stream++)
             {
                 uint32_t fetch = layout->streamFetch[stream];
@@ -551,19 +578,31 @@ namespace gpu::guest
                     for (const VertexElement& element : input.elements)
                         if (element.stream == stream)
                             bytes = std::max<uint64_t>(bytes, element.offset + 4 * element.dwords);
-                if (op->vertices.size() + bytes > kMaxVertexBytes)
-                {
-                    LOG_ONCE("gpu: a draw reads %llu bytes of vertices; it is skipped", (unsigned long long)bytes);
-                    return nullptr;
-                }
                 size_t at = op->vertices.size();
                 op->streamOffsets.push_back(uint32_t(at));
-                if (call.inlineVertices != 0 && fetch == kInlineFetch && inlineStream != nullptr)
+                bool inlineFetch = call.inlineVertices != 0 && fetch == kInlineFetch;
+                if (inlineFetch && inlineStream != nullptr)
                     *inlineStream = InlineStream{ uint32_t(at), uint32_t(std::min<uint64_t>(bytes, source.bytes)) };
-                op->vertices.resize(at + size_t(bytes));
-                if (begin < source.bytes)
-                    memcpy(op->vertices.data() + at, mem::Ptr(source.address + uint32_t(begin)),
-                        size_t(std::min<uint64_t>(bytes, source.bytes - begin)));
+                // A buffer the host keeps a copy of is read from it; other vertices are copied.
+                uint32_t buffer = GpuAddress(source.address);
+                if (!inlineFetch && stride != 0 && begin + bytes <= source.bytes && UseHostedBuffer(buffer, source.bytes))
+                {
+                    op->hosted[stream] = { buffer, source.bytes, uint32_t(begin), uint32_t(bytes) };
+                }
+                else
+                {
+                    if (at + bytes > kMaxVertexBytes)
+                    {
+                        LOG_ONCE("gpu: a draw reads %llu bytes of vertices; it is skipped", (unsigned long long)bytes);
+                        return nullptr;
+                    }
+                    // Past the end of the buffer the vertices read as zero.
+                    op->vertices.resize(at + size_t(bytes));
+                    size_t copied = begin < source.bytes ? size_t(std::min<uint64_t>(bytes, source.bytes - begin)) : 0;
+                    if (copied != 0)
+                        memcpy(op->vertices.data() + at, mem::Ptr(source.address + uint32_t(begin)), copied);
+                    memset(op->vertices.data() + at + copied, 0, size_t(bytes) - copied);
+                }
                 for (size_t element = 0; element < layout->descriptors.size(); element++)
                     if (input.elements[element].stream == stream)
                         op->shared.vertexFetch[element] =
@@ -571,13 +610,8 @@ namespace gpu::guest
             }
 
             // Constants, as the host shaders read them.
-            for (uint32_t i = 0; i < dev::kConstantBytes; i += 4)
-            {
-                uint32_t vertex = mem::Load32(devAddress + dev::kVertexConstants + i);
-                uint32_t pixel = mem::Load32(devAddress + dev::kPixelConstants + i);
-                memcpy(op->vertexConstants.data() + i, &vertex, 4);
-                memcpy(op->pixelConstants.data() + i, &pixel, 4);
-            }
+            CopySwapped(op->vertexConstants.data(), mem::Ptr(devAddress + dev::kVertexConstants), dev::kConstantBytes);
+            CopySwapped(op->pixelConstants.data(), mem::Ptr(devAddress + dev::kPixelConstants), dev::kConstantBytes);
             op->shared.booleans = (mem::Load32(devAddress + dev::kVertexBooleans) & 0xFFFF) |
                 (mem::Load32(devAddress + dev::kPixelBooleans) & 0xFFFF) << 16;
             // Last: the uploads it posts are only needed by a draw that is posted.

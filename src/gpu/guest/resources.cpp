@@ -5,6 +5,7 @@
 
 #include "gpu/gpu.h"
 #include "gpu/guest/addresses.h"
+#include "gpu/guest/buffers.h"
 #include "gpu/guest/textures.h"
 #include "gpu/textures/layout.h"
 #include "kernel/kernel.h"
@@ -79,7 +80,7 @@ using namespace gpu::guest;
 DECLARE_ORIGINAL(D3D_DESTROY_RESOURCE);
 
 // D3D::DestroyResource(resource), reached when the last reference is released: the host side goes
-// first, then the original frees the header.
+// first (surfaces, textures, the copies of a vertex buffer's memory), then the original frees the header.
 PPC_FUNC(D3D_DESTROY_RESOURCE)
 {
     uint32_t resource = ctx.r3.u32;
@@ -93,6 +94,13 @@ PPC_FUNC(D3D_DESTROY_RESOURCE)
         case res::kTypeTexture:
             ForgetTexture(resource);
             break;
+        case res::kTypeVertexBuffer:
+        {
+            VertexFetch fetch = DecodeVertexFetch(mem::Load32(resource + res::kVertexBufferFetch),
+                mem::Load32(resource + res::kVertexBufferFetch + 4));
+            ForgetBuffers(fetch.address, fetch.address + fetch.bytes);
+            break;
+        }
         default:
             break;
         }

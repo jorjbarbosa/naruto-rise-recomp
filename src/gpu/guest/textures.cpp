@@ -5,7 +5,9 @@
 
 #include "gpu/gpu.h"
 #include "gpu/guest/addresses.h"
+#include "gpu/guest/buffers.h"
 #include "gpu/guest/resources.h"
+#include "gpu/guest/watch.h"
 #include "gpu/renderer/renderer.h"
 #include "gpu/textures/formats.h"
 #include "gpu/textures/layout.h"
@@ -36,10 +38,6 @@ namespace gpu::guest
         // DimensionField of a cube texture.
         constexpr uint32_t kDimensionCube = 3;
 
-        // GPU memory pages (mem::kPageSize) of the physical heap.
-        constexpr uint32_t kPageShift = 12;
-        constexpr uint32_t kPhysicalPages = 0x20000000 >> kPageShift;
-
         // A (GPU address, layout key): its layout, the memory it reads, and the write check its last
         // upload copied after.
         struct Content
@@ -62,12 +60,6 @@ namespace gpu::guest
         std::unordered_map<uint32_t, Resolve> g_resolved;            // by GPU address
         uint64_t g_resolves = 0;
         uint64_t g_frame = 1;
-        // Write checks. The OS reports a written page to one check only, and contents share pages
-        // (several layouts over the same memory), so each page keeps the number of the last check
-        // that found it written: a content is stale when a page of it was found written after the
-        // check its upload copied after.
-        uint64_t g_check = 0;
-        std::vector<uint64_t> g_pageChecks(kPhysicalPages);
 
         // A fetch constant with its base and mip addresses as GPU addresses (headers hold guest
         // addresses, the device the GPU ones).
@@ -129,46 +121,14 @@ namespace gpu::guest
         // fetch can describe memory past its end, which nothing can have written.
         std::vector<std::pair<uint32_t, uint32_t>> PhysicalRanges(const textures::Layout& layout)
         {
-            constexpr uint64_t kEnd = uint64_t(kPhysicalPages) << kPageShift;
             std::vector<std::pair<uint32_t, uint32_t>> ranges;
             for (const auto& [address, bytes] : textures::MemoryRanges(layout))
             {
-                uint64_t end = std::min<uint64_t>(uint64_t(address) + bytes, kEnd);
+                uint64_t end = std::min<uint64_t>(uint64_t(address) + bytes, kPhysicalEnd);
                 if (end > address)
                     ranges.emplace_back(address, uint32_t(end - address));
             }
             return ranges;
-        }
-
-        // A new write check of a content's ranges (PhysicalRanges): the pages written since the last
-        // check that covered them get its number, check. Returns whether a page of the ranges was found
-        // written after the check `since`. A copy of the memory made after the check holds every
-        // write it found; later writes are found by later checks. Under g_mutex.
-        bool CheckWrites(const std::vector<std::pair<uint32_t, uint32_t>>& ranges, uint64_t since, uint64_t& check)
-        {
-            thread_local std::vector<uint32_t> written;
-            check = ++g_check;
-            bool stale = false;
-            for (const auto& [address, bytes] : ranges)
-            {
-                uint32_t first = address >> kPageShift;
-                uint32_t last = (address + bytes - 1) >> kPageShift;
-                written.clear();
-                if (!mem::TakeWrittenPages(GuestPhysical(address), bytes, written))
-                {
-                    // Without the OS's answer, every page counts as written.
-                    std::fill(g_pageChecks.begin() + first, g_pageChecks.begin() + last + 1, check);
-                    stale = true;
-                    continue;
-                }
-                for (uint32_t page : written)
-                    g_pageChecks[(page - GuestPhysical(0)) >> kPageShift] = check;
-                stale |= !written.empty();
-                // Pages another content's check found written after this content's upload.
-                for (uint32_t page = first; !stale && page <= last; page++)
-                    stale = g_pageChecks[page] > since;
-            }
-            return stale;
         }
 
         // Forgets the contents of the GPU addresses in [begin, end). Under g_mutex.
@@ -404,15 +364,24 @@ using namespace gpu::guest;
 DECLARE_ORIGINAL(D3D_UNLOCK_RESOURCE);
 
 // D3D::UnlockResource(resource, base, mip): decrements the lock count and, on the last unlock,
-// flushes the CPU writes to the resource's memory. Replaced so that the textures of that memory are
-// checked again at their next use, also within the frame.
+// flushes the CPU writes to the resource's memory. Replaced so that the textures and vertex buffers of
+// that memory are checked again at their next use, also within the frame.
 PPC_FUNC(D3D_UNLOCK_RESOURCE)
 {
     uint32_t resource = ctx.r3.u32;
     uint32_t common = mem::Load32(resource + res::kCommon);
     bool lastUnlock = ((common >> res::kLockCountShift) & res::kLockCountMask) == 1;
     ORIGINAL(D3D_UNLOCK_RESOURCE)(ctx, base);
-    if (!lastUnlock || (common & res::kTypeMask) != res::kTypeTexture)
+    if (!lastUnlock)
+        return;
+    if ((common & res::kTypeMask) == res::kTypeVertexBuffer)
+    {
+        VertexFetch fetch = DecodeVertexFetch(mem::Load32(resource + res::kVertexBufferFetch),
+            mem::Load32(resource + res::kVertexBufferFetch + 4));
+        InvalidateBuffers(fetch.address, fetch.address + fetch.bytes);
+        return;
+    }
+    if ((common & res::kTypeMask) != res::kTypeTexture)
         return;
     gpu::textures::Fetch fetch = ReadFetch(resource + res::kTextureFetch);
     std::lock_guard lock(g_mutex);

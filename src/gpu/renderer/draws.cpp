@@ -2,6 +2,7 @@
 
 #include "gpu/renderer/draws.h"
 
+#include "gpu/renderer/buffers.h"
 #include "gpu/renderer/context.h"
 #include "gpu/renderer/descriptors.h"
 #include "gpu/renderer/targets.h"
@@ -43,9 +44,9 @@ namespace gpu
         }
     }
 
-    Draws::Draws(Context& context, Targets& targets, Descriptors& descriptors, Textures& textures,
+    Draws::Draws(Context& context, Targets& targets, Descriptors& descriptors, Textures& textures, Buffers& buffers,
         const std::filesystem::path& pipelineList)
-        : context_(context), targets_(targets), descriptors_(descriptors), textures_(textures)
+        : context_(context), targets_(targets), descriptors_(descriptors), textures_(textures), buffers_(buffers)
     {
         const plume::RenderRootDescriptorDesc roots[] = {
             { kVertexConstantsRoot, kConstantSpace, plume::RenderRootDescriptorType::CONSTANT_BUFFER },
@@ -87,6 +88,38 @@ namespace gpu
             return;
         plume::RenderCommandList& list = context_.Commands();
 
+        // Vertex streams: the copied ones from the upload buffers, the hosted ones from their host copies;
+        // a draw whose host copy is missing is skipped.
+        Context::Upload vertices;
+        if (!op.vertices.empty())
+        {
+            vertices = context_.Allocate(op.vertices.size(), 16);
+            memcpy(vertices.data, op.vertices.data(), op.vertices.size());
+        }
+        const VertexInput& input = *op.input;
+        std::vector<plume::RenderVertexBufferView> views;
+        std::vector<plume::RenderInputSlot> slots;
+        for (uint32_t i = 0; i < input.strides.size(); i++)
+        {
+            const HostedStream& hosted = op.hosted[i];
+            if (hosted.bytes == 0)
+            {
+                uint32_t end = i + 1 < op.streamOffsets.size() ? op.streamOffsets[i + 1] : uint32_t(op.vertices.size());
+                views.emplace_back(plume::RenderBufferReference(vertices.buffer, vertices.offset + op.streamOffsets[i]),
+                    end - op.streamOffsets[i]);
+            }
+            else if (plume::RenderBuffer* buffer = buffers_.Bind(list, hosted.address, hosted.bytes))
+            {
+                views.emplace_back(plume::RenderBufferReference(buffer, hosted.offset), hosted.size);
+            }
+            else
+            {
+                LOG_ONCE("gpu: a draw reads a vertex buffer the host has no copy of; it is skipped");
+                return;
+            }
+            slots.emplace_back(i, input.strides[i]);
+        }
+
         SharedConstants shared = op.shared;
         for (uint32_t slot = 0; slot < SharedConstants::kFetchSlots; slot++)
             textures_.Bind(list, slot, op.textures[slot], shared);
@@ -98,8 +131,6 @@ namespace gpu
         memcpy(constants.data, op.vertexConstants.data(), op.vertexConstants.size());
         memcpy(constants.data + op.vertexConstants.size(), op.pixelConstants.data(), op.pixelConstants.size());
         memcpy(constants.data + 2 * op.vertexConstants.size(), &shared, sizeof(shared));
-        Context::Upload vertices = context_.Allocate(std::max<size_t>(op.vertices.size(), 4), 16);
-        memcpy(vertices.data, op.vertices.data(), op.vertices.size());
         Context::Upload indices = context_.Allocate(op.indices.size() * 4, 4);
         memcpy(indices.data, op.indices.data(), op.indices.size() * 4);
 
@@ -131,16 +162,6 @@ namespace gpu
         list.setViewports(&viewport, 1);
         list.setScissors(&rect, 1);
 
-        const VertexInput& input = *op.input;
-        std::vector<plume::RenderVertexBufferView> views;
-        std::vector<plume::RenderInputSlot> slots;
-        for (uint32_t i = 0; i < input.strides.size(); i++)
-        {
-            uint32_t end = i + 1 < op.streamOffsets.size() ? op.streamOffsets[i + 1] : uint32_t(op.vertices.size());
-            views.emplace_back(plume::RenderBufferReference(vertices.buffer, vertices.offset + op.streamOffsets[i]),
-                end - op.streamOffsets[i]);
-            slots.emplace_back(i, input.strides[i]);
-        }
         list.setVertexBuffers(0, views.data(), uint32_t(views.size()), slots.data());
         const plume::RenderIndexBufferView indexView(indices.Reference(), uint32_t(op.indices.size() * 4),
             plume::RenderFormat::R32_UINT);

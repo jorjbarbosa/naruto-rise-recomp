@@ -15,6 +15,21 @@ namespace gpu::guest
         return (((address >> 20) + 0x200) & 0x1000) + (address & 0x1FFFFFFF);
     }
 
+    // A vertex fetch constant (2 dwords, in the device or in a D3DVertexBuffer): the buffer's GPU address,
+    // its size and its endian swap. The address dword holds the fetch type in bits 0..1; the size dword
+    // holds the endian swap in bits 0..1 and the size in dwords in bits 2..25.
+    struct VertexFetch
+    {
+        uint32_t address = 0;
+        uint32_t bytes = 0;
+        uint32_t endian = 0;
+    };
+
+    constexpr VertexFetch DecodeVertexFetch(uint32_t address, uint32_t size)
+    {
+        return { GpuAddress(address & ~3u), ((size >> 2) & 0xFFFFFF) * 4, size & 3 };
+    }
+
     // The guest address of GPU memory. Every physical allocation of the runtime comes from the
     // physical heap at 0xA0000000 (mem::Heap::Physical), where the GPU address is the offset.
     constexpr uint32_t GuestPhysical(uint32_t gpuAddress)

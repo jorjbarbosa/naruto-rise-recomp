@@ -7,7 +7,9 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <new>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace gpu
@@ -181,6 +183,24 @@ namespace gpu
         std::vector<uint8_t> data;
     };
 
+    // The content of a guest vertex buffer for the host copy of (GPU address, data size), as it is in
+    // guest memory.
+    struct BufferUpload
+    {
+        uint32_t address = 0;
+        std::vector<uint8_t> data;
+    };
+
+    // A vertex stream a draw reads from the host copy of a guest vertex buffer: the buffer's key, and
+    // the bytes of the vertices the draw reads in it.
+    struct HostedStream
+    {
+        uint32_t address = 0; // GPU address of the buffer
+        uint32_t bytes = 0;   // the buffer's size; 0: the stream is in DrawOp::vertices
+        uint32_t offset = 0;  // the first vertex the draw reads
+        uint32_t size = 0;
+    };
+
     // A color texture resolved from a surface, read back: RGBA8 in the surface's color order, rows
     // without padding. Only the region the resolves wrote holds their colors.
     struct ResolvedImage
@@ -196,8 +216,40 @@ namespace gpu
     using GammaRamp = std::array<uint16_t, 3 * 256>;
     constexpr uint32_t kGammaRampShift = 6;
 
+    // An allocator whose resize leaves the new elements uninitialized, for the buffers of a draw that
+    // the capture fills at once (zeroing them first doubled the writes of every draw).
+    template <typename T>
+    struct UninitializedAllocator : std::allocator<T>
+    {
+        template <typename U>
+        struct rebind
+        {
+            using other = UninitializedAllocator<U>;
+        };
+
+        UninitializedAllocator() = default;
+        template <typename U>
+        UninitializedAllocator(const UninitializedAllocator<U>&) noexcept
+        {
+        }
+
+        template <typename U>
+        void construct(U* p) noexcept
+        {
+            ::new (static_cast<void*>(p)) U;
+        }
+        template <typename U, typename... Args>
+        void construct(U* p, Args&&... args)
+        {
+            ::new (static_cast<void*>(p)) U(std::forward<Args>(args)...);
+        }
+    };
+    template <typename T>
+    using CaptureVector = std::vector<T, UninitializedAllocator<T>>;
+
     // A draw: shaders, targets, state, and copies of the vertices, indices and constants it reads.
-    // Everything is a triangle list by then.
+    // Everything is a triangle list by then. Made with std::make_unique_for_overwrite: the capture
+    // writes every byte of the constants, which value initialization would zero first.
     struct DrawOp
     {
         uint64_t vertexShader = 0; // shader cache keys; pixel shader 0: depth only
@@ -209,14 +261,16 @@ namespace gpu
         std::array<float, 4> blendColor{};
         std::shared_ptr<const VertexInput> input;
 
-        // Vertex data: stream i starts at streamOffsets[i] and is laid out with its stride.
-        std::vector<uint8_t> vertices;
+        // Vertex data: stream i starts at streamOffsets[i] and is laid out with its stride, unless
+        // hosted[i] names the host copy it reads instead.
+        CaptureVector<uint8_t> vertices;
         std::vector<uint32_t> streamOffsets;
-        std::vector<uint32_t> indices;
+        std::vector<HostedStream> hosted;
+        CaptureVector<uint32_t> indices;
         uint32_t vertexCount = 0;
 
-        std::array<uint8_t, 4096> vertexConstants{};
-        std::array<uint8_t, 4096> pixelConstants{};
+        std::array<uint8_t, 4096> vertexConstants;
+        std::array<uint8_t, 4096> pixelConstants;
         SharedConstants shared; // descriptor indices filled by the renderer from textures
         std::array<DrawTexture, SharedConstants::kFetchSlots> textures{}; // by texture fetch constant
 
@@ -250,6 +304,8 @@ namespace gpu
         // Fills the host texture of (address, layout key) with new content; draws posted after it
         // sample it.
         void UploadTexture(std::unique_ptr<TextureUpload> upload);
+        // Fills the host copy of the vertex buffer (address, data size); draws posted after it read it.
+        void UploadBuffer(std::unique_ptr<BufferUpload> upload);
 
         // The guest surface is gone; its host texture is released once the GPU no longer uses it.
         void ReleaseSurface(uint32_t key);
@@ -260,6 +316,10 @@ namespace gpu
         // Guest memory at the GPU addresses [begin, end) is freed: every texture uploaded or resolved
         // there is released.
         void ReleaseMemory(uint32_t begin, uint32_t end);
+        // The host copies of the vertex buffers that overlap the GPU addresses [begin, end) go.
+        void ReleaseBuffers(uint32_t begin, uint32_t end);
+        // The host copy of the vertex buffer (address, bytes) goes.
+        void ReleaseBuffer(uint32_t address, uint32_t bytes);
 
         // Reads back the color texture resolved at a GPU address, once the work posted before it has
         // run. Blocks the caller until the GPU is idle; for the rare CPU reads of a resolve. False when

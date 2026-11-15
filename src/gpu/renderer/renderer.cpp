@@ -2,6 +2,7 @@
 
 #include "gpu/renderer/renderer.h"
 
+#include "gpu/renderer/buffers.h"
 #include "gpu/renderer/context.h"
 #include "gpu/renderer/descriptors.h"
 #include "gpu/renderer/draws.h"
@@ -91,6 +92,7 @@ namespace gpu
         std::unique_ptr<Passes> passes;
         std::unique_ptr<Targets> targets;
         std::unique_ptr<Textures> textures;
+        std::unique_ptr<Buffers> buffers;
         std::unique_ptr<Draws> draws;
         std::unique_ptr<Presenter> presenter;
         Renderer::BeforePost beforePost;
@@ -170,8 +172,9 @@ namespace gpu
         impl->passes = std::make_unique<Passes>(impl->context->Device(), Presenter::kFormat);
         impl->targets = std::make_unique<Targets>(*impl->context, *impl->passes, *impl->descriptors);
         impl->textures = std::make_unique<Textures>(*impl->context, *impl->targets, *impl->descriptors);
+        impl->buffers = std::make_unique<Buffers>(*impl->context);
         impl->draws = std::make_unique<Draws>(*impl->context, *impl->targets, *impl->descriptors, *impl->textures,
-            settings.pipelineList);
+            *impl->buffers, settings.pipelineList);
         impl->Start();
         return std::unique_ptr<Renderer>(new Renderer(std::move(impl)));
     }
@@ -206,6 +209,23 @@ namespace gpu
         impl_->Post([impl = impl_.get(), upload = std::shared_ptr<TextureUpload>(std::move(upload))] {
             impl->textures->Upload(*upload);
         });
+    }
+
+    void Renderer::UploadBuffer(std::unique_ptr<BufferUpload> upload)
+    {
+        impl_->Post([impl = impl_.get(), upload = std::shared_ptr<BufferUpload>(std::move(upload))] {
+            impl->buffers->Upload(*upload);
+        });
+    }
+
+    void Renderer::ReleaseBuffers(uint32_t begin, uint32_t end)
+    {
+        impl_->Post([impl = impl_.get(), begin, end] { impl->buffers->Release(begin, end); });
+    }
+
+    void Renderer::ReleaseBuffer(uint32_t address, uint32_t bytes)
+    {
+        impl_->Post([impl = impl_.get(), address, bytes] { impl->buffers->Forget(address, bytes); });
     }
 
     void Renderer::ReleaseSurface(uint32_t key)

@@ -6,6 +6,7 @@
 #include "gpu/gpu.h"
 
 #include "gpu/guest/addresses.h"
+#include "gpu/guest/buffers.h"
 #include "gpu/guest/device.h"
 #include "gpu/guest/draw.h"
 #include "gpu/guest/resources.h"
@@ -129,6 +130,7 @@ namespace gpu
     void FreePhysicalMemory(uint32_t address, uint32_t size)
     {
         guest::ForgetMemory(address, size);
+        guest::ForgetBuffers(guest::GpuAddress(address), guest::GpuAddress(address) + size);
     }
 
     void Swap(uint32_t frontBufferFetch)
@@ -152,6 +154,7 @@ namespace gpu
         if (g_renderer)
             g_renderer->Present(front.address);
         guest::EndTextureFrame();
+        guest::EndBufferFrame();
         g_limiter.Pace(device != 0 ? mem::Load32(device + guest::dev::kPresentInterval) : 1);
     }
 }
