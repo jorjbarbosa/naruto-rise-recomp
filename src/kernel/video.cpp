@@ -115,11 +115,14 @@ GUEST_FUNC(VdPersistDisplay)
     ctx.r3.u64 = 1;
 }
 
-// VdInitializeScalerCommandBuffer(8 unknown arguments, destination, count): filled with PM4 NOPs.
+// VdInitializeScalerCommandBuffer(sourceXY, sourceWH, outputXY, outputWH, unknown, verticalFilter,
+//     verticalParams, horizontalFilter, horizontalParams, unknown, destination, count):
+// filled with PM4 NOPs. Destination and count are the 11th and 12th arguments (D3D::SetupScaler
+// stores them at r1+0x64 and r1+0x6C).
 GUEST_FUNC(VdInitializeScalerCommandBuffer)
 {
-    uint32_t destination = StackArg32(ctx, 8);
-    uint32_t count = StackArg32(ctx, 9);
+    uint32_t destination = StackArg32(ctx, 10);
+    uint32_t count = StackArg32(ctx, 11);
     for (uint32_t i = 0; i < count; i++)
         mem::Store32(destination + i * 4, 0x80000000);
     ctx.r3.u64 = count;
