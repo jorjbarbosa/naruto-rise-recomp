@@ -3,7 +3,10 @@
 #include "kernel/kernel.h"
 
 #include <cstring>
+#include <mutex>
+#include <string>
 #include <thread>
+#include <unordered_map>
 #include <windows.h>
 
 namespace kernel
@@ -40,7 +43,7 @@ namespace kernel
         return mem::Alloc(mem::Heap::System, size);
     }
 
-    uint32_t ResolveVariable(const char* module, const char* name)
+    static uint32_t CreateVariable(const char* module, const char* name)
     {
         if (strcmp(module, "xboxkrnl.exe") != 0)
             return 0;
@@ -98,6 +101,23 @@ namespace kernel
             return AllocZeroed(256);
         }
         return 0;
+    }
+
+    // One object per export: default.xex and AI2C.dll (on every load) must see the same one; the
+    // kernel clock keeps only the KeTimeStampBundle created first current.
+    uint32_t ResolveVariable(const char* module, const char* name)
+    {
+        static std::mutex mutex;
+        static std::unordered_map<std::string, uint32_t> variables;
+        std::lock_guard lock(mutex);
+        std::string key = std::string(module) + "!" + name;
+        auto found = variables.find(key);
+        if (found != variables.end())
+            return found->second;
+        uint32_t address = CreateVariable(module, name);
+        if (address != 0)
+            variables.emplace(std::move(key), address);
+        return address;
     }
 
     // KeTimeStampBundle: interrupt time, system time (100 ns), tick count (ms).

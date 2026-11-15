@@ -12,7 +12,9 @@
 //   0x70000000-0x7EFFFFFF  thread stacks
 //   0x7FC80000-...         GPU registers (plain memory, nothing listens yet)
 //   0x82000000-0x82C5FFFF  default.xex image
-//   0x82C60000-0x8387FFFF  indirect call table (see PPC_LOOKUP_FUNC)
+//   0x82C60000-0x8387FFFF  its indirect call table (see PPC_LOOKUP_FUNC and ppc_module.h)
+//   0x88000000-0x883BFFFF  AI2C.dll image, loaded by the game (XexLoadImage)
+//   0x883C0000-0x88A8183F  its indirect call table
 //   0xA0000000-0xBFFFFFFF  physical memory (MmAllocatePhysicalMemoryEx)
 namespace mem
 {

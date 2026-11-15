@@ -1,6 +1,7 @@
 // Runtime library: strings, formatting, time, exceptions, XEX headers, modules and settings.
 
 #include "kernel/kernel.h"
+#include "loader.h"
 
 #include <cstdio>
 #include <cwctype>
@@ -493,22 +494,28 @@ GUEST_FUNC(XexGetModuleHandle)
     ctx.r3.u64 = handle != 0 ? X_STATUS_SUCCESS : X_STATUS_DLL_NOT_FOUND;
 }
 
-// XexGetProcedureAddress(module, ordinal, address*)
+// XexGetProcedureAddress(module, ordinal, address*): exports of the recompiled DLLs. The game also
+// asks the XAM handle for XNet ordinals, which stay refused (it is offline).
 GUEST_FUNC(XexGetProcedureAddress)
 {
-    Log("XexGetProcedureAddress(%08X, ordinal %u) refused (lr=%08X)", ctx.r3.u32, ctx.r4.u32, uint32_t(ctx.lr));
-    mem::Store32(ctx.r5.u32, 0);
-    ctx.r3.u64 = X_STATUS_DRIVER_ORDINAL_NOT_FOUND;
+    uint32_t address = FindModuleExport(ctx.r3.u32, ctx.r4.u32);
+    if (address == 0)
+        Log("XexGetProcedureAddress(%08X, ordinal %u) refused (lr=%08X)", ctx.r3.u32, ctx.r4.u32, uint32_t(ctx.lr));
+    mem::Store32(ctx.r5.u32, address);
+    ctx.r3.u64 = address != 0 ? X_STATUS_SUCCESS : X_STATUS_DRIVER_ORDINAL_NOT_FOUND;
 }
 
-// XexLoadImage(name, flags, minimumVersion, handle*). Refused on purpose: without AI2C.dll the
-// engine loads the AI bytecode and runs it in its interpreter.
+// XexLoadImage(name, flags, minimumVersion, handle*). The game loads AI2C.dll, its AI scripts compiled
+// to C, and cannot run without it (it has no AI interpreter); only recompiled modules load.
 GUEST_FUNC(XexLoadImage)
 {
-    Log("XexLoadImage(\"%s\") refused, the game falls back to its own code", mem::String(ctx.r3.u32));
-    if (ctx.r6.u32 != 0)
-        mem::Store32(ctx.r6.u32, 0);
-    ctx.r3.u64 = X_STATUS_NO_SUCH_FILE;
+    std::string name = mem::String(ctx.r3.u32);
+    uint32_t handleOut = ctx.r6.u32;
+    uint32_t status;
+    uint32_t handle = LoadGuestModule(name, ctx, base, status);
+    if (handleOut != 0)
+        mem::Store32(handleOut, handle);
+    ctx.r3.u64 = status;
 }
 
 GUEST_FUNC(XexLoadImageHeaders)
@@ -517,7 +524,7 @@ GUEST_FUNC(XexLoadImageHeaders)
     ctx.r3.u64 = X_STATUS_NO_SUCH_FILE;
 }
 
-GUEST_FUNC(XexUnloadImage) { ctx.r3.u64 = X_STATUS_INVALID_HANDLE; }
+GUEST_FUNC(XexUnloadImage) { ctx.r3.u64 = UnloadGuestModule(ctx.r3.u32, ctx, base) ? X_STATUS_SUCCESS : X_STATUS_INVALID_HANDLE; }
 
 // ---- Console settings ----
 

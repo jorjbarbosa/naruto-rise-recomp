@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -46,8 +47,10 @@ namespace kernel
     constexpr uint32_t X_STATUS_MUTANT_NOT_OWNED = 0xC0000046;
     constexpr uint32_t X_STATUS_SEMAPHORE_LIMIT_EXCEEDED = 0xC0000047;
     constexpr uint32_t X_STATUS_INVALID_INFO_CLASS = 0xC0000003;
+    constexpr uint32_t X_STATUS_INVALID_IMAGE_FORMAT = 0xC000007B;
     constexpr uint32_t X_STATUS_NOT_SUPPORTED = 0xC00000BB;
     constexpr uint32_t X_STATUS_DLL_NOT_FOUND = 0xC0000135;
+    constexpr uint32_t X_STATUS_DLL_INIT_FAILED = 0xC0000142;
     constexpr uint32_t X_STATUS_DRIVER_ORDINAL_NOT_FOUND = 0xC0000262;
 
     // Win32 error codes returned by XAM.
@@ -196,7 +199,8 @@ namespace kernel
     };
     extern ModuleInfo g_module;
 
-    // Guest address of a kernel data export (XboxHardwareInfo, KeTimeStampBundle, ...), or 0.
+    // Guest address of a kernel data export (XboxHardwareInfo, KeTimeStampBundle, ...), or 0. Every
+    // module importing an export gets the same object. Thread-safe.
     uint32_t ResolveVariable(const char* module, const char* name);
 
     // Starts the timer that keeps KeTimeStampBundle current.
@@ -204,6 +208,9 @@ namespace kernel
 
     // Game folder on the host and the folder for data the game writes.
     void SetPaths(const std::string& gameDir, const std::string& userDir);
+
+    // Host path of a guest path ("D:\AI2C.DLL", "game:\...", symbolic links the game created).
+    std::filesystem::path HostPath(const std::string& guestPath);
 
     // Called by the stubs of imports that are not implemented.
     void ReportUnimplemented(const char* name, PPCContext& ctx);

@@ -1,0 +1,30 @@
+# XenonRecomp configuration for AI2C.dll: the game's AI scripts compiled to C (retail, XDK 6274).
+# default.xex loads it at startup (LoadLibraryA("D:\AI2C.DLL") in sub_825CA998) and has no AI
+# interpreter of its own. Paths are relative to this file. Run scripts/recompile.ps1 instead of calling
+# XenonRecomp directly.
+
+[main]
+file_path = "../game/AI2C.dll"
+out_directory_path = "../build/ppc_ai2c"
+switch_table_file_path = "ai2c_switch_tables.toml"
+
+# Suffixes the register helpers and the function mapping table (PPCFuncMappings_ai2c), so this module
+# links next to default.xex.
+module_name = "ai2c"
+
+# Register save/restore helpers, found by byte pattern (same code as in default.xex). The DLL has no
+# vector code and no VMX helpers. It has no setjmp/longjmp either.
+restgprlr_14_address = 0x88398DA0
+savegprlr_14_address = 0x88398D50
+restfpr_14_address = 0x883987CC
+savefpr_14_address = 0x88398780
+restvmx_14_address = 0
+savevmx_14_address = 0
+restvmx_64_address = 0
+savevmx_64_address = 0
+
+# Data inside the code section.
+invalid_instructions = [
+    { data = 0x00000000, size = 4 },    # zero padding between functions
+    { data = 0x00485645, size = 0x34 }, # XEX export table at the end of .text (3 ordinals)
+]

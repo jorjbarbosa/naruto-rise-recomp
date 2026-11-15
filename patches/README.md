@@ -87,17 +87,39 @@ XenonRecomp emitted (`a / b`) traps on x86. `divw`, `divwu`, `divd` and `divdu` 
 and wrap around on overflow (`divw` divides in 64 bits). The game has 1,046 of these instructions; the first
 one to hit a zero divisor is in `D3D::InternalScalerSetup`, on the first frame.
 
+### 0004: module names and optional helpers
+
+The game is two modules: `default.xex` and `AI2C.dll`, the AI scripts compiled to C, which `default.xex` loads at
+startup and cannot run without (it has no AI interpreter). Both are recompiled and linked into one executable.
+
+- **`module_name`.** Function names come from addresses (`sub_88...` cannot collide with `sub_82...`), but the
+  register helpers (`__restgprlr_14`...), the entry point (`_xstart`) and the mapping table (`PPCFuncMappings`)
+  had fixed names. With `module_name = "ai2c"` they become `__restgprlr_14_ai2c`, `_xstart_ai2c` and
+  `PPCFuncMappings_ai2c`. Import thunks
+  (`__imp__Name`) keep their names, so both modules share one kernel implementation. Without the key the output
+  is unchanged.
+- **Helpers set to 0.** Every helper address was required. `AI2C.dll` has no vector code and no VMX helpers, so
+  an address of `0` now means the module has none; only a missing key is still an error.
+
+### 0005: image size with basic compression
+
+With basic compression (data blocks, each followed by zeros), `Xex2LoadImage` sized the image buffer by the
+sum of the blocks, but `image.size` reports the image size of the security info. In `AI2C.dll` the blocks end
+at `0x3B8000` of `0x3C0000`, so copying `image.size` bytes read past the buffer. The buffer now covers the
+whole image, with the rest zero (as the console loader leaves it). `default.xex` is unaffected (its sizes
+match).
+
 ### Not covered by the patches
 
-These are configuration items, in `config/default.toml` and `config/default_switch_tables.toml`:
+These are configuration items, in `config/<module>.toml` and `config/<module>_switch_tables.toml`:
 
 - `invalid_instructions`:
   - zero padding;
-  - exception handler data blocks (`0x822C6B90` and `0x826BE634`, 8 bytes);
-  - export table at the end of `.text` (`0x00485645`, `0x2D8` bytes).
-- Jump tables XenonAnalyse does not recognize: `0x8264D590`, `0x823EFDCC` and `0x824F85A4`.
-- Two modules (`AI2C.dll`): indirect call lookup over two code ranges and per-module symbol names. The game
-  has a path without the DLL (it interprets the AI bytecode), so this can wait.
+  - exception handler data blocks of `default.xex` (`0x822C6B90` and `0x826BE634`, 8 bytes);
+  - the XEX export table at the end of `.text` (`0x00485645`: `0x2D8` bytes in `default.xex`, `0x34` in
+    `AI2C.dll`).
+- Jump tables XenonAnalyse does not recognize in `default.xex`: `0x8264D590`, `0x823EFDCC` and `0x824F85A4`. In
+  `AI2C.dll` its 53 tables are complete.
 
 ## plume
 

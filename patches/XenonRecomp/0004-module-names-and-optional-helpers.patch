@@ -1,0 +1,145 @@
+diff --git a/XenonRecomp/main.cpp b/XenonRecomp/main.cpp
+index 12c6d8c..a69ecc5 100644
+--- a/XenonRecomp/main.cpp
++++ b/XenonRecomp/main.cpp
+@@ -30,7 +30,7 @@ int main(int argc, char* argv[])
+         auto entry = recompiler.image.symbols.find(recompiler.image.entry_point);
+         if (entry != recompiler.image.symbols.end())
+         {
+-            entry->name = "_xstart";
++            entry->name = "_xstart" + recompiler.config.symbolSuffix;
+         }
+ 
+         const char* headerFilePath =
+diff --git a/XenonRecomp/recompiler.cpp b/XenonRecomp/recompiler.cpp
+index 6c53846..26dc61d 100644
+--- a/XenonRecomp/recompiler.cpp
++++ b/XenonRecomp/recompiler.cpp
+@@ -104,7 +104,7 @@ void Recompiler::Analyse()
+                 auto& restgpr = functions.emplace_back();
+                 restgpr.base = config.restGpr14Address + (i - 14) * 4;
+                 restgpr.size = (32 - i) * 4 + 12;
+-                image.symbols.emplace(Symbol{ fmt::format("__restgprlr_{}", i), restgpr.base, restgpr.size, Symbol_Function });
++                image.symbols.emplace(Symbol{ fmt::format("__restgprlr_{}{}", i, config.symbolSuffix), restgpr.base, restgpr.size, Symbol_Function });
+             }
+ 
+             if (config.saveGpr14Address != 0)
+@@ -112,7 +112,7 @@ void Recompiler::Analyse()
+                 auto& savegpr = functions.emplace_back();
+                 savegpr.base = config.saveGpr14Address + (i - 14) * 4;
+                 savegpr.size = (32 - i) * 4 + 8;
+-                image.symbols.emplace(fmt::format("__savegprlr_{}", i), savegpr.base, savegpr.size, Symbol_Function);
++                image.symbols.emplace(fmt::format("__savegprlr_{}{}", i, config.symbolSuffix), savegpr.base, savegpr.size, Symbol_Function);
+             }
+ 
+             if (config.restFpr14Address != 0)
+@@ -120,7 +120,7 @@ void Recompiler::Analyse()
+                 auto& restfpr = functions.emplace_back();
+                 restfpr.base = config.restFpr14Address + (i - 14) * 4;
+                 restfpr.size = (32 - i) * 4 + 4;
+-                image.symbols.emplace(fmt::format("__restfpr_{}", i), restfpr.base, restfpr.size, Symbol_Function);
++                image.symbols.emplace(fmt::format("__restfpr_{}{}", i, config.symbolSuffix), restfpr.base, restfpr.size, Symbol_Function);
+             }
+ 
+             if (config.saveFpr14Address != 0)
+@@ -128,7 +128,7 @@ void Recompiler::Analyse()
+                 auto& savefpr = functions.emplace_back();
+                 savefpr.base = config.saveFpr14Address + (i - 14) * 4;
+                 savefpr.size = (32 - i) * 4 + 4;
+-                image.symbols.emplace(fmt::format("__savefpr_{}", i), savefpr.base, savefpr.size, Symbol_Function);
++                image.symbols.emplace(fmt::format("__savefpr_{}{}", i, config.symbolSuffix), savefpr.base, savefpr.size, Symbol_Function);
+             }
+ 
+             if (config.restVmx14Address != 0)
+@@ -136,7 +136,7 @@ void Recompiler::Analyse()
+                 auto& restvmx = functions.emplace_back();
+                 restvmx.base = config.restVmx14Address + (i - 14) * 8;
+                 restvmx.size = (32 - i) * 8 + 4;
+-                image.symbols.emplace(fmt::format("__restvmx_{}", i), restvmx.base, restvmx.size, Symbol_Function);
++                image.symbols.emplace(fmt::format("__restvmx_{}{}", i, config.symbolSuffix), restvmx.base, restvmx.size, Symbol_Function);
+             }
+ 
+             if (config.saveVmx14Address != 0)
+@@ -144,7 +144,7 @@ void Recompiler::Analyse()
+                 auto& savevmx = functions.emplace_back();
+                 savevmx.base = config.saveVmx14Address + (i - 14) * 8;
+                 savevmx.size = (32 - i) * 8 + 4;
+-                image.symbols.emplace(fmt::format("__savevmx_{}", i), savevmx.base, savevmx.size, Symbol_Function);
++                image.symbols.emplace(fmt::format("__savevmx_{}{}", i, config.symbolSuffix), savevmx.base, savevmx.size, Symbol_Function);
+             }
+         }
+ 
+@@ -155,7 +155,7 @@ void Recompiler::Analyse()
+                 auto& restvmx = functions.emplace_back();
+                 restvmx.base = config.restVmx64Address + (i - 64) * 8;
+                 restvmx.size = (128 - i) * 8 + 4;
+-                image.symbols.emplace(fmt::format("__restvmx_{}", i), restvmx.base, restvmx.size, Symbol_Function);
++                image.symbols.emplace(fmt::format("__restvmx_{}{}", i, config.symbolSuffix), restvmx.base, restvmx.size, Symbol_Function);
+             }
+ 
+             if (config.saveVmx64Address != 0)
+@@ -163,7 +163,7 @@ void Recompiler::Analyse()
+                 auto& savevmx = functions.emplace_back();
+                 savevmx.base = config.saveVmx64Address + (i - 64) * 8;
+                 savevmx.size = (128 - i) * 8 + 4;
+-                image.symbols.emplace(fmt::format("__savevmx_{}", i), savevmx.base, savevmx.size, Symbol_Function);
++                image.symbols.emplace(fmt::format("__savevmx_{}{}", i, config.symbolSuffix), savevmx.base, savevmx.size, Symbol_Function);
+             }
+         }
+     }
+@@ -2714,7 +2714,7 @@ void Recompiler::Recompile(const std::filesystem::path& headerFilePath)
+     {
+         println("#include \"ppc_recomp_shared.h\"\n");
+ 
+-        println("PPCFuncMapping PPCFuncMappings[] = {{");
++        println("PPCFuncMapping PPCFuncMappings{}[] = {{", config.symbolSuffix);
+         for (auto& symbol : image.symbols)
+             println("\t{{ 0x{:X}, {} }},", symbol.address, symbol.name);
+ 
+diff --git a/XenonRecomp/recompiler_config.cpp b/XenonRecomp/recompiler_config.cpp
+index 81330a4..7bd3306 100644
+--- a/XenonRecomp/recompiler_config.cpp
++++ b/XenonRecomp/recompiler_config.cpp
+@@ -38,14 +38,21 @@ void RecompilerConfig::Load(const std::string_view& configFilePath)
+         longJmpAddress = main["longjmp_address"].value_or(0u);
+         setJmpAddress = main["setjmp_address"].value_or(0u);
+ 
+-        if (restGpr14Address == 0) fmt::println("ERROR: __restgprlr_14 address is unspecified");
+-        if (saveGpr14Address == 0) fmt::println("ERROR: __savegprlr_14 address is unspecified");
+-        if (restFpr14Address == 0) fmt::println("ERROR: __restfpr_14 address is unspecified");
+-        if (saveFpr14Address == 0) fmt::println("ERROR: __savefpr_14 address is unspecified");
+-        if (restVmx14Address == 0) fmt::println("ERROR: __restvmx_14 address is unspecified");
+-        if (saveVmx14Address == 0) fmt::println("ERROR: __savevmx_14 address is unspecified");
+-        if (restVmx64Address == 0) fmt::println("ERROR: __restvmx_64 address is unspecified");
+-        if (saveVmx64Address == 0) fmt::println("ERROR: __savevmx_64 address is unspecified");
++        // A helper set to 0 is one the module does not contain (a DLL without vector code has no
++        // VMX helpers); only a missing key is an error.
++        for (const char* key : { "restgprlr_14_address", "savegprlr_14_address", "restfpr_14_address",
++                 "savefpr_14_address", "restvmx_14_address", "savevmx_14_address", "restvmx_64_address",
++                 "savevmx_64_address" })
++        {
++            if (!main.contains(key))
++                fmt::println("ERROR: {} is unspecified", key);
++        }
++
++        // Names that are not derived from an address (register helpers, the function mapping table)
++        // would collide when several modules are linked together; module_name suffixes them.
++        moduleName = main["module_name"].value_or<std::string>("");
++        if (!moduleName.empty())
++            symbolSuffix = "_" + moduleName;
+ 
+         if (auto functionsArray = main["functions"].as_array())
+         {
+diff --git a/XenonRecomp/recompiler_config.h b/XenonRecomp/recompiler_config.h
+index 534e503..abbd4bd 100644
+--- a/XenonRecomp/recompiler_config.h
++++ b/XenonRecomp/recompiler_config.h
+@@ -30,6 +30,8 @@ struct RecompilerConfig
+     std::string patchedFilePath;
+     std::string outDirectoryPath;
+     std::string switchTableFilePath;
++    std::string moduleName;
++    std::string symbolSuffix;
+     std::unordered_map<uint32_t, RecompilerSwitchTable> switchTables;
+     bool skipLr = false;
+     bool ctrAsLocalVariable = false;

@@ -1,0 +1,28 @@
+diff --git a/XenonUtils/xex.cpp b/XenonUtils/xex.cpp
+index 4e79042..3081d93 100644
+--- a/XenonUtils/xex.cpp
++++ b/XenonUtils/xex.cpp
+@@ -1,5 +1,6 @@
+ #include "xex.h"
+ #include "image.h"
++#include <algorithm>
+ #include <cassert>
+ #include <cstring>
+ #include <vector>
+@@ -174,11 +175,14 @@ Image Xex2LoadImage(const uint8_t* data, size_t dataSize)
+             auto* blocks = reinterpret_cast<const Xex2FileBasicCompressionBlock*>(fileFormatInfo + 1);
+             const size_t numBlocks = (fileFormatInfo->infoSize / sizeof(Xex2FileBasicCompressionInfo)) - 1;
+ 
+-            imageSize = 0;
++            // The blocks can end before the image does (AI2C.dll: 0x3B8000 of 0x3C0000); the rest of
++            // the image is zero, and image.size below promises all of it.
++            size_t blocksSize = 0;
+             for (size_t i = 0; i < numBlocks; i++)
+             {
+-                imageSize += blocks[i].dataSize + blocks[i].zeroSize;
++                blocksSize += blocks[i].dataSize + blocks[i].zeroSize;
+             }
++            imageSize = std::max<size_t>(imageSize, blocksSize);
+ 
+             result = std::make_unique<uint8_t[]>(imageSize);
+             auto* destData = result.get();

@@ -267,6 +267,14 @@ namespace kernel
         g_gameDir = gameDir;
         g_userDir = userDir;
     }
+
+    std::filesystem::path HostPath(const std::string& guestPath)
+    {
+        fs::path hostPath;
+        bool readOnly;
+        ResolvePath(guestPath, hostPath, readOnly);
+        return hostPath;
+    }
 }
 
 // NtCreateFile(handle*, access, attributes, ioStatus, allocationSize*, fileAttributes, share,

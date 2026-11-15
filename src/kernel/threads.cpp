@@ -1,6 +1,7 @@
 // Guest threads: host threads running recompiled code with their own guest stack and KPCR.
 
 #include "kernel/kernel.h"
+#include "loader.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -92,13 +93,6 @@ namespace kernel
             SignalObject(thread->object);
             return 0;
         }
-
-        PPCFunc* LookupGuestFunction(uint32_t address)
-        {
-            if (address - uint32_t(PPC_CODE_BASE) >= uint32_t(PPC_CODE_SIZE))
-                return nullptr;
-            return PPC_LOOKUP_FUNC(mem::g_base, address);
-        }
     }
 
     GuestThread* CurrentThread()
@@ -174,7 +168,7 @@ GUEST_FUNC(ExCreateThread)
 
     // With an XAPI startup routine, it runs first and calls startAddress(startContext) itself.
     uint32_t entry = xapiStartup != 0 ? xapiStartup : startAddress;
-    PPCFunc* function = LookupGuestFunction(entry);
+    PPCFunc* function = FindGuestFunction(entry);
     if (function == nullptr)
         Fatal("ExCreateThread: entry %08X is not a known function", entry);
 
