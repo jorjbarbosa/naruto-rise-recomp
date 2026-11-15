@@ -69,15 +69,14 @@ GUEST_FUNC(NtAllocateVirtualMemory)
 GUEST_FUNC(NtFreeVirtualMemory)
 {
     uint32_t address = mem::Load32(ctx.r3.u32);
-    if (ctx.r5.u32 & MEM_RELEASE)
+    uint32_t allocBase, size;
+    // Only a release of the whole allocation frees it; decommits and partial releases keep the
+    // memory (freeing zeroes it, which would wipe live data).
+    if ((ctx.r5.u32 & MEM_RELEASE) && mem::Query(address, &allocBase, &size) && address == allocBase)
     {
-        uint32_t allocBase, size;
-        if (mem::Query(address, &allocBase, &size))
-        {
-            mem::Free(allocBase);
-            if (ctx.r4.u32 != 0)
-                mem::Store32(ctx.r4.u32, size);
-        }
+        mem::Free(allocBase);
+        if (ctx.r4.u32 != 0)
+            mem::Store32(ctx.r4.u32, size);
     }
     ctx.r3.u64 = X_STATUS_SUCCESS;
 }
