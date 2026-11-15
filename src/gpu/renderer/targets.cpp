@@ -12,8 +12,6 @@ namespace gpu
 {
     namespace
     {
-        constexpr plume::RenderFormat kColorFormat = plume::RenderFormat::R8G8B8A8_UNORM;
-        constexpr plume::RenderFormat kDepthFormat = plume::RenderFormat::D32_FLOAT_S8_UINT;
         constexpr plume::RenderFormat kResolvedDepthFormat = plume::RenderFormat::R32_FLOAT;
 
         plume::RenderMultisampling Multisampling(uint32_t samples)
@@ -37,8 +35,7 @@ namespace gpu
         {
             if (it->second.desc == desc)
                 return it->second;
-            context_.Retire(std::make_shared<Surface>(std::move(it->second)));
-            surfaces_.erase(it);
+            RetireSurface(desc.key);
         }
 
         plume::RenderDevice& device = context_.Device();
@@ -81,7 +78,50 @@ namespace gpu
         const plume::RenderTexture* attachment = resolved.texture.get();
         resolved.framebuffer = device.createFramebuffer(plume::RenderFramebufferDesc(&attachment, 1));
         resolved.sampling = passes_.CreateTextureSet(*resolved.texture, nullptr);
+        resolved.descriptor = TextureDescriptor(descriptors_, *resolved.texture);
         return resolved;
+    }
+
+    void Targets::RetireSurface(uint32_t key)
+    {
+        auto it = surfaces_.find(key);
+        if (it == surfaces_.end())
+            return;
+        context_.Retire(std::make_shared<Surface>(std::move(it->second)));
+        surfaces_.erase(it);
+        for (auto framebuffer = drawFramebuffers_.begin(); framebuffer != drawFramebuffers_.end();)
+        {
+            if (framebuffer->first.first == key || framebuffer->first.second == key)
+            {
+                context_.Retire(std::shared_ptr<plume::RenderFramebuffer>(std::move(framebuffer->second)));
+                framebuffer = drawFramebuffers_.erase(framebuffer);
+            }
+            else
+            {
+                ++framebuffer;
+            }
+        }
+    }
+
+    void Targets::BindForDraw(plume::RenderCommandList& list, const SurfaceDesc& color, const SurfaceDesc& depth)
+    {
+        // Both first: creating one must not retire the framebuffer of the other.
+        Surface* colorSurface = color.key != 0 ? &EnsureSurface(color) : nullptr;
+        Surface* depthSurface = depth.key != 0 ? &EnsureSurface(depth) : nullptr;
+        if (colorSurface != nullptr)
+            Barrier(list, plume::RenderBarrierStage::GRAPHICS, colorSurface->texture.get(), plume::RenderTextureLayout::COLOR_WRITE);
+        if (depthSurface != nullptr)
+            Barrier(list, plume::RenderBarrierStage::GRAPHICS, depthSurface->texture.get(), plume::RenderTextureLayout::DEPTH_WRITE);
+
+        std::unique_ptr<plume::RenderFramebuffer>& framebuffer = drawFramebuffers_[{ color.key, depth.key }];
+        if (!framebuffer)
+        {
+            const plume::RenderTexture* attachment = colorSurface != nullptr ? colorSurface->texture.get() : nullptr;
+            framebuffer = context_.Device().createFramebuffer(plume::RenderFramebufferDesc(
+                colorSurface != nullptr ? &attachment : nullptr, colorSurface != nullptr ? 1 : 0,
+                depthSurface != nullptr ? depthSurface->texture.get() : nullptr));
+        }
+        list.setFramebuffer(framebuffer.get());
     }
 
     ResolvedTexture* Targets::Resolved(uint32_t address)
@@ -196,13 +236,7 @@ namespace gpu
     {
         // The surface and the backing of its tiled passes.
         for (uint32_t surfaceKey : { key, key | 1 })
-        {
-            auto it = surfaces_.find(surfaceKey);
-            if (it == surfaces_.end())
-                continue;
-            context_.Retire(std::make_shared<Surface>(std::move(it->second)));
-            surfaces_.erase(it);
-        }
+            RetireSurface(surfaceKey);
     }
 
     void Targets::ReleaseTexture(uint32_t address, uint32_t header)

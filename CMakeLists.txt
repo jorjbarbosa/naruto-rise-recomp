@@ -53,6 +53,23 @@ target_compile_definitions(plume PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
 target_compile_options(plume PRIVATE -Wno-everything)
 target_link_libraries(plume PUBLIC d3d12 dxgi dxguid)
 
+# The shaders translated by XenosRecomp (scripts/recompile.ps1), with the zstd decompressor and the
+# xxHash header of its submodule.
+set(XENOS_THIRDPARTY_DIR "${CMAKE_SOURCE_DIR}/tools/XenosRecomp/thirdparty")
+set(SHADER_CACHE "${CMAKE_SOURCE_DIR}/build/shaders/shader_cache.cpp")
+if(NOT EXISTS "${SHADER_CACHE}")
+    message(FATAL_ERROR "No shader cache at ${SHADER_CACHE}; run scripts/recompile.ps1 first")
+endif()
+add_library(shader_cache OBJECT "${SHADER_CACHE}")
+target_include_directories(shader_cache PRIVATE "${CMAKE_SOURCE_DIR}/src/gpu/renderer")
+target_compile_options(shader_cache PRIVATE -Wno-everything)
+
+file(GLOB ZSTD_SOURCES "${XENOS_THIRDPARTY_DIR}/zstd/lib/common/*.c" "${XENOS_THIRDPARTY_DIR}/zstd/lib/decompress/*.c")
+add_library(zstd_decompress STATIC ${ZSTD_SOURCES})
+target_include_directories(zstd_decompress PUBLIC "${XENOS_THIRDPARTY_DIR}/zstd/lib")
+target_compile_definitions(zstd_decompress PRIVATE ZSTD_DISABLE_ASM)
+target_compile_options(zstd_decompress PRIVATE -Wno-everything)
+
 # Every kernel/XAM import the game uses gets a weak logging stub (src/kernel/stubs.cpp);
 # the runtime overrides the implemented ones. The list comes from the generated header.
 file(STRINGS "${PPC_OUTPUT_DIR}/ppc_recomp_shared.h" PPC_EXTERN_LINES REGEX "^PPC_EXTERN_FUNC\\(__imp__")
@@ -90,9 +107,10 @@ file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/*.h")
 
-add_executable(roan-xenon ${SOURCES} ${GPU_SHADER_HEADERS} $<TARGET_OBJECTS:ppc_generated>)
-target_include_directories(roan-xenon PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_BINARY_DIR}/generated")
-target_link_libraries(roan-xenon PRIVATE ppc_common XenonUtils plume SDL3::SDL3-static dbghelp xinput)
+add_executable(roan-xenon ${SOURCES} ${GPU_SHADER_HEADERS} $<TARGET_OBJECTS:ppc_generated> $<TARGET_OBJECTS:shader_cache>)
+target_include_directories(roan-xenon PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_BINARY_DIR}/generated"
+    "${XENOS_THIRDPARTY_DIR}/xxHash")
+target_link_libraries(roan-xenon PRIVATE ppc_common XenonUtils plume zstd_decompress SDL3::SDL3-static dbghelp xinput)
 target_compile_options(roan-xenon PRIVATE /EHsc /Z7 -Wno-unused-parameter -Wno-null-arithmetic)
 target_link_options(roan-xenon PRIVATE /DEBUG /STACK:16777216)
 set_target_properties(roan-xenon PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

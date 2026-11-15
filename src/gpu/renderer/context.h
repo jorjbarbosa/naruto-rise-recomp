@@ -38,10 +38,22 @@ namespace gpu
         // Flushes; completion(token) runs once the GPU has finished all the work so far.
         void Report(uint32_t token);
         // Flushes and waits until the queue is idle, including work queued after the last
-        // submission (Presents).
+        // submission (Presents), then releases the retired objects.
         void WaitIdle();
         // Keeps an object alive until the GPU has finished the work recorded so far.
         void Retire(std::shared_ptr<void> object);
+
+        // Space in a persistently mapped upload buffer for data the open command list reads,
+        // valid until the GPU has finished the work recorded so far.
+        struct Upload
+        {
+            plume::RenderBuffer* buffer = nullptr;
+            uint64_t offset = 0;
+            uint8_t* data = nullptr;
+
+            plume::RenderBufferReference Reference() const { return { buffer, offset }; }
+        };
+        Upload Allocate(uint64_t size, uint64_t alignment);
 
     private:
         struct List
@@ -61,8 +73,16 @@ namespace gpu
             uint64_t submission;
             std::shared_ptr<void> object;
         };
+        struct UploadChunk
+        {
+            std::unique_ptr<plume::RenderBuffer> buffer;
+            uint8_t* data = nullptr;
+            uint64_t size = 0;
+            uint64_t submission = 0; // the submission that last read it
+        };
 
         List& AcquireList();
+        UploadChunk& AcquireChunk(uint64_t size);
         uint64_t Submit(plume::RenderCommandList& list);
         void WaitSubmission(uint64_t submission);
         uint64_t Completed();
@@ -78,6 +98,9 @@ namespace gpu
         std::unique_ptr<plume::RenderCommandList> idleList_;
         uint64_t submitted_ = 0;
         std::deque<Retired> retired_;
+        std::deque<UploadChunk> chunks_;
+        UploadChunk* chunk_ = nullptr; // the chunk being filled
+        uint64_t chunkCursor_ = 0;
 
         std::thread completer_;
         std::mutex mutex_;

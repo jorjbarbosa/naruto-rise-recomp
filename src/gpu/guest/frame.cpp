@@ -7,6 +7,7 @@
 
 #include "gpu/guest/addresses.h"
 #include "gpu/guest/device.h"
+#include "gpu/guest/draw.h"
 #include "gpu/guest/resources.h"
 #include "gpu/renderer/renderer.h"
 #include "gpu/settings.h"
@@ -112,8 +113,9 @@ namespace gpu
             Log("gpu: error: no game window, running without a renderer");
             return;
         }
+        // A quad of BeginVertices still waiting for its vertices goes before anything else posted.
         g_renderer = Renderer::Create(window, Settings::FromEnvironment(),
-            [](uint32_t fence) { guest::GetDevice().Publish(fence); });
+            [](uint32_t fence) { guest::GetDevice().Publish(fence); }, [] { guest::FlushInlineDraw(); });
         if (!g_renderer)
             Log("gpu: error: running without a renderer");
     }

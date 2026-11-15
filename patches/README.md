@@ -12,6 +12,10 @@ git submodule update --init --recursive
 ./patches/apply.ps1 -Revert    # undo, in reverse order
 ```
 
+Patches are applied in order, so the script takes the last patch of a folder that reverses cleanly as applied
+together with every patch before it (an earlier patch checked on its own can fail to reverse when a later one
+changed the lines around it).
+
 After applying, `git status` in the project shows the patched submodules as `(modified content)`. That is
 expected: each submodule stays on its upstream commit and the changes live only here.
 
@@ -150,3 +154,27 @@ bone with `OffsetX` 0.5, 1.5 and 2.5 texels. Before, these shaders did not compi
 `getGradients` was dropped silently (115 in 89 cel pixel shaders, from `fwidth()` in `33_pscell.hlsl`). It now
 gives `(dS/dX, dS/dY, dT/dX, dT/dY)`. The order comes from the game: `fwidth(x)` compiles to
 `getGradients r2._xy_, r2.xx` followed by `|r2.y| + |r2.z|`.
+
+### 0005: raw vertex fetch, spec constants as a shared constant
+
+**Vertex fetch.** Upstream declares each vertex input by its usage with a fixed type and expects the host to
+convert the vertex data into an input layout of typed formats (with a TEXCOORD swap and an R11G11B10 normal path
+made for another game). The D3D library of the game patches the fetch instructions of every vertex shader at run
+time for the bound vertex declaration and strides (`D3D::PatchVertexShaderToMatchVertexDeclaration`): format,
+offset, stride, fetch constant and destination swizzle can all differ from the template in the shader database.
+
+- Every vertex input is now `uint4`, the raw dwords of its element in guest byte order, bound by the host as
+  `R32[G32[B32[A32]]]_UINT`.
+- A vertex fetch writes `vfetch(input, g_VertexFetchDescriptor(i))`, where `i` is the element's index in the
+  container. `vfetch` (`shader_common.h`) applies the endian swap of the fetch constant and decodes every vertex
+  format the GPU has (8_8_8_8, 2_10_10_10, 10_11_11, 11_11_10, 16-bit and 32-bit, fixed point and float, signed
+  ranges, exponent adjustment), then the destination swizzle. The descriptor is built per draw by the host from the
+  fetch instruction as the library patched it. Only the components the template writes are assigned.
+- The descriptors live in the shared constants at `c34`-`c37` (16 elements).
+
+**Spec constants.** Shaders that read `g_SpecConstants()` (the alpha test branch in every pixel shader) were
+compiled as DXIL libraries, to be linked at run time with a library that defines the function. It is now a value
+of the shared constants (`c32.y`, replacing `g_SwappedTexcoords`): every shader compiles once as a plain shader,
+and the branch on it is uniform. The library target of `DxcCompiler::compile` is gone.
+
+Result: 3,322 of 3,322 compile, with one DXIL per shader.

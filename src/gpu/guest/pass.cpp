@@ -1,21 +1,17 @@
 // Clears, tiled passes and resolves. The D3D functions run as the original (their CPU state and
 // fences are kept, their packets land in the discard segment) and the hooks post the matching
-// host operations.
-//
-// Tiling: on the console a tiled pass renders into EDRAM surfaces smaller than the screen and
-// replays its commands once per tile, resolving each tile at its offset. The host has no tiles and
-// no replay: while a pass is tiled, every bound surface smaller than the tiled area is replaced by
-// a backing surface of the whole area, and the per-tile resolves copy their regions of it.
+// host operations. While a pass is tiled the surfaces are backings of the whole tiled area (see
+// Device), so the per-tile resolves copy their regions of them.
 
 #include "gpu/gpu.h"
 #include "gpu/guest/addresses.h"
+#include "gpu/guest/device.h"
 #include "gpu/guest/resources.h"
 #include "gpu/renderer/renderer.h"
 #include "kernel/kernel.h"
 
 #include <algorithm>
 #include <climits>
-#include <cstring>
 #include <optional>
 
 namespace gpu::guest
@@ -34,9 +30,6 @@ namespace gpu::guest
         constexpr uint32_t kResolveClearColor = 0x100;
         constexpr uint32_t kResolveClearDepth = 0x200;
 
-        // A backing surface has the key of its guest surface with bit 0 set (headers are aligned).
-        constexpr uint32_t kBackingKey = 1;
-
         struct ClearArgs
         {
             uint32_t flags = 0;
@@ -45,14 +38,6 @@ namespace gpu::guest
             uint8_t stencil = 0;
             std::optional<Rect> rect; // none: the whole surfaces
         };
-
-        float LoadFloat(uint32_t address)
-        {
-            uint32_t bits = mem::Load32(address);
-            float value;
-            memcpy(&value, &bits, sizeof(value));
-            return value;
-        }
 
         std::array<float, 4> LoadColor(uint32_t vector)
         {
@@ -84,7 +69,7 @@ namespace gpu::guest
                 ClearArgs clipped = args;
                 clipped.rect = ClipToViewport(device, args.rect);
                 if (!clipped.rect->Empty())
-                    Post(BuildClear(device, clipped));
+                    Post(BuildClear(clipped));
             }
 
             // D3DDevice_BeginTiling, around the original.
@@ -94,14 +79,14 @@ namespace gpu::guest
                 deferClear_ = true;
                 original();
                 deferClear_ = false;
-                tilingWidth_ = mem::Load32(device + dev::kTilingWidth);
-                tilingHeight_ = mem::Load32(device + dev::kTilingHeight);
-                tiling_ = true;
-                LOG_ONCE("gpu: first tiled pass, %ux%u", tilingWidth_, tilingHeight_);
+                uint32_t width = mem::Load32(device + dev::kTilingWidth);
+                uint32_t height = mem::Load32(device + dev::kTilingHeight);
+                GetDevice().BeginTiling(width, height);
+                LOG_ONCE("gpu: first tiled pass, %ux%u", width, height);
                 if (deferredClear_)
                 {
                     deferredClear_->rect.reset();
-                    Post(BuildClear(device, *deferredClear_));
+                    Post(BuildClear(*deferredClear_));
                     deferredClear_.reset();
                 }
             }
@@ -115,12 +100,12 @@ namespace gpu::guest
                 inEndTiling_ = true;
                 original();
                 inEndTiling_ = false;
-                tiling_ = false;
+                GetDevice().EndTiling();
                 // The last tile's clear leaves the EDRAM surfaces cleared: here, the guest surfaces.
                 // The original passes stencil 0 to that resolve. Without a destination it resolves
                 // nothing and clears nothing.
                 if (dest != 0)
-                    PostResolveClear(device, flags, finalClear);
+                    PostResolveClear(flags, finalClear);
             }
 
             // Resolve(device, flags, rect, dest, point, level, slice, color, z, stencil).
@@ -143,7 +128,7 @@ namespace gpu::guest
                 // Without a rect the original copies the destination's size from the origin.
                 Rect sourceRect = rect != 0 ? LoadRect(rect) : Rect{ 0, 0, int32_t(texture.width), int32_t(texture.height) };
 
-                if (std::optional<SurfaceDesc> surface = Bound(device, SlotOffset(source)))
+                if (std::optional<SurfaceDesc> surface = GetDevice().BoundSurface(SlotOffset(source)))
                 {
                     if (texture.is2D && DestinationCovered(surface->depth, texture.format))
                     {
@@ -175,7 +160,7 @@ namespace gpu::guest
                 {
                     ClearArgs region = clear;
                     region.rect = sourceRect; // the copy clears the region it copied
-                    PostResolveClear(device, flags, region);
+                    PostResolveClear(flags, region);
                 }
             }
 
@@ -209,22 +194,6 @@ namespace gpu::guest
                 return -1;
             }
 
-            // The host surface of a bound slot: the backing while the pass is tiled.
-            std::optional<SurfaceDesc> Bound(uint32_t device, uint32_t slot) const
-            {
-                uint32_t header = mem::Load32(device + slot);
-                if (header == 0)
-                    return std::nullopt;
-                std::optional<SurfaceDesc> surface = DescribeSurface(header);
-                if (surface && tiling_ && (surface->width < tilingWidth_ || surface->height < tilingHeight_))
-                {
-                    surface->key |= kBackingKey;
-                    surface->width = std::max(surface->width, tilingWidth_);
-                    surface->height = std::max(surface->height, tilingHeight_);
-                }
-                return surface;
-            }
-
             // The clear area of ClearF: its rect (or everything) within the viewport, and within
             // the scissor rectangle when scissoring is on.
             static Rect ClipToViewport(uint32_t device, const std::optional<Rect>& rect)
@@ -240,15 +209,16 @@ namespace gpu::guest
                 return area;
             }
 
-            ClearOp BuildClear(uint32_t device, const ClearArgs& args) const
+            static ClearOp BuildClear(const ClearArgs& args)
             {
+                const Device& device = GetDevice();
                 ClearOp op;
                 for (uint32_t i = 0; i < dev::kRenderTargetCount; i++)
                     if ((args.flags & (1u << i)) != 0)
-                        op.colors[i] = Bound(device, dev::kRenderTargets + 4 * i).value_or(SurfaceDesc{});
+                        op.colors[i] = device.BoundSurface(dev::kRenderTargets + 4 * i).value_or(SurfaceDesc{});
                 if ((args.flags & (kClearDepth | kClearStencil)) != 0)
                 {
-                    op.depth = Bound(device, dev::kDepthStencil).value_or(SurfaceDesc{});
+                    op.depth = device.BoundSurface(dev::kDepthStencil).value_or(SurfaceDesc{});
                     op.clearDepth = (args.flags & kClearDepth) != 0;
                     op.clearStencil = (args.flags & kClearStencil) != 0;
                 }
@@ -260,7 +230,7 @@ namespace gpu::guest
             }
 
             // The clear flags of a resolve: its source render target, the depth-stencil or both.
-            void PostResolveClear(uint32_t device, uint32_t flags, const ClearArgs& args)
+            static void PostResolveClear(uint32_t flags, const ClearArgs& args)
             {
                 uint32_t source = flags & kResolveSourceMask;
                 ClearArgs clear = args;
@@ -270,7 +240,7 @@ namespace gpu::guest
                 if ((flags & kResolveClearDepth) != 0)
                     clear.flags |= kClearDepth | kClearStencil;
                 if (clear.flags != 0)
-                    Post(BuildClear(device, clear));
+                    Post(BuildClear(clear));
             }
 
             static void Post(const ClearOp& op)
@@ -284,9 +254,6 @@ namespace gpu::guest
                     renderer->Clear(op);
             }
 
-            bool tiling_ = false;
-            uint32_t tilingWidth_ = 0;
-            uint32_t tilingHeight_ = 0;
             bool deferClear_ = false;
             std::optional<ClearArgs> deferredClear_;
             bool inEndTiling_ = false;

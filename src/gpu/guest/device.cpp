@@ -5,10 +5,13 @@
 
 #include "gpu/gpu.h"
 #include "gpu/guest/addresses.h"
+#include "gpu/guest/resources.h"
 #include "gpu/renderer/renderer.h"
 #include "kernel/kernel.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cstring>
 
 namespace gpu::guest
 {
@@ -136,6 +139,61 @@ namespace gpu::guest
                 mem::Store32(writeback_, fence);
         }
         fenceCv_.notify_all();
+    }
+
+    uint32_t Device::Register(uint32_t index) const
+    {
+        uint32_t device = Address();
+        if (index >= 0x2100 && index <= 0x2114)
+            return mem::Load32(device + dev::kRegisters2100 + 4 * (index - 0x2100));
+        if (index >= 0x2200 && index <= 0x220B)
+            return mem::Load32(device + dev::kRegisters2200 + 4 * (index - 0x2200));
+        if (index >= 0x2300 && index <= 0x2307)
+            return mem::Load32(device + dev::kRegisters2300 + 4 * (index - 0x2300));
+        Fatal("gpu: register %04X is not in the device's register blocks", index);
+    }
+
+    float Device::RegisterFloat(uint32_t index) const
+    {
+        uint32_t bits = Register(index);
+        float value;
+        memcpy(&value, &bits, sizeof(value));
+        return value;
+    }
+
+    void Device::BeginTiling(uint32_t width, uint32_t height)
+    {
+        tiling_ = true;
+        tilingWidth_ = width;
+        tilingHeight_ = height;
+    }
+
+    void Device::EndTiling()
+    {
+        tiling_ = false;
+    }
+
+    std::optional<SurfaceDesc> Device::BoundSurface(uint32_t slot) const
+    {
+        uint32_t header = mem::Load32(Address() + slot);
+        if (header == 0)
+            return std::nullopt;
+        std::optional<SurfaceDesc> surface = DescribeSurface(header);
+        if (surface && tiling_ && (surface->width < tilingWidth_ || surface->height < tilingHeight_))
+        {
+            surface->key |= kBackingKey;
+            surface->width = std::max(surface->width, tilingWidth_);
+            surface->height = std::max(surface->height, tilingHeight_);
+        }
+        return surface;
+    }
+
+    float LoadFloat(uint32_t address)
+    {
+        uint32_t bits = mem::Load32(address);
+        float value;
+        memcpy(&value, &bits, sizeof(value));
+        return value;
     }
 }
 

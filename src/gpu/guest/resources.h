@@ -15,6 +15,13 @@ namespace gpu::guest
         return (((address >> 20) + 0x200) & 0x1000) + (address & 0x1FFFFFFF);
     }
 
+    // The guest address of GPU memory. Every physical allocation of the runtime comes from the
+    // physical heap at 0xA0000000 (mem::Heap::Physical), where the GPU address is the offset.
+    constexpr uint32_t GuestPhysical(uint32_t gpuAddress)
+    {
+        return 0xA0000000 + gpuAddress;
+    }
+
     // The surface a guest surface header describes, or none when its format is not covered
     // (logged once per format).
     std::optional<SurfaceDesc> DescribeSurface(uint32_t header);

@@ -1,0 +1,378 @@
+diff --git a/XenosRecomp/dxc_compiler.cpp b/XenosRecomp/dxc_compiler.cpp
+index fcbc43a..bccc25b 100644
+--- a/XenosRecomp/dxc_compiler.cpp
++++ b/XenosRecomp/dxc_compiler.cpp
+@@ -11,7 +11,7 @@ DxcCompiler::~DxcCompiler()
+     dxcCompiler->Release();
+ }
+ 
+-IDxcBlob* DxcCompiler::compile(const std::string& shaderSource, bool compilePixelShader, bool compileLibrary, bool compileSpirv)
++IDxcBlob* DxcCompiler::compile(const std::string& shaderSource, bool compilePixelShader, bool compileSpirv)
+ {
+     DxcBuffer source{};
+     source.Ptr = shaderSource.c_str();
+@@ -20,21 +20,7 @@ IDxcBlob* DxcCompiler::compile(const std::string& shaderSource, bool compilePixe
+     const wchar_t* args[32]{};
+     uint32_t argCount = 0;
+ 
+-    const wchar_t* target = nullptr;
+-    if (compileLibrary)
+-    {
+-        assert(!compileSpirv);
+-        target = L"-T lib_6_3";
+-    }
+-    else
+-    {
+-        if (compilePixelShader)
+-            target = L"-T ps_6_0";
+-        else
+-            target = L"-T vs_6_0";
+-    }
+-
+-    args[argCount++] = target;
++    args[argCount++] = compilePixelShader ? L"-T ps_6_0" : L"-T vs_6_0";
+     args[argCount++] = L"-HV 2021";
+     args[argCount++] = L"-all-resources-bound";
+ 
+diff --git a/XenosRecomp/dxc_compiler.h b/XenosRecomp/dxc_compiler.h
+index d49bd32..d77015e 100644
+--- a/XenosRecomp/dxc_compiler.h
++++ b/XenosRecomp/dxc_compiler.h
+@@ -7,5 +7,5 @@ struct DxcCompiler
+     DxcCompiler();
+     ~DxcCompiler();
+ 
+-    IDxcBlob* compile(const std::string& shaderSource, bool compilePixelShader, bool compileLibrary, bool compileSpirv);
++    IDxcBlob* compile(const std::string& shaderSource, bool compilePixelShader, bool compileSpirv);
+ };
+diff --git a/XenosRecomp/main.cpp b/XenosRecomp/main.cpp
+index 37f3bb7..f549f6f 100644
+--- a/XenosRecomp/main.cpp
++++ b/XenosRecomp/main.cpp
+@@ -167,7 +167,7 @@ int main(int argc, char** argv)
+                 thread_local DxcCompiler dxcCompiler;
+ 
+ #ifdef XENOS_RECOMP_DXIL
+-                shader.dxil = dxcCompiler.compile(recompiler.out, recompiler.isPixelShader, recompiler.specConstantsMask != 0, false);
++                shader.dxil = dxcCompiler.compile(recompiler.out, recompiler.isPixelShader, false);
+                 if (shader.dxil == nullptr)
+                 {
+                     fail(hashShaderPair.first, recompiler.out);
+@@ -176,7 +176,7 @@ int main(int argc, char** argv)
+                 assert(*(reinterpret_cast<uint32_t *>(shader.dxil->GetBufferPointer()) + 1) != 0 && "DXIL was not signed properly!");
+ #endif
+ 
+-                IDxcBlob* spirv = dxcCompiler.compile(recompiler.out, recompiler.isPixelShader, false, true);
++                IDxcBlob* spirv = dxcCompiler.compile(recompiler.out, recompiler.isPixelShader, true);
+                 if (spirv == nullptr)
+                 {
+                     fail(hashShaderPair.first, recompiler.out);
+diff --git a/XenosRecomp/shader_common.h b/XenosRecomp/shader_common.h
+index e2da610..25210be 100644
+--- a/XenosRecomp/shader_common.h
++++ b/XenosRecomp/shader_common.h
+@@ -1,7 +1,6 @@
+ #ifndef SHADER_COMMON_H_INCLUDED
+ #define SHADER_COMMON_H_INCLUDED
+ 
+-#define SPEC_CONSTANT_R11G11B10_NORMAL  (1 << 0)
+ #define SPEC_CONSTANT_ALPHA_TEST        (1 << 1)
+ 
+ #ifdef UNLEASHED_RECOMP
+@@ -10,6 +9,9 @@
+     #define SPEC_CONSTANT_REVERSE_Z         (1 << 4)
+ #endif
+ 
++// The spec constants are a shared constant set by the host per draw, not specialization constants:
++// every shader is compiled once, and the branches on them are uniform.
++
+ #if !defined(__cplusplus) || defined(__INTELLISENSE__)
+ 
+ #define FLT_MIN asfloat(0xff7fffff)
+@@ -29,13 +31,10 @@ struct PushConstants
+ // Shared constants: the descriptor indices first, one uint per texture fetch constant (32) for the
+ // 2D, 3D and cube textures and for the samplers (512 bytes), then the values below.
+ #define g_Booleans                 vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 512)
+-#define g_SwappedTexcoords         vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 516)
++#define g_SpecConstants()          vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 516)
+ #define g_HalfPixelOffset          vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 520)
+ #define g_AlphaThreshold           vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 528)
+-
+-[[vk::constant_id(0)]] const uint g_SpecConstants = 0;
+-
+-#define g_SpecConstants() g_SpecConstants
++#define g_VertexFetchDescriptor(INDEX) vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 544 + (INDEX) * 4)
+ 
+ #else
+ 
+@@ -43,11 +42,13 @@ struct PushConstants
+ // 2D, 3D and cube textures and for the samplers (c0-c31), then the values below.
+ #define DEFINE_SHARED_CONSTANTS() \
+     uint g_Booleans : packoffset(c32.x); \
+-    uint g_SwappedTexcoords : packoffset(c32.y); \
++    uint g_SpecConstantValues : packoffset(c32.y); \
+     float2 g_HalfPixelOffset : packoffset(c32.z); \
+-    float g_AlphaThreshold : packoffset(c33.x);
++    float g_AlphaThreshold : packoffset(c33.x); \
++    uint4 g_VertexFetchDescriptors[4] : packoffset(c34);
+ 
+-uint g_SpecConstants();
++#define g_SpecConstants() g_SpecConstantValues
++#define g_VertexFetchDescriptor(INDEX) g_VertexFetchDescriptors[(INDEX) / 4][(INDEX) % 4]
+ 
+ #endif
+ 
+@@ -178,25 +179,104 @@ float4 getGradients(float2 texCoord)
+     return float4(ddx(texCoord.x), ddy(texCoord.x), ddx(texCoord.y), ddy(texCoord.y));
+ }
+ 
+-float4 tfetchR11G11B10(uint4 value)
++// Vertex fetch. Every vertex element arrives as the raw dwords of its format (bound as
++// R32[G32[B32[A32]]]_UINT, in guest byte order) and is decoded by its descriptor, which the host
++// builds per draw from the fetch instruction as the title patched it for its vertex declaration:
++//   bits 0-5    format (GPUVERTEXFORMAT)
++//   bit 6       signed
++//   bit 7       integer (not normalized)
++//   bit 8       signed range: 0 clamps -2^(n-1) to -1, 1 uses the full range
++//   bits 9-10   endian swap of the vertex fetch constant
++//   bits 11-22  source of each output component: 0-3 a component, 4 zero, 5 one
++//   bits 23-28  exponent adjustment of the fixed-point formats (signed)
++// Components are numbered from the low bits of the swapped dword, as on the GPU.
++
++uint4 vfetchSwap(uint4 value, uint endian)
+ {
+-    if (g_SpecConstants() & SPEC_CONSTANT_R11G11B10_NORMAL)
++    if (endian == 1 || endian == 2)
++        value = ((value & 0x00FF00FFu) << 8) | ((value >> 8) & 0x00FF00FFu);
++    if (endian == 2 || endian == 3)
++        value = (value << 16) | (value >> 16);
++    return value;
++}
++
++float4 vfetchFixed(uint4 value, uint4 bits, uint descriptor)
++{
++    float4 range = exp2(float4(bits));
++    float4 result;
++    if ((descriptor & 0x40) != 0)
+     {
+-        return float4(
+-            (value.x & 0x00000400 ? -1.0 : 0.0) + ((value.x & 0x3FF) / 1024.0),
+-            (value.x & 0x00200000 ? -1.0 : 0.0) + (((value.x >> 11) & 0x3FF) / 1024.0),
+-            (value.x & 0x80000000 ? -1.0 : 0.0) + (((value.x >> 22) & 0x1FF) / 512.0),
+-            0.0);
++        int4 shift = int4(32 - bits);
++        float4 signedValue = float4((int4(value) << shift) >> shift);
++        if ((descriptor & 0x80) != 0)
++            result = signedValue;
++        else if ((descriptor & 0x100) != 0)
++            result = (signedValue * 2.0 + 1.0) / (range - 1.0);
++        else
++            result = max(signedValue / (range * 0.5 - 1.0), -1.0);
++    }
++    else if ((descriptor & 0x80) != 0)
++    {
++        result = float4(value);
+     }
+     else
+     {
+-        return asfloat(value);
++        result = float4(value) / (range - 1.0);
+     }
++    int expAdjust = int(descriptor << 3) >> 26;
++    return result * exp2(float(expAdjust));
+ }
+ 
+-float4 tfetchTexcoord(uint swappedTexcoords, float4 value, uint semanticIndex)
++float4 vfetch(uint4 raw, uint descriptor)
+ {
+-    return (swappedTexcoords & (1ull << semanticIndex)) != 0 ? value.yxwz : value;
++    uint4 value = vfetchSwap(raw, (descriptor >> 9) & 3);
++    float4 components = 0.0;
++    switch (descriptor & 0x3F)
++    {
++    case 6: // 8_8_8_8
++        components = vfetchFixed((value.xxxx >> uint4(0, 8, 16, 24)) & 0xFF, 8, descriptor);
++        break;
++    case 7: // 2_10_10_10
++        components = vfetchFixed((value.xxxx >> uint4(0, 10, 20, 30)) & uint4(0x3FF, 0x3FF, 0x3FF, 0x3), uint4(10, 10, 10, 2), descriptor);
++        break;
++    case 16: // 10_11_11
++        components = vfetchFixed((value.xxxx >> uint4(0, 11, 22, 0)) & uint4(0x7FF, 0x7FF, 0x3FF, 0), uint4(11, 11, 10, 1), descriptor);
++        break;
++    case 17: // 11_11_10
++        components = vfetchFixed((value.xxxx >> uint4(0, 10, 21, 0)) & uint4(0x3FF, 0x7FF, 0x7FF, 0), uint4(10, 11, 11, 1), descriptor);
++        break;
++    case 25: // 16_16
++        components = vfetchFixed((value.xxxx >> uint4(0, 16, 0, 0)) & uint4(0xFFFF, 0xFFFF, 0, 0), 16, descriptor);
++        break;
++    case 26: // 16_16_16_16
++        components = vfetchFixed((value.xxyy >> uint4(0, 16, 0, 16)) & 0xFFFF, 16, descriptor);
++        break;
++    case 31: // 16_16_FLOAT
++        components = float4(f16tof32(value.xx >> uint2(0, 16)), 0.0, 0.0);
++        break;
++    case 32: // 16_16_16_16_FLOAT
++        components = f16tof32(value.xxyy >> uint4(0, 16, 0, 16));
++        break;
++    case 33: // 32
++    case 34: // 32_32
++    case 35: // 32_32_32_32
++        components = vfetchFixed(value, 32, descriptor);
++        break;
++    case 36: // 32_FLOAT
++    case 37: // 32_32_FLOAT
++    case 38: // 32_32_32_32_FLOAT
++    case 57: // 32_32_32_FLOAT
++        components = asfloat(value);
++        break;
++    }
++
++    float4 result;
++    [unroll] for (uint i = 0; i < 4; i++)
++    {
++        uint source = (descriptor >> (11 + 3 * i)) & 7;
++        result[i] = source < 4 ? components[source] : (source == 5 ? 1.0 : 0.0);
++    }
++    return result;
+ }
+ 
+ float4 cube(float4 value, inout CubeMapData cubeMapData)
+diff --git a/XenosRecomp/shader_recompiler.cpp b/XenosRecomp/shader_recompiler.cpp
+index e953ba5..1d342db 100644
+--- a/XenosRecomp/shader_recompiler.cpp
++++ b/XenosRecomp/shader_recompiler.cpp
+@@ -13,24 +13,6 @@ static constexpr char SWIZZLES[] =
+     '_'
+ };
+ 
+-static constexpr const char* USAGE_TYPES[] =
+-{
+-    "float4", // POSITION
+-    "float4", // BLENDWEIGHT
+-    "uint4", // BLENDINDICES
+-    "uint4", // NORMAL
+-    "float4", // PSIZE
+-    "float4", // TEXCOORD
+-    "uint4", // TANGENT
+-    "uint4", // BINORMAL
+-    "float4", // TESSFACTOR
+-    "float4", // POSITIONT
+-    "float4", // COLOR
+-    "float4", // FOG
+-    "float4", // DEPTH
+-    "float4", // SAMPLE
+-};
+-
+ static constexpr const char* USAGE_VARIABLES[] =
+ {
+     "Position",
+@@ -181,51 +163,27 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
+         ++indentation;
+     }
+ 
+-    indent();
+-    print("r{}.", instr.dstRegister);
+-    printDstSwizzle(instr.dstSwizzle, false);
+-
+-    out += " = ";
+-
+     auto findResult = vertexElements.find(address);
+     assert(findResult != vertexElements.end());
++    const auto& [vertexElement, elementIndex] = findResult->second;
+ 
+-    switch (findResult->second.usage)
++    // Every component the fetch writes, constants included, comes from the descriptor: it carries
++    // the format and the destination swizzle of the fetch as the title patched it at run time,
++    // which can differ from the ones of this template.
++    std::string mask;
++    for (size_t i = 0; i < 4; i++)
+     {
+-    case DeclUsage::Normal:
+-    case DeclUsage::Tangent:
+-    case DeclUsage::Binormal:
+-        specConstantsMask |= SPEC_CONSTANT_R11G11B10_NORMAL;
+-        print("tfetchR11G11B10(");
+-        break;
+-
+-    case DeclUsage::TexCoord:
+-        print("tfetchTexcoord(g_SwappedTexcoords, ");
+-        break;
++        if (getDestSwizzle(instr.dstSwizzle, i) != FetchDestinationSwizzle::Keep)
++            mask += SWIZZLES[i];
+     }
+ 
+-    print("i{}{}", USAGE_VARIABLES[uint32_t(findResult->second.usage)], uint32_t(findResult->second.usageIndex));
+-
+-    switch (findResult->second.usage)
++    if (!mask.empty())
+     {
+-    case DeclUsage::Normal:
+-    case DeclUsage::Tangent:
+-    case DeclUsage::Binormal:
+-        out += ')';
+-        break;
+-
+-    case DeclUsage::TexCoord:
+-        print(", {})", uint32_t(findResult->second.usageIndex));
+-        break;
++        indent();
++        println("r{0}.{1} = vfetch(i{2}{3}, g_VertexFetchDescriptor({4})).{1};", instr.dstRegister, mask,
++            USAGE_VARIABLES[uint32_t(vertexElement.usage)], uint32_t(vertexElement.usageIndex), elementIndex);
+     }
+ 
+-    out += '.';
+-    printDstSwizzle(instr.dstSwizzle, true);
+-
+-    out += ";\n";
+-
+-    printDstSwizzle01(instr.dstRegister, instr.dstSwizzle);
+-
+     if (instr.isPredicated)
+     {
+         --indentation;
+@@ -1371,16 +1329,6 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+ 
+             value = vertexShader->vertexElementsAndInterpolators[vertexShader->field18 + i];
+ 
+-            const char* usageType = USAGE_TYPES[uint32_t(vertexElement.usage)];
+-
+-        #ifdef UNLEASHED_RECOMP
+-            if ((vertexElement.usage == DeclUsage::TexCoord && vertexElement.usageIndex == 2 && isMetaInstancer) ||
+-                (vertexElement.usage == DeclUsage::Position && vertexElement.usageIndex == 1))
+-            {
+-                usageType = "uint4";
+-            }
+-        #endif
+-
+             out += '\t';
+ 
+             for (auto& usageLocation : USAGE_LOCATIONS)
+@@ -1392,10 +1340,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+                 }
+             }
+ 
+-            println("in {0} i{1}{2} : {3}{2},", usageType, USAGE_VARIABLES[uint32_t(vertexElement.usage)],
++            // The raw dwords of the element, decoded by vfetch.
++            println("in uint4 i{0}{1} : {2}{1},", USAGE_VARIABLES[uint32_t(vertexElement.usage)],
+                 uint32_t(vertexElement.usageIndex), USAGE_SEMANTICS[uint32_t(vertexElement.usage)]);
+ 
+-            vertexElements.emplace(uint32_t(vertexElement.address), vertexElement);
++            vertexElements.emplace(uint32_t(vertexElement.address), std::make_pair(vertexElement, i));
+         }
+ 
+     #ifdef UNLEASHED_RECOMP
+diff --git a/XenosRecomp/shader_recompiler.h b/XenosRecomp/shader_recompiler.h
+index 60cf772..fc7f406 100644
+--- a/XenosRecomp/shader_recompiler.h
++++ b/XenosRecomp/shader_recompiler.h
+@@ -26,7 +26,9 @@ struct ShaderRecompiler : StringBuffer
+     uint32_t indentation = 0;
+     bool isPixelShader = false;
+     const uint8_t* constantTableData = nullptr;
+-    std::unordered_map<uint32_t, VertexElement> vertexElements;
++    // Vertex elements by fetch address, with their index in the container: the slot of their fetch
++    // descriptor in the shared constants.
++    std::unordered_map<uint32_t, std::pair<VertexElement, uint32_t>> vertexElements;
+     std::unordered_map<uint32_t, std::string> interpolators;
+     std::unordered_map<uint32_t, const ConstantInfo*> float4Constants;
+     std::unordered_map<uint32_t, const char*> boolConstants;

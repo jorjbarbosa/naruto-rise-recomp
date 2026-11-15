@@ -21,6 +21,12 @@
 #define D3D_END_TILING sub_8213AC80               // D3DDevice_EndTiling
 #define D3D_RESOLVE sub_821398C8                  // D3DDevice_Resolve
 #define D3D_DESTROY_RESOURCE sub_8212D750         // D3D::DestroyResource
+#define D3D_DRAW_INDEXED_VERTICES sub_82137E00    // D3DDevice_DrawIndexedVertices
+#define D3D_DRAW_VERTICES sub_82137A18            // D3DDevice_DrawVertices
+#define D3D_BEGIN_VERTICES sub_821375A0           // D3DDevice_BeginVertices (LTCG: fan, 4 vertices of 20 bytes)
+#define D3D_PATCH_VERTEX_SHADER sub_82140540      // D3D::PatchVertexShaderToMatchVertexDeclaration
+#define JADE_CREATE_VERTEX_SHADER sub_820F5150    // Jade shader database: builds a D3D vertex shader object
+#define JADE_CREATE_PIXEL_SHADER sub_820F5348     // Jade shader database: builds a D3D pixel shader object
 
 // The recompiled implementation of a hooked function, to run the original from its hook:
 // DECLARE_ORIGINAL(D3D_RESOLVE); ... ORIGINAL(D3D_RESOLVE)(ctx, base);
@@ -50,17 +56,46 @@ namespace gpu::guest
         // Initial value of kNextFence (the ring setup stores it when the field is 0).
         constexpr uint32_t kFirstFence = 3;
 
+        // Shadows of the GPU state that the draw commits send: texture and vertex fetch constants (32
+        // slots of 6 dwords), then the vertex and pixel shader float constants (256 float4 each).
+        constexpr uint32_t kFetchConstants = 0x480;
+        constexpr uint32_t kVertexConstants = 0x780;
+        constexpr uint32_t kPixelConstants = 0x1780;
+        constexpr uint32_t kConstantBytes = 0x1000;
+
+        // Boolean shader constants: vertex shader b0..b31, pixel shader b0..b31.
+        constexpr uint32_t kVertexBooleans = 10112;
+        constexpr uint32_t kPixelBooleans = 10128;
+
+        // Register blocks: register base + i at offset + 4 i.
+        constexpr uint32_t kRegisters2100 = 10444; // 0x2100..0x2114
+        constexpr uint32_t kRegisters2200 = 10548; // 0x2200..0x220B
+        constexpr uint32_t kRegisters2300 = 10680; // 0x2300..0x2307
+
         // Flags byte. Bit 0x80: a command buffer is being recorded, and kicks are not submitted.
         constexpr uint32_t kFlags10940 = 10940;
         constexpr uint8_t kFlagRecording = 0x80;
 
+        // The bound vertex declaration (D3DVertexDeclaration).
+        constexpr uint32_t kVertexDeclaration = 11812;
+
         // Nonzero when scissoring is on (D3DRS_SCISSORTESTENABLE).
         constexpr uint32_t kScissorEnable = 11848;
+
+        // The bound index buffer (D3DIndexBuffer).
+        constexpr uint32_t kIndexBuffer = 12428;
 
         // Bound surface headers: render targets 0 to 3, then the depth-stencil surface.
         constexpr uint32_t kRenderTargets = 12432;
         constexpr uint32_t kRenderTargetCount = 4;
         constexpr uint32_t kDepthStencil = 12448;
+
+        // Stride of each vertex stream, in dwords (one byte per stream).
+        constexpr uint32_t kStreamStrides = 12520;
+
+        // The bound pixel and vertex shader objects.
+        constexpr uint32_t kPixelShader = 12684;
+        constexpr uint32_t kVertexShader = 12688;
 
         // Viewport: x, y, width, height (floats).
         constexpr uint32_t kViewport = 12640;
@@ -109,6 +144,65 @@ namespace gpu::guest
 
         // D3DBaseTexture: the texture fetch constant (6 dwords) of the texture.
         constexpr uint32_t kTextureFetch = 0x1C;
+
+        // D3DIndexBuffer. Common word: bit 31 set for 32-bit indices, bits 29..30 the endian swap.
+        constexpr uint32_t kIndex32 = 0x80000000;
+        constexpr uint32_t kIndexEndianShift = 29;
+        // Address of the index data.
+        constexpr uint32_t kIndexData = 0x18;
+
+        // D3DVertexDeclaration: an id the library gives each declaration at its first patch (0
+        // before).
+        constexpr uint32_t kDeclarationId = 48;
+    }
+
+    // D3D shader objects as the Jade shader database builds them. Each holds a copy of the virtual
+    // part of its shader container and the address of the physical part (the microcode and the
+    // literal constants), as laid out in the shader database.
+    namespace shader
+    {
+        constexpr uint32_t kVertexContainer = 0x368;
+        constexpr uint32_t kVertexPhysical = 0x20;
+        // Container flags of a vertex shader. 0x20: draws without a pixel shader use a variant of
+        // the shader; 0x40: the library does not patch its vertex fetches.
+        constexpr uint32_t kFlagDepthOnlyVariant = 0x20;
+        constexpr uint32_t kFlagUnpatched = 0x40;
+        constexpr uint32_t kPixelContainer = 0x28;
+        constexpr uint32_t kPixelPhysical = 0x18;
+
+        // Shader container fields.
+        constexpr uint32_t kVirtualSize = 0x04;
+        constexpr uint32_t kPhysicalSize = 0x08;
+        constexpr uint32_t kShaderOffset = 0x18; // the shader header, from the container
+
+        // Shader header: offset and size of the microcode in the physical part.
+        constexpr uint32_t kCodeOffset = 0x00;
+        constexpr uint32_t kCodeSize = 0x04;
+        // Vertex shader header: the vertex elements (one dword each: fetch address in bits 0..11,
+        // usage in bits 12..15, usage index in bits 16..19) start at kElements + 4 * kElementBase.
+        constexpr uint32_t kElementBase = 0x18;
+        constexpr uint32_t kElementCount = 0x1C;
+        constexpr uint32_t kElements = 0x24;
+    }
+
+    // GPU registers, by number, in the register blocks of the device (dev::kRegisters*).
+    namespace reg
+    {
+        constexpr uint32_t kResetIndex = 0x2103;       // VGT_MULTI_PRIM_IB_RESET_INDX
+        constexpr uint32_t kColorMask = 0x2104;        // RB_COLOR_MASK
+        constexpr uint32_t kBlendColor = 0x2105;       // RB_BLEND_RED..ALPHA (4 floats)
+        constexpr uint32_t kStencilRefMaskBack = 0x210C; // RB_STENCILREFMASK_BF
+        constexpr uint32_t kStencilRefMask = 0x210D;   // RB_STENCILREFMASK
+        constexpr uint32_t kAlphaRef = 0x210E;         // RB_ALPHA_REF (float)
+        constexpr uint32_t kViewportXScale = 0x210F;   // PA_CL_VPORT_XSCALE..ZOFFSET (6 floats)
+        constexpr uint32_t kDepthControl = 0x2200;     // RB_DEPTHCONTROL
+        constexpr uint32_t kBlendControl = 0x2201;     // RB_BLENDCONTROL0
+        constexpr uint32_t kColorControl = 0x2202;     // RB_COLORCONTROL
+        constexpr uint32_t kClipControl = 0x2204;      // PA_CL_CLIP_CNTL
+        constexpr uint32_t kRasterControl = 0x2205;    // PA_SU_SC_MODE_CNTL
+        constexpr uint32_t kViewportControl = 0x2206;  // PA_CL_VTE_CNTL
+        constexpr uint32_t kEdramMode = 0x2208;        // RB_MODECONTROL
+        constexpr uint32_t kVertexControl = 0x2302;    // PA_SU_VTX_CNTL
     }
 
     // GPUTEXTUREFORMAT values of the surfaces and resolve destinations the renderer covers.

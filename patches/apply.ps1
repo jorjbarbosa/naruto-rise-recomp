@@ -43,25 +43,32 @@ foreach ($dir in Get-ChildItem -Path $PSScriptRoot -Directory | Sort-Object Name
     }
 
     $patches = @(Get-ChildItem -Path $dir.FullName -Filter '*.patch' | Sort-Object Name)
-    if ($Revert) { [array]::Reverse($patches) }
 
-    foreach ($patch in $patches) {
-        $name = "$($dir.Name)/$($patch.Name)"
+    # Patches are applied in order, so the last one that reverses cleanly marks every patch before
+    # it as applied too. An earlier patch checked on its own can fail to reverse when a later one
+    # changed the lines around it.
+    $appliedCount = 0
+    for ($i = $patches.Count - 1; $i -ge 0; $i--) {
+        git -C $submodule apply --check --reverse $patches[$i].FullName 2>$null
+        if ($LASTEXITCODE -eq 0) { $appliedCount = $i + 1; break }
+    }
 
-        git -C $submodule apply --check --reverse $patch.FullName 2>$null
-        $applied = ($LASTEXITCODE -eq 0)
-
-        if ($Revert) {
-            if (-not $applied) { Write-Host "not applied, skipping: $name"; continue }
-            git -C $submodule apply --reverse $patch.FullName
+    if ($Revert) {
+        for ($i = $appliedCount; $i -lt $patches.Count; $i++) { Write-Host "not applied, skipping: $($dir.Name)/$($patches[$i].Name)" }
+        for ($i = $appliedCount - 1; $i -ge 0; $i--) {
+            $name = "$($dir.Name)/$($patches[$i].Name)"
+            git -C $submodule apply --reverse $patches[$i].FullName
             if ($LASTEXITCODE -ne 0) { Write-Warning "failed to revert: $name"; $failed = $true; break }
             Write-Host "reverted: $name"
         }
-        else {
-            if ($applied) { Write-Host "already applied: $name"; continue }
-            git -C $submodule apply --check $patch.FullName
+    }
+    else {
+        for ($i = 0; $i -lt $appliedCount; $i++) { Write-Host "already applied: $($dir.Name)/$($patches[$i].Name)" }
+        for ($i = $appliedCount; $i -lt $patches.Count; $i++) {
+            $name = "$($dir.Name)/$($patches[$i].Name)"
+            git -C $submodule apply --check $patches[$i].FullName
             if ($LASTEXITCODE -ne 0) { Write-Warning "does not apply (did the submodule change?): $name"; $failed = $true; break }
-            git -C $submodule apply $patch.FullName
+            git -C $submodule apply $patches[$i].FullName
             Write-Host "applied: $name"
         }
     }

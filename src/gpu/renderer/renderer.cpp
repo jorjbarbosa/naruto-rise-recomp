@@ -3,6 +3,8 @@
 #include "gpu/renderer/renderer.h"
 
 #include "gpu/renderer/context.h"
+#include "gpu/renderer/descriptors.h"
+#include "gpu/renderer/draws.h"
 #include "gpu/renderer/passes.h"
 #include "gpu/renderer/presenter.h"
 #include "gpu/renderer/targets.h"
@@ -68,6 +70,7 @@ namespace gpu
 
         void Post(std::function<void()> task)
         {
+            beforePost();
             {
                 std::lock_guard lock(mutex_);
                 tasks_.push_back(std::move(task));
@@ -78,9 +81,12 @@ namespace gpu
         // Destroyed in reverse order: the device outlives everything created on it.
         std::unique_ptr<plume::RenderInterface> api;
         std::unique_ptr<Context> context;
+        std::unique_ptr<Descriptors> descriptors;
         std::unique_ptr<Passes> passes;
         std::unique_ptr<Targets> targets;
+        std::unique_ptr<Draws> draws;
         std::unique_ptr<Presenter> presenter;
+        Renderer::BeforePost beforePost;
 
     private:
         void OwnerMain()
@@ -107,7 +113,8 @@ namespace gpu
         bool stopping_ = false;
     };
 
-    std::unique_ptr<Renderer> Renderer::Create(void* window, const Settings& settings, Completion completion)
+    std::unique_ptr<Renderer> Renderer::Create(void* window, const Settings& settings, Completion completion,
+        BeforePost beforePost)
     {
         if (settings.debugLayer)
         {
@@ -126,6 +133,7 @@ namespace gpu
         }
 
         auto impl = std::make_unique<Impl>();
+        impl->beforePost = std::move(beforePost);
         impl->api = plume::CreateD3D12Interface();
         if (!impl->api)
         {
@@ -151,8 +159,10 @@ namespace gpu
         impl->presenter = Presenter::Create(*impl->context, window, settings);
         if (!impl->presenter)
             return nullptr;
+        impl->descriptors = std::make_unique<Descriptors>(impl->context->Device());
         impl->passes = std::make_unique<Passes>(impl->context->Device(), Presenter::kFormat);
-        impl->targets = std::make_unique<Targets>(*impl->context, *impl->passes);
+        impl->targets = std::make_unique<Targets>(*impl->context, *impl->passes, *impl->descriptors);
+        impl->draws = std::make_unique<Draws>(*impl->context, *impl->targets, *impl->descriptors);
         impl->Start();
         return std::unique_ptr<Renderer>(new Renderer(std::move(impl)));
     }
@@ -174,6 +184,12 @@ namespace gpu
     void Renderer::Resolve(const ResolveOp& op)
     {
         impl_->Post([impl = impl_.get(), op] { impl->targets->Resolve(op); });
+    }
+
+    void Renderer::Draw(std::unique_ptr<DrawOp> op)
+    {
+        // std::function needs a copyable task.
+        impl_->Post([impl = impl_.get(), op = std::shared_ptr<DrawOp>(std::move(op))] { impl->draws->Draw(*op); });
     }
 
     void Renderer::ReleaseSurface(uint32_t key)
