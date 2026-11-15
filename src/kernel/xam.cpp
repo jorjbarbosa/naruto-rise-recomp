@@ -2,8 +2,7 @@
 
 #include "kernel/kernel.h"
 
-#include <windows.h>
-#include <xinput.h>
+#include "host/input.h"
 
 using namespace kernel;
 
@@ -58,23 +57,28 @@ GUEST_FUNC(XamUserReadProfileSettings) { ctx.r3.u64 = CompleteOverlapped(StackAr
 // XamUserWriteProfileSettings(titleId, user, settingCount, settings, overlapped)
 GUEST_FUNC(XamUserWriteProfileSettings) { ctx.r3.u64 = CompleteOverlapped(ctx.r7.u32, X_ERROR_NO_SUCH_USER); }
 
-// ---- Input: controller 0 comes from XInput ----
+// ---- Input: the player slots of host/input (gamepads, keyboard on slot 0) ----
+// The game polls users 0-3 through the XDK XInput wrappers (822DD968/70/80, flags 1) and treats any
+// result other than X_ERROR_DEVICE_NOT_CONNECTED as a connected pad; GetCapabilities and GetState
+// therefore agree for every slot.
 
 // XamInputGetCapabilities(user, flags, X_INPUT_CAPABILITIES*)
 GUEST_FUNC(XamInputGetCapabilities)
 {
     uint32_t user = ctx.r3.u32;
     uint32_t caps = ctx.r5.u32;
-    XINPUT_STATE state;
-    if (user >= 4 || XInputGetState(user, &state) != ERROR_SUCCESS)
+    host::PadState state;
+    if (!host::GetPadState(int(user), state))
     {
         ctx.r3.u64 = X_ERROR_DEVICE_NOT_CONNECTED;
         return;
     }
-    memset(mem::Ptr(caps), 0, 20);
-    mem::Store8(caps + 0, 1);       // type: gamepad
-    mem::Store8(caps + 1, 1);       // subtype: gamepad
-    mem::Store16(caps + 4, 0xF3FF); // buttons
+    // Type, subtype (gamepad), flags, then the X_INPUT_GAMEPAD and X_INPUT_VIBRATION fields the pad
+    // supports, all of them.
+    mem::Store8(caps + 0, 1);
+    mem::Store8(caps + 1, 1);
+    mem::Store16(caps + 2, 0);
+    mem::Store16(caps + 4, 0xF3FF);
     mem::Store8(caps + 6, 0xFF);
     mem::Store8(caps + 7, 0xFF);
     for (int i = 0; i < 4; i++)
@@ -89,20 +93,20 @@ GUEST_FUNC(XamInputGetState)
 {
     uint32_t user = ctx.r3.u32;
     uint32_t out = ctx.r5.u32;
-    XINPUT_STATE state;
-    if (user >= 4 || XInputGetState(user, &state) != ERROR_SUCCESS)
+    host::PadState state;
+    if (!host::GetPadState(int(user), state))
     {
         ctx.r3.u64 = X_ERROR_DEVICE_NOT_CONNECTED;
         return;
     }
-    mem::Store32(out + 0, state.dwPacketNumber);
-    mem::Store16(out + 4, state.Gamepad.wButtons);
-    mem::Store8(out + 6, state.Gamepad.bLeftTrigger);
-    mem::Store8(out + 7, state.Gamepad.bRightTrigger);
-    mem::Store16(out + 8, uint16_t(state.Gamepad.sThumbLX));
-    mem::Store16(out + 10, uint16_t(state.Gamepad.sThumbLY));
-    mem::Store16(out + 12, uint16_t(state.Gamepad.sThumbRX));
-    mem::Store16(out + 14, uint16_t(state.Gamepad.sThumbRY));
+    mem::Store32(out + 0, state.packet);
+    mem::Store16(out + 4, state.buttons);
+    mem::Store8(out + 6, state.leftTrigger);
+    mem::Store8(out + 7, state.rightTrigger);
+    mem::Store16(out + 8, uint16_t(state.thumbLX));
+    mem::Store16(out + 10, uint16_t(state.thumbLY));
+    mem::Store16(out + 12, uint16_t(state.thumbRX));
+    mem::Store16(out + 14, uint16_t(state.thumbRY));
     ctx.r3.u64 = X_ERROR_SUCCESS;
 }
 
@@ -110,13 +114,9 @@ GUEST_FUNC(XamInputGetState)
 GUEST_FUNC(XamInputSetState)
 {
     uint32_t user = ctx.r3.u32;
-    if (user >= 4)
-    {
-        ctx.r3.u64 = X_ERROR_DEVICE_NOT_CONNECTED;
-        return;
-    }
-    XINPUT_VIBRATION vibration{ mem::Load16(ctx.r5.u32), mem::Load16(ctx.r5.u32 + 2) };
-    ctx.r3.u64 = XInputSetState(user, &vibration);
+    uint32_t vibration = ctx.r5.u32;
+    bool connected = host::SetPadRumble(int(user), mem::Load16(vibration), mem::Load16(vibration + 2));
+    ctx.r3.u64 = connected ? X_ERROR_SUCCESS : X_ERROR_DEVICE_NOT_CONNECTED;
 }
 
 // ---- Notifications ----
@@ -145,6 +145,7 @@ GUEST_FUNC(XamLoaderSetLaunchData) { ctx.r3.u64 = X_ERROR_SUCCESS; }
 
 GUEST_FUNC(XamLoaderLaunchTitle)
 {
+    host::StopInput();
     PrintImportSummary();
     Log("XamLoaderLaunchTitle(\"%s\"): the game wants to start another program", mem::String(ctx.r3.u32));
     std::_Exit(0);
@@ -152,6 +153,7 @@ GUEST_FUNC(XamLoaderLaunchTitle)
 
 GUEST_FUNC(XamLoaderTerminateTitle)
 {
+    host::StopInput();
     PrintImportSummary();
     Log("XamLoaderTerminateTitle: the game asked to quit");
     std::_Exit(0);

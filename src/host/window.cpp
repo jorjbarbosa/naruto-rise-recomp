@@ -1,5 +1,6 @@
 #include "host/window.h"
 
+#include "host/input.h"
 #include "log.h"
 
 #define SDL_MAIN_HANDLED
@@ -25,6 +26,9 @@ namespace host
             Log("error: SDL_Init failed: %s", SDL_GetError());
             return false;
         }
+        // Without gamepads the game still runs on the keyboard.
+        if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD))
+            Log("error: no gamepad support, keyboard only: %s", SDL_GetError());
         g_window = SDL_CreateWindow(title, width, height, SDL_WINDOW_RESIZABLE);
         if (g_window == nullptr)
         {
@@ -52,6 +56,7 @@ namespace host
         {
             if (event.type == SDL_EVENT_QUIT)
                 return !g_quitRequested;
+            HandleInputEvent(event);
         }
         Log("error: SDL_WaitEvent failed: %s", SDL_GetError());
         return false;

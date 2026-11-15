@@ -3,6 +3,7 @@
 // usage: roan-xenon [game folder]   (default: <repository>/game)
 // ROAN_TRACE=1 logs every traced kernel call.
 
+#include "host/input.h"
 #include "host/window.h"
 #include "kernel/kernel.h"
 #include "loader.h"
@@ -130,6 +131,7 @@ int main(int argc, char** argv)
 
     if (host::RunEventLoop())
         Log("window closed");
+    host::StopInput();
     kernel::PrintImportSummary();
     // Plain exit: guest threads are still running, so no static destructors.
     std::_Exit(0);

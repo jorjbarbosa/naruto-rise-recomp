@@ -1,6 +1,8 @@
 // Guest threads: host threads running recompiled code with their own guest stack and KPCR.
 
 #include "kernel/kernel.h"
+
+#include "host/input.h"
 #include "loader.h"
 
 #include <atomic>
@@ -199,6 +201,7 @@ GUEST_FUNC(ExTerminateThread)
     TRACE("ExTerminateThread: thread %u, code %08X", thread ? thread->id : 0, ctx.r3.u32);
     if (thread == nullptr || thread->name == "main")
     {
+        host::StopInput();
         PrintImportSummary();
         Log("main thread terminated (code %08X)", ctx.r3.u32);
         std::_Exit(0);

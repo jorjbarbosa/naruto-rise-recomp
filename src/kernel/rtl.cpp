@@ -1,6 +1,8 @@
 // Runtime library: strings, formatting, time, exceptions, XEX headers, modules and settings.
 
 #include "kernel/kernel.h"
+
+#include "host/input.h"
 #include "loader.h"
 
 #include <cstdio>
@@ -440,6 +442,7 @@ GUEST_FUNC(KeBugCheckEx)
 
 GUEST_FUNC(HalReturnToFirmware)
 {
+    host::StopInput();
     PrintImportSummary();
     Log("HalReturnToFirmware(%u): the game asked to leave", ctx.r3.u32);
     std::_Exit(0);
