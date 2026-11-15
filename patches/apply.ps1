@@ -15,7 +15,8 @@ param(
     [switch]$Revert
 )
 
-$ErrorActionPreference = 'Stop'
+# No 'Stop' here: Windows PowerShell 5.1 turns git's stderr into terminating errors.
+# Failures are detected through $LASTEXITCODE instead.
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $failed = $false
 
