@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -147,6 +148,14 @@ namespace kernel
     void SignalObject(const ObjectPtr& object); // threads (exit) and timers
 
     ObjectPtr CreateEvent(bool manualReset, bool initialState);
+
+    // NtCreate* with a name: when the name (case-insensitive) is already in use, returns the existing
+    // object and sets status to X_STATUS_OBJECT_NAME_EXISTS, or returns nullptr with
+    // X_STATUS_OBJECT_TYPE_MISMATCH when that object has another type. Otherwise calls create(),
+    // registers the result under the name and sets status to X_STATUS_SUCCESS. An empty name just
+    // calls create(). The name is released when the last handle to the object closes.
+    ObjectPtr CreateNamedObject(const std::string& name, ObjectType type,
+        const std::function<ObjectPtr()>& create, uint32_t& status);
 
     // ---- Threads ----
 

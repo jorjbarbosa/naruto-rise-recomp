@@ -30,6 +30,10 @@ namespace kernel
     static std::mutex g_guestMutex;
     static std::unordered_map<uint32_t, ObjectPtr> g_guestObjects;
 
+    // Lower-case name -> object. Weak, so a name goes away with the last handle to its object.
+    static std::mutex g_namedMutex;
+    static std::unordered_map<std::string, std::weak_ptr<KernelObject>> g_namedObjects;
+
     // One lock and one condition variable for all dispatcher state: simple and correct.
     static std::mutex g_dispatchMutex;
     static std::condition_variable g_dispatchCv;
@@ -140,6 +144,41 @@ namespace kernel
         object->manualReset = manualReset;
         object->signalState = initialState ? 1 : 0;
         AttachGuestObject(object, manualReset ? kNotificationEvent : kSynchronizationEvent);
+        return object;
+    }
+
+    ObjectPtr CreateNamedObject(const std::string& name, ObjectType type,
+        const std::function<ObjectPtr()>& create, uint32_t& status)
+    {
+        status = X_STATUS_SUCCESS;
+        if (name.empty())
+            return create();
+
+        std::string key = name;
+        std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return char(tolower(c)); });
+
+        // Held across lookup and creation, so two threads creating the same name share one object.
+        std::lock_guard lock(g_namedMutex);
+        auto it = g_namedObjects.find(key);
+        if (it != g_namedObjects.end())
+        {
+            if (ObjectPtr existing = it->second.lock())
+            {
+                if (existing->type != type)
+                {
+                    status = X_STATUS_OBJECT_TYPE_MISMATCH;
+                    return nullptr;
+                }
+                TRACE("object: \"%s\" already exists, sharing it", name.c_str());
+                status = X_STATUS_OBJECT_NAME_EXISTS;
+                return existing;
+            }
+        }
+
+        ObjectPtr object = create();
+        object->name = name;
+        g_namedObjects[key] = object;
+        TRACE("object: created \"%s\"", name.c_str());
         return object;
     }
 

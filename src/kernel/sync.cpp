@@ -25,13 +25,21 @@ namespace
         return handle;
     }
 
-    // Guest object attributes may carry a name; named objects are not shared yet, only logged.
+    // Name from the guest OBJECT_ATTRIBUTES (root directory, ANSI_STRING* name, attributes).
     std::string ObjectName(uint32_t attributes)
     {
         if (attributes == 0)
             return {};
         uint32_t name = mem::Load32(attributes + 4);
         return name != 0 ? LoadAnsiString(name) : std::string();
+    }
+
+    // Ends an NtCreate* call: stores a handle to the object (new or shared by name) and the status.
+    void FinishCreate(PPCContext& ctx, uint32_t handlePtr, const ObjectPtr& object, uint32_t status)
+    {
+        if (object != nullptr)
+            StoreNewHandle(handlePtr, object);
+        ctx.r3.u64 = status;
     }
 
     uint32_t CurrentKThread()
@@ -46,10 +54,12 @@ namespace
 // NtCreateEvent(handle*, objectAttributes, eventType, initialState)
 GUEST_FUNC(NtCreateEvent)
 {
-    auto object = CreateEvent(ctx.r5.u32 == 0, ctx.r6.u32 != 0);
-    object->name = ObjectName(ctx.r4.u32);
-    StoreNewHandle(ctx.r3.u32, object);
-    ctx.r3.u64 = X_STATUS_SUCCESS;
+    bool manualReset = ctx.r5.u32 == 0;
+    bool initialState = ctx.r6.u32 != 0;
+    uint32_t status;
+    auto object = CreateNamedObject(ObjectName(ctx.r4.u32), ObjectType::Event,
+        [&] { return CreateEvent(manualReset, initialState); }, status);
+    FinishCreate(ctx, ctx.r3.u32, object, status);
 }
 
 // NtSetEvent(handle, previousState*)
@@ -95,14 +105,18 @@ GUEST_FUNC(KeResetEvent)
 // NtCreateSemaphore(handle*, objectAttributes, initialCount, maximumCount)
 GUEST_FUNC(NtCreateSemaphore)
 {
-    auto object = std::make_shared<KernelObject>(ObjectType::Semaphore);
-    object->signalState = int32_t(ctx.r5.u32);
-    object->limit = int32_t(ctx.r6.u32);
-    object->name = ObjectName(ctx.r4.u32);
-    AttachGuestObject(object, kDispatcherSemaphore);
-    mem::Store32(object->guestObject + 16, ctx.r6.u32);
-    StoreNewHandle(ctx.r3.u32, object);
-    ctx.r3.u64 = X_STATUS_SUCCESS;
+    uint32_t count = ctx.r5.u32;
+    uint32_t limit = ctx.r6.u32;
+    uint32_t status;
+    auto object = CreateNamedObject(ObjectName(ctx.r4.u32), ObjectType::Semaphore, [&] {
+        auto semaphore = std::make_shared<KernelObject>(ObjectType::Semaphore);
+        semaphore->signalState = int32_t(count);
+        semaphore->limit = int32_t(limit);
+        AttachGuestObject(semaphore, kDispatcherSemaphore);
+        mem::Store32(semaphore->guestObject + 16, limit);
+        return semaphore;
+    }, status);
+    FinishCreate(ctx, ctx.r3.u32, object, status);
 }
 
 // NtReleaseSemaphore(handle, releaseCount, previousCount*)
@@ -152,21 +166,24 @@ GUEST_FUNC(KeReleaseSemaphore)
 // NtCreateMutant(handle*, objectAttributes, initialOwner)
 GUEST_FUNC(NtCreateMutant)
 {
-    auto object = std::make_shared<KernelObject>(ObjectType::Mutant);
-    object->name = ObjectName(ctx.r4.u32);
-    if (ctx.r5.u32 != 0)
-    {
-        object->owner = CurrentThread();
-        object->recursion = 1;
-        object->signalState = 0;
-    }
-    else
-    {
-        object->signalState = 1;
-    }
-    AttachGuestObject(object, kDispatcherMutant);
-    StoreNewHandle(ctx.r3.u32, object);
-    ctx.r3.u64 = X_STATUS_SUCCESS;
+    bool initialOwner = ctx.r5.u32 != 0;
+    uint32_t status;
+    auto object = CreateNamedObject(ObjectName(ctx.r4.u32), ObjectType::Mutant, [&] {
+        auto mutant = std::make_shared<KernelObject>(ObjectType::Mutant);
+        if (initialOwner)
+        {
+            mutant->owner = CurrentThread();
+            mutant->recursion = 1;
+            mutant->signalState = 0;
+        }
+        else
+        {
+            mutant->signalState = 1;
+        }
+        AttachGuestObject(mutant, kDispatcherMutant);
+        return mutant;
+    }, status);
+    FinishCreate(ctx, ctx.r3.u32, object, status);
 }
 
 // NtReleaseMutant(handle, previousCount*)
@@ -203,11 +220,15 @@ namespace
 // NtCreateTimer(handle*, objectAttributes, timerType)
 GUEST_FUNC(NtCreateTimer)
 {
-    auto object = std::make_shared<TimerObject>();
-    object->manualReset = ctx.r5.u32 == 0; // NotificationTimer
-    AttachGuestObject(object, kDispatcherTimer + (object->manualReset ? 0 : 1));
-    StoreNewHandle(ctx.r3.u32, object);
-    ctx.r3.u64 = X_STATUS_SUCCESS;
+    bool manualReset = ctx.r5.u32 == 0; // NotificationTimer
+    uint32_t status;
+    auto object = CreateNamedObject(ObjectName(ctx.r4.u32), ObjectType::Timer, [&]() -> ObjectPtr {
+        auto timer = std::make_shared<TimerObject>();
+        timer->manualReset = manualReset;
+        AttachGuestObject(timer, kDispatcherTimer + (manualReset ? 0 : 1));
+        return timer;
+    }, status);
+    FinishCreate(ctx, ctx.r3.u32, object, status);
 }
 
 // NtSetTimerEx(handle, dueTime*, apcRoutine, apcMode, apcContext, resume, period, previousState*)
