@@ -23,6 +23,7 @@
 #define D3D_DESTROY_RESOURCE sub_8212D750         // D3D::DestroyResource
 #define D3D_UNLOCK_RESOURCE sub_8212DBE0          // D3D::UnlockResource
 #define D3D_LOCK_SURFACE sub_8212C7E8             // D3D::LockSurface (every texture and surface lock)
+#define D3D_QUERY_GET_DATA sub_8213B7F8           // D3DQuery_GetData
 #define D3D_DRAW_INDEXED_VERTICES sub_82137E00    // D3DDevice_DrawIndexedVertices
 #define D3D_DRAW_VERTICES sub_82137A18            // D3DDevice_DrawVertices
 #define D3D_BEGIN_VERTICES sub_821375A0           // D3DDevice_BeginVertices (LTCG: fan, 4 vertices of 20 bytes)
@@ -159,6 +160,13 @@ namespace gpu::guest
         // D3DVertexDeclaration: an id the library gives each declaration at its first patch (0
         // before).
         constexpr uint32_t kDeclarationId = 48;
+    }
+
+    // D3DQuery.
+    namespace query
+    {
+        constexpr uint32_t kType = 4; // D3DQUERYTYPE: 8 event, 9 occlusion, 10 screen extent
+        constexpr uint32_t kTypeOcclusion = 9;
     }
 
     // D3D shader objects as the Jade shader database builds them. Each holds a copy of the virtual
