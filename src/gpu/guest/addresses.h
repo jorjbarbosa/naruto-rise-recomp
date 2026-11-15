@@ -22,6 +22,7 @@
 #define D3D_RESOLVE sub_821398C8                  // D3DDevice_Resolve
 #define D3D_DESTROY_RESOURCE sub_8212D750         // D3D::DestroyResource
 #define D3D_UNLOCK_RESOURCE sub_8212DBE0          // D3D::UnlockResource
+#define D3D_LOCK_SURFACE sub_8212C7E8             // D3D::LockSurface (every texture and surface lock)
 #define D3D_DRAW_INDEXED_VERTICES sub_82137E00    // D3DDevice_DrawIndexedVertices
 #define D3D_DRAW_VERTICES sub_82137A18            // D3DDevice_DrawVertices
 #define D3D_BEGIN_VERTICES sub_821375A0           // D3DDevice_BeginVertices (LTCG: fan, 4 vertices of 20 bytes)
@@ -212,6 +213,7 @@ namespace gpu::guest
     // GPUTEXTUREFORMAT values of the surfaces and resolve destinations the renderer covers.
     namespace format
     {
+        constexpr uint32_t k5_6_5 = 4;
         constexpr uint32_t k8_8_8_8 = 6;
         constexpr uint32_t k24_8 = 22;
         constexpr uint32_t k24_8Float = 23;

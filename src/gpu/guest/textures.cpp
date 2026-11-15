@@ -7,6 +7,7 @@
 #include "gpu/guest/addresses.h"
 #include "gpu/guest/resources.h"
 #include "gpu/renderer/renderer.h"
+#include "gpu/textures/formats.h"
 #include "gpu/textures/layout.h"
 #include "kernel/kernel.h"
 
@@ -14,6 +15,7 @@
 #include <xxhash.h>
 
 #include <algorithm>
+#include <cstring>
 #include <map>
 #include <mutex>
 #include <set>
@@ -51,7 +53,14 @@ namespace gpu::guest
 
         std::mutex g_mutex; // the state below (the render thread binds, any thread unlocks or frees)
         std::map<std::pair<uint32_t, uint64_t>, Content> g_contents; // ordered by address
-        std::unordered_map<uint32_t, uint32_t> g_resolved;           // GPU address -> destination header
+        // A resolve into texture memory: the destination header, and the number of the resolve.
+        struct Resolve
+        {
+            uint32_t header = 0;
+            uint64_t number = 0;
+        };
+        std::unordered_map<uint32_t, Resolve> g_resolved;            // by GPU address
+        uint64_t g_resolves = 0;
         uint64_t g_frame = 1;
         // Write checks. The OS reports a written page to one check only, and contents share pages
         // (several layouts over the same memory), so each page keeps the number of the last check
@@ -172,6 +181,83 @@ namespace gpu::guest
             for (auto it = g_contents.lower_bound({ address, 0 }); it != g_contents.end() && it->first.first == address; ++it)
                 it->second.checkedFrame = 0;
         }
+
+        // A resolve leaves its image in the destination's memory on the console; here the image stays
+        // on the host until the CPU locks that memory. Writes the resolved region of level 0 back in
+        // the layout of the header's fetch constant (resolves write no other level), leaving the
+        // texels no resolve wrote as they are. The memory then holds the image, so the address stops
+        // sampling the host texture: a CPU write through the lock must reach the draws. Any thread;
+        // blocks until the GPU is idle.
+        void WriteBackResolved(uint32_t header)
+        {
+            textures::Fetch fetch = ReadFetch(header + res::kTextureFetch);
+            uint32_t address = fetch.BaseAddress();
+            uint64_t number = 0;
+            {
+                std::lock_guard lock(g_mutex);
+                auto it = address != 0 ? g_resolved.find(address) : g_resolved.end();
+                if (it == g_resolved.end())
+                    return;
+                number = it->second.number;
+            }
+
+            // The image, read back before the lock: the readback waits for the GPU.
+            Renderer* renderer = ActiveRenderer();
+            textures::Layout layout;
+            const char* reason = nullptr;
+            ResolvedImage image;
+            std::vector<uint8_t> colors;
+            const textures::Format* format = textures::FindFormat(fetch.Format());
+            bool ready = renderer != nullptr && format != nullptr && textures::DescribeTexture(fetch, layout, reason) &&
+                layout.hasBase && renderer->ReadResolved(address, image) && image.width == layout.width &&
+                image.height == layout.height && textures::PackColors(fetch.Format(), fetch.Swizzle(), image.rgba, colors);
+
+            textures::GuestLevel level;
+            uint8_t* memory = nullptr;
+            if (ready)
+            {
+                const textures::LevelPlace& place = layout.levels[0];
+                memory = mem::Ptr(GuestPhysical(place.address));
+                level.memory = memory;
+                level.bytes = place.extent;
+                level.tiled = layout.tiled;
+                level.rowPitch = place.rowPitch;
+                level.endian = layout.endian;
+                level.x0 = place.x0;
+                level.y0 = place.y0;
+                level.widthBlocks = image.width;
+                level.heightBlocks = image.height;
+                level.bytesPerBlock = format->bytesPerBlock;
+            }
+
+            // Under the lock, so that no upload copies the memory halfway through.
+            std::lock_guard lock(g_mutex);
+            std::vector<uint8_t> blocks;
+            if (ready && textures::ReadLevel(level, blocks))
+            {
+                uint32_t bytes = level.bytesPerBlock;
+                const Rect& region = image.region;
+                for (int32_t y = region.top; y < region.bottom; y++)
+                    memcpy(&blocks[(size_t(y) * image.width + region.left) * bytes],
+                        &colors[(size_t(y) * image.width + region.left) * bytes], size_t(region.right - region.left) * bytes);
+                ready = textures::WriteLevel(level, memory, blocks);
+            }
+            else
+            {
+                ready = false;
+            }
+            if (!ready)
+            {
+                LOG_ONCE("gpu: a resolve the CPU locks (format %u) is not written back; the CPU reads the old memory",
+                    fetch.Format());
+                return;
+            }
+            // A resolve noted since the readback is newer than what was written: it stays.
+            auto it = g_resolved.find(address);
+            if (it != g_resolved.end() && it->second.number == number)
+                g_resolved.erase(it);
+            Invalidate(address);
+        }
     }
 
     void ReadDrawTextures(uint32_t device, DrawOp& op)
@@ -249,7 +335,7 @@ namespace gpu::guest
     void NoteResolved(uint32_t address, uint32_t header)
     {
         std::lock_guard lock(g_mutex);
-        g_resolved[address] = header;
+        g_resolved[address] = { header, ++g_resolves };
     }
 
     void ForgetTexture(uint32_t header)
@@ -259,7 +345,7 @@ namespace gpu::guest
         {
             std::lock_guard lock(g_mutex);
             auto resolved = g_resolved.find(base);
-            if (resolved != g_resolved.end() && resolved->second == header)
+            if (resolved != g_resolved.end() && resolved->second.header == header)
                 g_resolved.erase(resolved);
             for (uint32_t address : { base, fetch.MipAddress() })
                 EraseContents(address, address + 1);
@@ -326,9 +412,22 @@ PPC_FUNC(D3D_UNLOCK_RESOURCE)
     std::lock_guard lock(g_mutex);
     // The CPU wrote the memory through another header: it no longer holds the resolved image.
     auto resolved = g_resolved.find(fetch.BaseAddress());
-    if (resolved != g_resolved.end() && resolved->second != resource)
+    if (resolved != g_resolved.end() && resolved->second.header != resource)
         g_resolved.erase(resolved);
     Invalidate(fetch.BaseAddress());
     if (fetch.MipAddress() != 0)
         Invalidate(fetch.MipAddress());
+}
+
+DECLARE_ORIGINAL(D3D_LOCK_SURFACE);
+
+// D3D::LockSurface(texture, level, face, flags, data*, pitch*, ..., offset*): the address of a level
+// and face for a CPU lock; every LockRect reaches it. Replaced so that a resolve's image is in the
+// memory before the CPU reads it (the save thumbnail, D3DDevice_PersistDisplay's front buffer).
+PPC_FUNC(D3D_LOCK_SURFACE)
+{
+    uint32_t texture = ctx.r3.u32;
+    if (ctx.r4.u32 == 0 && ctx.r5.u32 == 0 && (mem::Load32(texture + res::kCommon) & res::kTypeMask) == res::kTypeTexture)
+        WriteBackResolved(texture);
+    ORIGINAL(D3D_LOCK_SURFACE)(ctx, base);
 }

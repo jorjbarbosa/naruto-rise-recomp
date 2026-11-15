@@ -23,6 +23,7 @@ namespace gpu
         uint32_t height = 0;
         bool depth = false;
         bool written = false; // a resolve has written it
+        Rect region;          // the bounds of what the resolves wrote
         uint32_t header = 0;  // the guest texture header of the last resolve into it
         plume::RenderFormat format = plume::RenderFormat::UNKNOWN;
         std::unique_ptr<plume::RenderTexture> texture;
@@ -39,6 +40,7 @@ namespace gpu
     public:
         // Host formats of the guest surfaces.
         static constexpr plume::RenderFormat kColorFormat = plume::RenderFormat::R8G8B8A8_UNORM;
+        static constexpr uint32_t kColorBytes = 4;
         static constexpr plume::RenderFormat kDepthFormat = plume::RenderFormat::D32_FLOAT_S8_UINT;
 
         Targets(Context& context, const Passes& passes, Descriptors& descriptors)
@@ -53,6 +55,9 @@ namespace gpu
 
         // The texture resolved at a GPU address, or null when no resolve has written there.
         ResolvedTexture* Resolved(uint32_t address);
+        // Copies the color texture resolved at a GPU address back from the GPU, waiting for the queue
+        // to go idle. False when there is none (depth resolves included).
+        bool ReadResolved(uint32_t address, ResolvedImage& image);
 
         // Binds the targets of a draw (either may have key 0), recording the barriers that put
         // them in the layouts it writes.

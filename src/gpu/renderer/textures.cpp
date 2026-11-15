@@ -176,8 +176,9 @@ namespace gpu
             }
             list.barriers(plume::RenderBarrierStage::GRAPHICS,
                 plume::RenderTextureBarrier(resolved->texture.get(), plume::RenderTextureLayout::SHADER_READ));
-            // A resolved k_8_8_8_8 holds the surface's colors in order, whatever swizzle reads them
-            // back; other formats read the resolved values through their host swizzle.
+            // A resolved color texture holds the surface's colors in order, whatever swizzle reads them
+            // back (k_5_6_5 has no alpha: it reads as one); depth resolves read their values through
+            // the format's host swizzle.
             if (texture.format == textures::k8_8_8_8)
             {
                 shared.texture2D[slot] = resolved->descriptor.Index();
@@ -185,7 +186,11 @@ namespace gpu
             }
             const textures::Format* format = textures::FindFormat(texture.format);
             plume::RenderTextureViewDesc view = plume::RenderTextureViewDesc::Texture2D(resolved->format);
-            view.componentMapping = Mapping(texture.swizzle, format != nullptr ? format->swizzle : kIdentity);
+            if (texture.format == textures::k5_6_5)
+                view.componentMapping = { plume::RenderSwizzle::R, plume::RenderSwizzle::G, plume::RenderSwizzle::B,
+                    plume::RenderSwizzle::ONE };
+            else
+                view.componentMapping = Mapping(texture.swizzle, format != nullptr ? format->swizzle : kIdentity);
             shared.texture2D[slot] = resolved->views.Index(descriptors_, TextureSet::k2D, *resolved->texture, view);
             return;
         }

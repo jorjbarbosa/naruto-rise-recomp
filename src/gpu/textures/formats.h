@@ -12,6 +12,7 @@
 namespace gpu::textures
 {
     // GPUTEXTUREFORMAT of the color resolves.
+    constexpr uint32_t k5_6_5 = 4;
     constexpr uint32_t k8_8_8_8 = 6;
 
     // A conversion of the guest blocks after the endian swap.
@@ -71,4 +72,15 @@ namespace gpu::textures
     // The guest blocks of a level of width x height texels as host data: converted in place, or
     // decompressed into texels.
     void ConvertLevel(const Format& format, std::vector<uint8_t>& data, uint32_t width, uint32_t height);
+
+    // The inverse of ReadLevel: stores blocks (row after row, as ReadLevel returns them) into the
+    // level's place at memory, tiled and swapped so that the texture fetch reads them back. False, with
+    // nothing stored, when a block lies past level.bytes or blocks is short.
+    bool WriteLevel(const GuestLevel& level, uint8_t* memory, const std::vector<uint8_t>& blocks);
+
+    // Colors (RGBA8, one texel after another) as the blocks of a color format that the fetch swizzle
+    // reads back as those colors: each color goes to the guest component its swizzle selector names
+    // (the first color, when several name one). This is what a resolve leaves in memory. Covered:
+    // k_8_8_8_8 and k_5_6_5; false for others.
+    bool PackColors(uint32_t format, uint32_t swizzle, const std::vector<uint8_t>& rgba, std::vector<uint8_t>& blocks);
 }

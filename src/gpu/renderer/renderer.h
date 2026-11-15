@@ -172,6 +172,16 @@ namespace gpu
         std::vector<uint8_t> data;
     };
 
+    // A color texture resolved from a surface, read back: RGBA8 in the surface's color order, rows
+    // without padding. Only the region the resolves wrote holds their colors.
+    struct ResolvedImage
+    {
+        uint32_t width = 0;
+        uint32_t height = 0;
+        Rect region;
+        std::vector<uint8_t> rgba;
+    };
+
     // A draw: shaders, targets, state, and copies of the vertices, indices and constants it reads.
     // Everything is a triangle list by then.
     struct DrawOp
@@ -235,6 +245,11 @@ namespace gpu
         // Guest memory at the GPU addresses [begin, end) is freed: every texture uploaded or resolved
         // there is released.
         void ReleaseMemory(uint32_t begin, uint32_t end);
+
+        // Reads back the color texture resolved at a GPU address, once the work posted before it has
+        // run. Blocks the caller until the GPU is idle; for the rare CPU reads of a resolve. False when
+        // nothing (or a depth surface) was resolved there.
+        bool ReadResolved(uint32_t address, ResolvedImage& image);
 
         // Presents the texture resolved at the given GPU address, fitted to the window (black when
         // nothing was resolved there).

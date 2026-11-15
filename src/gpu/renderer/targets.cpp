@@ -6,6 +6,7 @@
 #include "gpu/renderer/passes.h"
 
 #include <algorithm>
+#include <cstring>
 #include <optional>
 
 namespace gpu
@@ -204,6 +205,11 @@ namespace gpu
             list.copyTextureRegion(plume::RenderTextureCopyLocation::Subresource(dest.texture.get()),
                 plume::RenderTextureCopyLocation::Subresource(source.texture.get()), destX, destY, 0, &box);
         }
+        Rect written = { int32_t(destX), int32_t(destY), int32_t(destX) + (region.right - region.left),
+            int32_t(destY) + (region.bottom - region.top) };
+        dest.region = dest.written ? Rect{ std::min(dest.region.left, written.left), std::min(dest.region.top, written.top),
+                                           std::max(dest.region.right, written.right), std::max(dest.region.bottom, written.bottom) }
+                                   : written;
         dest.written = true;
     }
 
@@ -230,6 +236,37 @@ namespace gpu
         // A sample the source lacks wraps around, as on a 2x Xenos surface.
         passes_.DrawResolve(list, kind, *source.sampling, region.left - int32_t(destX), region.top - int32_t(destY),
             uint32_t(std::max(sample, 0)) % samples);
+    }
+
+    bool Targets::ReadResolved(uint32_t address, ResolvedImage& image)
+    {
+        ResolvedTexture* resolved = Resolved(address);
+        if (resolved == nullptr || resolved->depth)
+            return false;
+        constexpr uint32_t kRowAlignment = 256; // D3D12 placed footprints
+        uint32_t rowBytes = resolved->width * kColorBytes;
+        uint32_t pitch = (rowBytes + kRowAlignment - 1) / kRowAlignment * kRowAlignment;
+        std::unique_ptr<plume::RenderBuffer> buffer =
+            context_.Device().createBuffer(plume::RenderBufferDesc::ReadbackBuffer(uint64_t(pitch) * resolved->height));
+
+        plume::RenderCommandList& list = context_.Commands();
+        Barrier(list, plume::RenderBarrierStage::COPY, resolved->texture.get(), plume::RenderTextureLayout::COPY_SOURCE);
+        list.copyTextureRegion(plume::RenderTextureCopyLocation::PlacedFootprint(buffer.get(), kColorFormat,
+                                   resolved->width, resolved->height, 1, pitch / kColorBytes),
+            plume::RenderTextureCopyLocation::Subresource(resolved->texture.get()));
+        context_.WaitIdle();
+
+        const uint8_t* data = static_cast<const uint8_t*>(buffer->map());
+        if (data == nullptr)
+            return false;
+        image.width = resolved->width;
+        image.height = resolved->height;
+        image.region = resolved->region;
+        image.rgba.resize(size_t(rowBytes) * resolved->height);
+        for (uint32_t row = 0; row < resolved->height; row++)
+            memcpy(image.rgba.data() + size_t(row) * rowBytes, data + size_t(row) * pitch, rowBytes);
+        buffer->unmap();
+        return true;
     }
 
     void Targets::ReleaseSurface(uint32_t key)

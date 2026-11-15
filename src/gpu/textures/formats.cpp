@@ -199,6 +199,51 @@ namespace gpu::textures
             }
             return ((exponent << 23) + 0x38000000u) + (mantissa << 3);
         }
+
+        // The swap mode of a level's blocks. The fetch swaps by element size: 8-bit texels never,
+        // 16-bit ones in 8in16 only, larger blocks every 32-bit word in each mode.
+        uint32_t SwapMode(const GuestLevel& level)
+        {
+            uint32_t bytes = level.bytesPerBlock;
+            return bytes == 1 ? 0 : bytes == 2 ? (level.endian == 1 ? 1 : 0) : level.endian;
+        }
+
+        // Swaps one block in place; each mode is its own inverse.
+        void SwapBlock(uint8_t* block, uint32_t bytes, uint32_t mode)
+        {
+            if (mode == 1)
+            {
+                for (uint32_t i = 0; i < bytes; i += 2)
+                    std::swap(block[i], block[i + 1]);
+            }
+            else if (mode == 2)
+            {
+                for (uint32_t i = 0; i < bytes; i += 4)
+                {
+                    std::swap(block[i], block[i + 3]);
+                    std::swap(block[i + 1], block[i + 2]);
+                }
+            }
+            else if (mode == 3)
+            {
+                for (uint32_t i = 0; i < bytes; i += 4)
+                {
+                    std::swap(block[i], block[i + 2]);
+                    std::swap(block[i + 1], block[i + 3]);
+                }
+            }
+        }
+
+        // The byte offset of block (x, y) of a level in its place.
+        uint32_t BlockOffset(const GuestLevel& level, uint32_t x, uint32_t y)
+        {
+            uint32_t bytes = level.bytesPerBlock;
+            uint32_t log2Bytes = uint32_t(std::bit_width(bytes)) - 1; // bytes is a power of two
+            uint32_t column = level.x0 + x;
+            uint32_t row = level.y0 + y;
+            return level.tiled ? TiledOffset2D(column, row, level.rowPitch / bytes, log2Bytes)
+                               : row * level.rowPitch + column * bytes;
+        }
     }
 
     const Format* FindFormat(uint32_t format, bool decompressed)
@@ -235,45 +280,84 @@ namespace gpu::textures
     bool ReadLevel(const GuestLevel& level, std::vector<uint8_t>& out)
     {
         uint32_t bytes = level.bytesPerBlock;
-        uint32_t log2Bytes = uint32_t(std::bit_width(bytes)) - 1; // bytes is a power of two
-        // The fetch swaps by element size: 8-bit texels never, 16-bit ones in 8in16 only, larger
-        // blocks every 32-bit word in each mode.
-        uint32_t mode = bytes == 1 ? 0 : bytes == 2 ? (level.endian == 1 ? 1 : 0) : level.endian;
+        uint32_t mode = SwapMode(level);
         out.resize(size_t(level.widthBlocks) * level.heightBlocks * bytes);
         uint8_t* to = out.data();
         for (uint32_t y = 0; y < level.heightBlocks; y++)
         {
-            uint32_t row = level.y0 + y;
             for (uint32_t x = 0; x < level.widthBlocks; x++, to += bytes)
             {
-                uint32_t column = level.x0 + x;
-                uint32_t at = level.tiled ? TiledOffset2D(column, row, level.rowPitch / bytes, log2Bytes)
-                                          : row * level.rowPitch + column * bytes;
+                uint32_t at = BlockOffset(level, x, y);
                 if (uint64_t(at) + bytes > level.bytes)
                     return false;
                 memcpy(to, level.memory + at, bytes);
-                if (mode == 1)
+                SwapBlock(to, bytes, mode);
+            }
+        }
+        return true;
+    }
+
+    bool WriteLevel(const GuestLevel& level, uint8_t* memory, const std::vector<uint8_t>& blocks)
+    {
+        uint32_t bytes = level.bytesPerBlock;
+        uint32_t mode = SwapMode(level);
+        if (blocks.size() < size_t(level.widthBlocks) * level.heightBlocks * bytes)
+            return false;
+        // Every block is checked first, so a failure stores nothing.
+        for (uint32_t y = 0; y < level.heightBlocks; y++)
+            for (uint32_t x = 0; x < level.widthBlocks; x++)
+                if (uint64_t(BlockOffset(level, x, y)) + bytes > level.bytes)
+                    return false;
+        const uint8_t* from = blocks.data();
+        uint8_t block[16];
+        for (uint32_t y = 0; y < level.heightBlocks; y++)
+        {
+            for (uint32_t x = 0; x < level.widthBlocks; x++, from += bytes)
+            {
+                uint32_t at = BlockOffset(level, x, y);
+                memcpy(block, from, bytes);
+                SwapBlock(block, bytes, mode);
+                memcpy(memory + at, block, bytes);
+            }
+        }
+        return true;
+    }
+
+    bool PackColors(uint32_t format, uint32_t swizzle, const std::vector<uint8_t>& rgba, std::vector<uint8_t>& blocks)
+    {
+        // Bits of each guest component (X, Y, Z, W), from bit 0 of the block.
+        static constexpr uint8_t k8888Bits[4] = { 8, 8, 8, 8 };
+        static constexpr uint8_t k565Bits[4] = { 5, 6, 5, 0 };
+        const uint8_t* bits = format == k8_8_8_8 ? k8888Bits : format == k5_6_5 ? k565Bits : nullptr;
+        if (bits == nullptr)
+            return false;
+        uint32_t bytes = format == k8_8_8_8 ? 4 : 2;
+        size_t texels = rgba.size() / 4;
+        blocks.resize(texels * bytes);
+        for (size_t i = 0; i < texels; i++)
+        {
+            // A component no color is read from keeps all its bits set (an alpha the swizzle drops);
+            // one that several colors read (a luminance swizzle) takes the first of them.
+            uint32_t value = 0;
+            uint32_t shift = 0;
+            uint32_t component[4] = { ~0u, ~0u, ~0u, ~0u };
+            bool taken[4] = {};
+            for (uint32_t color = 0; color < 4; color++)
+            {
+                uint32_t select = (swizzle >> (3 * color)) & 7;
+                if (select < 4 && bits[select] != 0 && !taken[select])
                 {
-                    for (uint32_t i = 0; i < bytes; i += 2)
-                        std::swap(to[i], to[i + 1]);
-                }
-                else if (mode == 2)
-                {
-                    for (uint32_t i = 0; i < bytes; i += 4)
-                    {
-                        std::swap(to[i], to[i + 3]);
-                        std::swap(to[i + 1], to[i + 2]);
-                    }
-                }
-                else if (mode == 3)
-                {
-                    for (uint32_t i = 0; i < bytes; i += 4)
-                    {
-                        std::swap(to[i], to[i + 2]);
-                        std::swap(to[i + 1], to[i + 3]);
-                    }
+                    taken[select] = true;
+                    uint32_t max = (1u << bits[select]) - 1;
+                    component[select] = (rgba[4 * i + color] * max + 127) / 255;
                 }
             }
+            for (uint32_t c = 0; c < 4; c++)
+            {
+                value |= (component[c] & ((1u << bits[c]) - 1)) << shift;
+                shift += bits[c];
+            }
+            memcpy(&blocks[i * bytes], &value, bytes);
         }
         return true;
     }

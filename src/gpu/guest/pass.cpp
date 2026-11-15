@@ -174,9 +174,12 @@ namespace gpu::guest
                 return source == kResolveSourceDepth ? dev::kDepthStencil : dev::kRenderTargets + 4 * source;
             }
 
+            // Color resolves keep the surface's colors (RGBA8) whatever the destination's format; a
+            // k_5_6_5 destination (the save thumbnail) drops the alpha when it is read back.
             static bool DestinationCovered(bool depth, uint32_t format)
             {
-                return depth ? format == format::k24_8 || format == format::k24_8Float : format == format::k8_8_8_8;
+                return depth ? format == format::k24_8 || format == format::k24_8Float
+                             : format == format::k8_8_8_8 || format == format::k5_6_5;
             }
 
             // The sample a resolve copies, from the sample select of its flags (copy_sample_select

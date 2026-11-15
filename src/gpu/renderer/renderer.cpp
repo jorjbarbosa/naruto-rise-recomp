@@ -16,6 +16,7 @@
 
 #include <condition_variable>
 #include <deque>
+#include <future>
 #include <mutex>
 #include <thread>
 
@@ -69,14 +70,18 @@ namespace gpu
             SetThreadDescription(static_cast<HANDLE>(owner_.native_handle()), L"gpu owner");
         }
 
-        void Post(std::function<void()> task)
+        // False when the owner is stopping: the task is dropped. A task queued before the stop runs.
+        bool Post(std::function<void()> task)
         {
             beforePost();
             {
                 std::lock_guard lock(mutex_);
+                if (stopping_)
+                    return false;
                 tasks_.push_back(std::move(task));
             }
             cv_.notify_one();
+            return true;
         }
 
         // Destroyed in reverse order: the device outlives everything created on it.
@@ -221,6 +226,19 @@ namespace gpu
             impl->targets->ReleaseResolved(begin, end);
             impl->textures->Release(begin, end);
         });
+    }
+
+    bool Renderer::ReadResolved(uint32_t address, ResolvedImage& image)
+    {
+        // The task runs once queued (the owner drains its queue before stopping), so the promise is
+        // always set and get() cannot throw.
+        std::promise<bool> done;
+        std::future<bool> result = done.get_future();
+        if (!impl_->Post([impl = impl_.get(), address, &image, &done] {
+                done.set_value(impl->targets->ReadResolved(address, image));
+            }))
+            return false;
+        return result.get();
     }
 
     void Renderer::Present(uint32_t frontAddress)
