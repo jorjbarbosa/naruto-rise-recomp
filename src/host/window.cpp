@@ -1,0 +1,67 @@
+#include "host/window.h"
+
+#include "log.h"
+
+#define SDL_MAIN_HANDLED
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
+
+#include <atomic>
+
+namespace host
+{
+    namespace
+    {
+        SDL_Window* g_window = nullptr;
+        std::atomic<void*> g_handle{ nullptr };
+        std::atomic<bool> g_quitRequested{ false };
+    }
+
+    bool CreateMainWindow(const char* title, int width, int height)
+    {
+        SDL_SetMainReady();
+        if (!SDL_Init(SDL_INIT_VIDEO))
+        {
+            Log("error: SDL_Init failed: %s", SDL_GetError());
+            return false;
+        }
+        g_window = SDL_CreateWindow(title, width, height, SDL_WINDOW_RESIZABLE);
+        if (g_window == nullptr)
+        {
+            Log("error: SDL_CreateWindow failed: %s", SDL_GetError());
+            return false;
+        }
+        g_handle = SDL_GetPointerProperty(SDL_GetWindowProperties(g_window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+        if (g_handle == nullptr)
+        {
+            Log("error: the window has no HWND: %s", SDL_GetError());
+            return false;
+        }
+        return true;
+    }
+
+    void* MainWindowHandle()
+    {
+        return g_handle;
+    }
+
+    bool RunEventLoop()
+    {
+        SDL_Event event;
+        while (SDL_WaitEvent(&event))
+        {
+            if (event.type == SDL_EVENT_QUIT)
+                return !g_quitRequested;
+        }
+        Log("error: SDL_WaitEvent failed: %s", SDL_GetError());
+        return false;
+    }
+
+    void RequestQuit()
+    {
+        g_quitRequested = true;
+        SDL_Event event{};
+        event.type = SDL_EVENT_QUIT;
+        SDL_PushEvent(&event);
+    }
+}

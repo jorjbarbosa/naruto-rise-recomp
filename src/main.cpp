@@ -3,6 +3,7 @@
 // usage: roan-xenon [game folder]   (default: <repository>/game)
 // ROAN_TRACE=1 logs every traced kernel call.
 
+#include "host/window.h"
 #include "kernel/kernel.h"
 #include "loader.h"
 
@@ -73,6 +74,18 @@ namespace
         GetModuleFileNameW(nullptr, path, MAX_PATH);
         return fs::path(path).parent_path();
     }
+
+    // Host thread of the guest main thread. The host main thread runs the window.
+    DWORD WINAPI GuestMain(void*)
+    {
+        kernel::StartKernelClock();
+        Log("time base: %llu Hz", (unsigned long long)kernel::TimeBaseFrequency());
+        Log("running _xstart");
+        kernel::RunMainThread(_xstart, kernel::g_module.stackSize);
+        Log("_xstart returned");
+        host::RequestQuit();
+        return 0;
+    }
 }
 
 int main(int argc, char** argv)
@@ -103,12 +116,21 @@ int main(int argc, char** argv)
     if (!LoadExecutable(gameDir / "default.xex"))
         return 1;
 
-    kernel::StartKernelClock();
-    Log("time base: %llu Hz", (unsigned long long)kernel::TimeBaseFrequency());
-    Log("running _xstart");
-    kernel::RunMainThread(_xstart, kernel::g_module.stackSize);
+    if (!host::CreateMainWindow("roan-xenon", 1280, 720))
+        return 1;
 
-    Log("_xstart returned");
+    // Recompiled code recurses deeply on the host stack: same reservation as the other guest threads.
+    HANDLE guest = CreateThread(nullptr, 16 * 1024 * 1024, GuestMain, nullptr, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+    if (guest == nullptr)
+    {
+        Log("error: cannot create the guest main thread");
+        return 1;
+    }
+    CloseHandle(guest);
+
+    if (host::RunEventLoop())
+        Log("window closed");
     kernel::PrintImportSummary();
-    return 0;
+    // Plain exit: guest threads are still running, so no static destructors.
+    std::_Exit(0);
 }

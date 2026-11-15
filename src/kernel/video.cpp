@@ -1,5 +1,7 @@
-// Video driver (Vd*). No GPU yet: the calls succeed and the ring buffer setup is recorded.
+// Video driver (Vd*). The engines and the flip go to the GPU layer (src/gpu); the rest succeeds and
+// the ring buffer setup is recorded.
 
+#include "gpu/gpu.h"
 #include "kernel/kernel.h"
 
 #include <atomic>
@@ -66,7 +68,12 @@ GUEST_FUNC(VdGetCurrentDisplayGamma)
     mem::Store32(ctx.r4.u32, FloatBits(2.22222233f));
 }
 
-GUEST_FUNC(VdInitializeEngines) { ctx.r3.u64 = 1; }
+GUEST_FUNC(VdInitializeEngines)
+{
+    gpu::InitializeEngines();
+    ctx.r3.u64 = 1;
+}
+
 GUEST_FUNC(VdShutdownEngines) {}
 
 // VdSetGraphicsInterruptCallback(callback, userData)
@@ -128,10 +135,14 @@ GUEST_FUNC(VdInitializeScalerCommandBuffer)
     ctx.r3.u64 = count;
 }
 
+// VdSwap(buffer, frontBufferFetch, gpuIdentifier, systemCommandBuffer, ..., frontBase*, format*,
+//     colorSpace*): writes the flip packets into buffer (part of the command segment, which nothing
+// reads). The host presents here instead.
 GUEST_FUNC(VdSwap)
 {
     uint64_t frame = ++g_frames;
-    if (frame == 1 || frame % 60 == 0)
+    if (frame == 1 || frame % 600 == 0)
         Log("video: VdSwap, frame %llu", (unsigned long long)frame);
+    gpu::Swap(ctx.r4.u32);
     ctx.r3.u64 = 0;
 }
