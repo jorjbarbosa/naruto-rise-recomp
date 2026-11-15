@@ -308,6 +308,7 @@ namespace
         overlapped.Offset = DWORD(offset);
         overlapped.OffsetHigh = DWORD(offset >> 32);
         DWORD done = 0;
+        mem::Commit(buffer, length);
         BOOL ok = write ? WriteFile(file->handle, mem::Ptr(buffer), length, &done, &overlapped)
                         : ReadFile(file->handle, mem::Ptr(buffer), length, &done, &overlapped);
         if (!ok && GetLastError() != ERROR_HANDLE_EOF)
@@ -315,6 +316,8 @@ namespace
         file->position = offset + done;
 
         uint32_t status = (!write && done == 0 && length != 0) ? X_STATUS_END_OF_FILE : X_STATUS_SUCCESS;
+        TRACE("file: %s \"%s\" offset %llX length %X -> %lX (status %08X, event %08X)", write ? "write" : "read",
+            file->guestPath.c_str(), (unsigned long long)offset, length, done, status, ctx.r4.u32);
         StoreIoStatus(ioStatus, status, done);
         if (ctx.r4.u32 != 0)
         {
@@ -355,6 +358,7 @@ GUEST_FUNC(NtReadFileScatter)
         overlapped.Offset = DWORD(offset + total);
         overlapped.OffsetHigh = DWORD((offset + total) >> 32);
         DWORD done = 0;
+        mem::Commit(page, chunk);
         ReadFile(file->handle, mem::Ptr(page), chunk, &done, &overlapped);
         total += done;
         if (done < chunk)
@@ -532,7 +536,11 @@ GUEST_FUNC(NtQueryDirectoryFile)
     uint32_t ioStatus = ctx.r7.u32;
     uint32_t info = ctx.r8.u32;
     uint32_t length = ctx.r9.u32;
-    std::string pattern = ctx.r10.u32 != 0 ? LoadAnsiString(ctx.r10.u32) : "*";
+    std::string pattern = ctx.r10.u32 != 0 ? LoadAnsiString(ctx.r10.u32) : "";
+    // No name or an empty one lists everything (FindFirstFileA("D:\*.*") passes an empty name), and
+    // "*.*" also matches names without a dot, as on DOS.
+    if (pattern.empty() || pattern == "*.*")
+        pattern = "*";
     bool restart = StackArg32(ctx, 8) != 0;
 
     std::lock_guard lock(file->mutex);
@@ -547,6 +555,7 @@ GUEST_FUNC(NtQueryDirectoryFile)
         }
         file->nextEntry = 0;
         file->enumerated = true;
+        TRACE("file: listing \"%s\" with \"%s\": %zu entries", file->guestPath.c_str(), pattern.c_str(), file->entries.size());
     }
 
     if (file->nextEntry >= file->entries.size())

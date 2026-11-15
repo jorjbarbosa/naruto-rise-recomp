@@ -21,6 +21,11 @@ namespace mem
 
     bool Init();
 
+    // Commits the pages of a guest range. Guest pages are otherwise committed on first touch through
+    // an access violation, but host OS calls (ReadFile, WriteFile...) fail with ERROR_NOACCESS on
+    // reserved pages instead of faulting, so call this before handing them guest memory.
+    void Commit(uint32_t address, uint32_t size);
+
     inline uint8_t* Ptr(uint32_t address) { return g_base + address; }
     inline bool IsHostInGuest(const void* p) { return p >= g_base && p < g_base + kSize; }
 

@@ -1,6 +1,7 @@
 #include "memory.h"
 #include "log.h"
 
+#include <algorithm>
 #include <atomic>
 #include <map>
 #include <mutex>
@@ -31,6 +32,15 @@ namespace mem
             return false;
         AddVectoredExceptionHandler(1, CommitOnTouch);
         return true;
+    }
+
+    void Commit(uint32_t address, uint32_t size)
+    {
+        if (size == 0)
+            return;
+        uint64_t begin = address & ~uint64_t(0xFFFF);
+        uint64_t end = std::min<uint64_t>((uint64_t(address) + size + 0xFFFF) & ~uint64_t(0xFFFF), kSize);
+        VirtualAlloc(g_base + begin, size_t(end - begin), MEM_COMMIT, PAGE_READWRITE);
     }
 
     int32_t AtomicAdd32(uint32_t a, int32_t delta)
