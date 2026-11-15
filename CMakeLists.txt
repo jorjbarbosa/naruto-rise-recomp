@@ -35,6 +35,24 @@ add_library(ppc_generated OBJECT ${PPC_SOURCES})
 target_link_libraries(ppc_generated PRIVATE ppc_common)
 target_compile_options(ppc_generated PRIVATE -Wno-everything -gline-tables-only)
 
+# SDL 3: window, input and platform layer.
+set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+set(SDL_STATIC ON CACHE BOOL "" FORCE)
+set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory("${CMAKE_SOURCE_DIR}/thirdparty/SDL" sdl EXCLUDE_FROM_ALL)
+
+# Plume, D3D12 backend only (its own CMake always builds the Vulkan backend too).
+set(PLUME_DIR "${CMAKE_SOURCE_DIR}/thirdparty/plume")
+add_library(plume STATIC
+    "${PLUME_DIR}/plume_d3d12.cpp"
+    "${PLUME_DIR}/contrib/D3D12MemoryAllocator/src/D3D12MemAlloc.cpp")
+target_include_directories(plume PUBLIC "${PLUME_DIR}" "${PLUME_DIR}/contrib/D3D12MemoryAllocator/include")
+target_compile_definitions(plume PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(plume PRIVATE -Wno-everything)
+target_link_libraries(plume PUBLIC d3d12 dxgi dxguid)
+
 # Every kernel/XAM import the game uses gets a weak logging stub (src/kernel/stubs.cpp);
 # the runtime overrides the implemented ones. The list comes from the generated header.
 file(STRINGS "${PPC_OUTPUT_DIR}/ppc_recomp_shared.h" PPC_EXTERN_LINES REGEX "^PPC_EXTERN_FUNC\\(__imp__")
@@ -51,7 +69,7 @@ file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
 
 add_executable(roan-xenon ${SOURCES} $<TARGET_OBJECTS:ppc_generated>)
 target_include_directories(roan-xenon PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_BINARY_DIR}/generated")
-target_link_libraries(roan-xenon PRIVATE ppc_common XenonUtils dbghelp xinput)
+target_link_libraries(roan-xenon PRIVATE ppc_common XenonUtils plume SDL3::SDL3-static dbghelp xinput)
 target_compile_options(roan-xenon PRIVATE /EHsc /Z7 -Wno-unused-parameter -Wno-null-arithmetic)
 target_link_options(roan-xenon PRIVATE /DEBUG /STACK:16777216)
 set_target_properties(roan-xenon PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

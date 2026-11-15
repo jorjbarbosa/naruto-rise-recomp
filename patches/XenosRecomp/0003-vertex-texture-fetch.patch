@@ -1,0 +1,148 @@
+diff --git a/XenosRecomp/shader_common.h b/XenosRecomp/shader_common.h
+index 1c74034..4b012b9 100644
+--- a/XenosRecomp/shader_common.h
++++ b/XenosRecomp/shader_common.h
+@@ -26,10 +26,12 @@ struct PushConstants
+ 
+ [[vk::push_constant]] ConstantBuffer<PushConstants> g_PushConstants;
+ 
+-#define g_Booleans                 vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 256)
+-#define g_SwappedTexcoords         vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 260)
+-#define g_HalfPixelOffset          vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 264)
+-#define g_AlphaThreshold           vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 272)
++// Shared constants: the descriptor indices first, one uint per texture fetch constant (32) for the
++// 2D, 3D and cube textures and for the samplers (512 bytes), then the values below.
++#define g_Booleans                 vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 512)
++#define g_SwappedTexcoords         vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 516)
++#define g_HalfPixelOffset          vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 520)
++#define g_AlphaThreshold           vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 528)
+ 
+ [[vk::constant_id(0)]] const uint g_SpecConstants = 0;
+ 
+@@ -37,11 +39,13 @@ struct PushConstants
+ 
+ #else
+ 
++// Shared constants: the descriptor indices first, one uint per texture fetch constant (32) for the
++// 2D, 3D and cube textures and for the samplers (c0-c31), then the values below.
+ #define DEFINE_SHARED_CONSTANTS() \
+-    uint g_Booleans : packoffset(c16.x); \
+-    uint g_SwappedTexcoords : packoffset(c16.y); \
+-    float2 g_HalfPixelOffset : packoffset(c16.z); \
+-    float g_AlphaThreshold : packoffset(c17.x);
++    uint g_Booleans : packoffset(c32.x); \
++    uint g_SwappedTexcoords : packoffset(c32.y); \
++    float2 g_HalfPixelOffset : packoffset(c32.z); \
++    float g_AlphaThreshold : packoffset(c33.x);
+ 
+ uint g_SpecConstants();
+ 
+@@ -59,6 +63,15 @@ uint2 getTexture2DDimensions(Texture2D<float4> texture)
+     return dimensions;
+ }
+ 
++// 1D textures are bound as 2D textures one texel high. The game only fetches them in vertex
++// shaders (bone matrices, with UseComputedLOD=false), so the base level is sampled.
++float4 tfetch1D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float texCoord, float offset)
++{
++    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
++    float2 coord = float2(texCoord + offset / getTexture2DDimensions(texture).x, 0.5);
++    return texture.SampleLevel(g_SamplerDescriptorHeap[samplerDescriptorIndex], coord, 0);
++}
++
+ float4 tfetch2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
+ {
+     Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
+diff --git a/XenosRecomp/shader_recompiler.cpp b/XenosRecomp/shader_recompiler.cpp
+index 698a418..b991a8f 100644
+--- a/XenosRecomp/shader_recompiler.cpp
++++ b/XenosRecomp/shader_recompiler.cpp
+@@ -118,13 +118,24 @@ static constexpr std::pair<DeclUsage, size_t> INTERPOLATORS[] =
+     { DeclUsage::Color, 1 }
+ };
+ 
+-static constexpr std::string_view TEXTURE_DIMENSIONS[] = 
++static constexpr std::string_view TEXTURE_DIMENSIONS[] =
+ {
+     "2D",
+-    "3D", 
+-    "Cube" 
++    "3D",
++    "Cube"
+ };
+ 
++// Descriptor slots in the shared constants are indexed by texture fetch constant, one slot per
++// fetch constant for each dimension and for the sampler (the layout is in shader_common.h).
++static constexpr uint32_t FETCH_CONSTANT_COUNT = 32;
++
++// Texture fetch constant of a sampler register: pixel shader samplers use fetch constants 0-15,
++// vertex shader samplers (D3DVERTEXTEXTURESAMPLER0-3) use 16-19.
++static uint32_t fetchConstantIndex(bool isPixelShader, uint32_t samplerRegister)
++{
++    return isPixelShader ? samplerRegister : samplerRegister + 16;
++}
++
+ static FetchDestinationSwizzle getDestSwizzle(uint32_t dstSwizzle, uint32_t index)
+ {
+     return FetchDestinationSwizzle((dstSwizzle >> (index * 3)) & 0x7);
+@@ -331,11 +342,16 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
+         out += "Bicubic";
+ #endif
+ 
+-    print("({0}_Texture{1}DescriptorIndex, {0}_SamplerDescriptorIndex, ", constNamePtr, dimension);
++    // 1D textures are bound as 2D textures one texel high.
++    print("({0}_Texture{1}DescriptorIndex, {0}_SamplerDescriptorIndex, ", constNamePtr,
++        instr.dimension == TextureDimension::Texture1D ? "2D" : dimension);
+     printSrcRegister(componentCount);
+ 
+     switch (instr.dimension)
+     {
++    case TextureDimension::Texture1D:
++        print(", {}", instr.offsetX * 0.5f);
++        break;
+     case TextureDimension::Texture2D:
+         print(", float2({}, {})", instr.offsetX * 0.5f, instr.offsetY * 0.5f);
+         break;
+@@ -1171,16 +1187,18 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+ 
+         case RegisterSet::Sampler:
+         {
++            uint32_t slot = fetchConstantIndex(isPixelShader, constantInfo->registerIndex);
++
+             for (size_t j = 0; j < std::size(TEXTURE_DIMENSIONS); j++)
+             {
+                 println("#define {}_Texture{}DescriptorIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {})",
+-                    constantName, TEXTURE_DIMENSIONS[j], j * 64 + constantInfo->registerIndex * 4);
++                    constantName, TEXTURE_DIMENSIONS[j], (j * FETCH_CONSTANT_COUNT + slot) * 4);
+             }
+ 
+             println("#define {}_SamplerDescriptorIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {})",
+-                constantName, std::size(TEXTURE_DIMENSIONS) * 64 + constantInfo->registerIndex * 4);
++                constantName, (std::size(TEXTURE_DIMENSIONS) * FETCH_CONSTANT_COUNT + slot) * 4);
+ 
+-            samplers.emplace(constantInfo->registerIndex, constantName);
++            samplers.emplace(slot, constantName);
+             break;
+         }
+ 
+@@ -1229,15 +1247,18 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+         if (constantInfo->registerSet == RegisterSet::Sampler)
+         {
+             const char* constantName = reinterpret_cast<const char*>(constantTableData + constantInfo->name);
++            uint32_t slot = fetchConstantIndex(isPixelShader, constantInfo->registerIndex);
+ 
+             for (size_t j = 0; j < std::size(TEXTURE_DIMENSIONS); j++)
+             {
++                uint32_t index = j * FETCH_CONSTANT_COUNT + slot;
+                 println("\tuint {}_Texture{}DescriptorIndex : packoffset(c{}.{});",
+-                    constantName, TEXTURE_DIMENSIONS[j], j * 4 + constantInfo->registerIndex / 4, SWIZZLES[constantInfo->registerIndex % 4]);
++                    constantName, TEXTURE_DIMENSIONS[j], index / 4, SWIZZLES[index % 4]);
+             }
+ 
++            uint32_t index = std::size(TEXTURE_DIMENSIONS) * FETCH_CONSTANT_COUNT + slot;
+             println("\tuint {}_SamplerDescriptorIndex : packoffset(c{}.{});",
+-                constantName, 4 * std::size(TEXTURE_DIMENSIONS) + constantInfo->registerIndex / 4, SWIZZLES[constantInfo->registerIndex % 4]);
++                constantName, index / 4, SWIZZLES[index % 4]);
+         }
+     }
+ 

@@ -1,0 +1,80 @@
+diff --git a/XenosRecomp/shader_common.h b/XenosRecomp/shader_common.h
+index 4b012b9..e2da610 100644
+--- a/XenosRecomp/shader_common.h
++++ b/XenosRecomp/shader_common.h
+@@ -172,6 +172,12 @@ float4 tfetchCube(uint resourceDescriptorIndex, uint samplerDescriptorIndex, flo
+     return g_TextureCubeDescriptorHeap[resourceDescriptorIndex].Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], cubeMapData.cubeMapDirections[texCoord.z]);
+ }
+ 
++// getGradients (pixel shaders only): (dS/dX, dS/dY, dT/dX, dT/dY).
++float4 getGradients(float2 texCoord)
++{
++    return float4(ddx(texCoord.x), ddy(texCoord.x), ddx(texCoord.y), ddy(texCoord.y));
++}
++
+ float4 tfetchR11G11B10(uint4 value)
+ {
+     if (g_SpecConstants() & SPEC_CONSTANT_R11G11B10_NORMAL)
+diff --git a/XenosRecomp/shader_recompiler.cpp b/XenosRecomp/shader_recompiler.cpp
+index b991a8f..e953ba5 100644
+--- a/XenosRecomp/shader_recompiler.cpp
++++ b/XenosRecomp/shader_recompiler.cpp
+@@ -234,8 +234,46 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
+     }
+ }
+ 
++// getGradients: the screen-space derivatives of the first two source components,
++// (dS/dX, dS/dY, dT/dX, dT/dY). No texture is read. The order follows the game: fwidth(x) compiles
++// to "getGradients r2._xy_, r2.xx" followed by |r2.y| + |r2.z|.
++void ShaderRecompiler::recompileGradients(const TextureFetchInstruction& instr)
++{
++    if (instr.isPredicated)
++    {
++        indent();
++        println("if ({}p0)", instr.predCondition ? "" : "!");
++
++        indent();
++        out += "{\n";
++        ++indentation;
++    }
++
++    indent();
++    print("r{}.", instr.dstRegister);
++    printDstSwizzle(instr.dstSwizzle, false);
++    print(" = getGradients(r{}.{}{}).", instr.srcRegister, SWIZZLES[instr.srcSwizzle & 0x3], SWIZZLES[(instr.srcSwizzle >> 2) & 0x3]);
++    printDstSwizzle(instr.dstSwizzle, true);
++    out += ";\n";
++
++    printDstSwizzle01(instr.dstRegister, instr.dstSwizzle);
++
++    if (instr.isPredicated)
++    {
++        --indentation;
++        indent();
++        out += "}\n";
++    }
++}
++
+ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicubic)
+ {
++    if (instr.opcode == FetchOpcode::GetTextureGradients)
++    {
++        recompileGradients(instr);
++        return;
++    }
++
+     if (instr.opcode != FetchOpcode::TextureFetch && instr.opcode != FetchOpcode::GetTextureWeights)
+         return;
+ 
+diff --git a/XenosRecomp/shader_recompiler.h b/XenosRecomp/shader_recompiler.h
+index b2e317d..60cf772 100644
+--- a/XenosRecomp/shader_recompiler.h
++++ b/XenosRecomp/shader_recompiler.h
+@@ -50,6 +50,7 @@ struct ShaderRecompiler : StringBuffer
+ 
+     void recompile(const VertexFetchInstruction& instr, uint32_t address);
+     void recompile(const TextureFetchInstruction& instr, bool bicubic);
++    void recompileGradients(const TextureFetchInstruction& instr);
+     void recompile(const AluInstruction& instr);
+ 
+     void recompile(const uint8_t* shaderData, const std::string_view& include);

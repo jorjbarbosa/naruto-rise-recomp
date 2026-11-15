@@ -1,3 +1,12 @@
 [submodule "tools/XenonRecomp"]
 	path = tools/XenonRecomp
 	url = https://github.com/hedge-dev/XenonRecomp.git
+[submodule "tools/XenosRecomp"]
+	path = tools/XenosRecomp
+	url = https://github.com/hedge-dev/XenosRecomp.git
+[submodule "thirdparty/plume"]
+	path = thirdparty/plume
+	url = https://github.com/renderbag/plume.git
+[submodule "thirdparty/SDL"]
+	path = thirdparty/SDL
+	url = https://github.com/libsdl-org/SDL.git

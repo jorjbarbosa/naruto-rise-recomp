@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
-    Builds the patched XenonRecomp and recompiles game/default.xex into build/ppc.
+    Builds the patched recompilers and translates the game: game/default.xex into build/ppc and the
+    shaders of game/xeshader.sdb into build/shaders.
 
 .DESCRIPTION
     1. Applies patches/ to the submodules (patches/apply.ps1).
@@ -8,6 +9,9 @@
     3. Recreates build/ppc and runs XenonRecomp with config/default.toml. The log goes to
        build/recompile.log. Any warning from XenonRecomp makes the script fail, so a config or
        recompiler regression does not go unnoticed.
+    4. Builds XenosRecomp into build/tools/XenosRecomp and translates every shader of
+       game/xeshader.sdb to DXIL and SPIR-V, written as build/shaders/shader_cache.cpp. A shader
+       that does not compile makes the script fail (its HLSL is left in build/shaders/*.failed).
 
     Requires Visual Studio with "C++ Clang tools for Windows" (see scripts/common.ps1).
 
@@ -71,3 +75,23 @@ if ($warnings.Count -gt 0) {
     Fail "XenonRecomp reported $($warnings.Count) warnings (see $log)"
 }
 Write-Host 'no warnings'
+
+# 4. Shaders
+$shaderDb = Join-Path $RepoRoot 'game/xeshader.sdb'
+$xenosSubmodule = Join-Path $RepoRoot 'tools/XenosRecomp'
+$xenosBuild = Join-Path $RepoRoot 'build/tools/XenosRecomp'
+$shaderOutput = Join-Path $RepoRoot 'build/shaders'
+
+if (-not (Test-Path $shaderDb)) { Fail "game/xeshader.sdb not found" }
+if (-not (Test-Path (Join-Path $xenosSubmodule '.git'))) { Fail 'tools/XenosRecomp is not initialized (run: git submodule update --init --recursive)' }
+
+Invoke-CMakeBuild $xenosSubmodule $xenosBuild @('XenosRecomp')
+
+if (Test-Path $shaderOutput) { Remove-Item -Recurse -Force $shaderOutput }
+New-Item -ItemType Directory -Force $shaderOutput | Out-Null
+
+$shaderCache = Join-Path $shaderOutput 'shader_cache.cpp'
+& (Join-Path $xenosBuild 'XenosRecomp/XenosRecomp.exe') $shaderDb $shaderCache (Join-Path $xenosSubmodule 'XenosRecomp/shader_common.h') |
+    Where-Object { $_ -notmatch '^Recompiling shaders' }
+if ($LASTEXITCODE -ne 0) { Fail "XenosRecomp exited with code $LASTEXITCODE" }
+Write-Host ("generated {0} ({1:N1} MB)" -f $shaderCache, ((Get-Item $shaderCache).Length / 1MB))

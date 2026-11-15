@@ -1,0 +1,62 @@
+diff --git a/XenosRecomp/main.cpp b/XenosRecomp/main.cpp
+index d015145..45e8616 100644
+--- a/XenosRecomp/main.cpp
++++ b/XenosRecomp/main.cpp
+@@ -67,20 +67,41 @@ int main(int argc, char** argv)
+     auto includeData = readAllBytes(includeInput, includeSize);
+     std::string_view include(reinterpret_cast<const char*>(includeData.get()), includeSize);
+ 
+-    if (std::filesystem::is_directory(input))
++    // A directory is scanned file by file, and so is a single file that is not itself a shader
++    // container (a shader database, for example). Only a file that starts with a container is
++    // translated on its own to HLSL.
++    bool scan = std::filesystem::is_directory(input);
++    if (!scan)
++    {
++        size_t inputSize = 0;
++        auto inputData = readAllBytes(input, inputSize);
++        scan = inputSize < sizeof(ShaderContainer) ||
++            (reinterpret_cast<const ShaderContainer*>(inputData.get())->flags & 0xFFFFFF00) != 0x102A1100;
++    }
++
++    if (scan)
+     {
+         std::vector<std::unique_ptr<uint8_t[]>> files;
+         std::map<XXH64_hash_t, RecompiledShader> shaders;
+ 
+-        for (auto& file : std::filesystem::recursive_directory_iterator(input))
++        std::vector<std::filesystem::path> inputFiles;
++        if (std::filesystem::is_directory(input))
+         {
+-            if (std::filesystem::is_directory(file))
++            for (auto& file : std::filesystem::recursive_directory_iterator(input))
+             {
+-                continue;
++                if (!std::filesystem::is_directory(file))
++                    inputFiles.push_back(file.path());
+             }
+-            
++        }
++        else
++        {
++            inputFiles.push_back(input);
++        }
++
++        for (auto& file : inputFiles)
++        {
+             size_t fileSize = 0;
+-            auto fileData = readAllBytes(file.path().string().c_str(), fileSize);
++            auto fileData = readAllBytes(file.string().c_str(), fileSize);
+             bool foundAny = false;
+ 
+             for (size_t i = 0; fileSize > sizeof(ShaderContainer) && i < fileSize - sizeof(ShaderContainer) - 1;)
+@@ -105,7 +126,8 @@ int main(int argc, char** argv)
+                 }
+                 else
+                 {
+-                    i += sizeof(uint32_t);
++                    // Containers are not always 4-byte aligned: shader databases pack them back to back.
++                    i += 1;
+                 }
+             }
+ 

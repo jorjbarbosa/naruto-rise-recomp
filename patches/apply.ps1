@@ -1,10 +1,11 @@
 <#
 .SYNOPSIS
-    Applies (or reverts) the patches in patches/<submodule> to the submodules in tools/.
+    Applies (or reverts) the patches in patches/<submodule> to the submodules.
 
 .DESCRIPTION
-    Each folder inside patches/ is named after a submodule in tools/ and holds .patch
-    files generated with "git diff". They are applied in alphabetical order.
+    Each folder inside patches/ is named after a submodule (the last part of its path in
+    .gitmodules, such as tools/XenonRecomp or thirdparty/plume) and holds .patch files
+    generated with "git diff". They are applied in alphabetical order.
     The script is idempotent: patches that are already applied are skipped.
 
 .EXAMPLE
@@ -20,8 +21,21 @@ param(
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $failed = $false
 
+# Submodule paths by their last component, from .gitmodules.
+$submodules = @{}
+foreach ($line in Get-Content (Join-Path $repoRoot '.gitmodules')) {
+    if ($line -match '^\s*path\s*=\s*(.+?)\s*$') {
+        $submodules[(Split-Path -Leaf $Matches[1])] = Join-Path $repoRoot $Matches[1]
+    }
+}
+
 foreach ($dir in Get-ChildItem -Path $PSScriptRoot -Directory | Sort-Object Name) {
-    $submodule = Join-Path $repoRoot (Join-Path 'tools' $dir.Name)
+    $submodule = $submodules[$dir.Name]
+    if (-not $submodule) {
+        Write-Warning "$($dir.Name): no submodule with that name in .gitmodules"
+        $failed = $true
+        continue
+    }
     if (-not (Test-Path (Join-Path $submodule '.git'))) {
         Write-Warning "$($dir.Name): submodule not initialized at $submodule (run: git submodule update --init --recursive)"
         $failed = $true

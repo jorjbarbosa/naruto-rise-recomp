@@ -1,0 +1,71 @@
+diff --git a/XenosRecomp/main.cpp b/XenosRecomp/main.cpp
+index 45e8616..37f3bb7 100644
+--- a/XenosRecomp/main.cpp
++++ b/XenosRecomp/main.cpp
+@@ -2,6 +2,8 @@
+ #include "shader_recompiler.h"
+ #include "dxc_compiler.h"
+ 
++#include <mutex>
++
+ static std::unique_ptr<uint8_t[]> readAllBytes(const char* filePath, size_t& fileSize)
+ {
+     FILE* file = fopen(filePath, "rb");
+@@ -137,6 +139,21 @@ int main(int argc, char** argv)
+ 
+         std::atomic<uint32_t> progress = 0;
+ 
++        // Shaders that failed to compile. Their HLSL is written next to the output as
++        // <output>.failed/<hash>.hlsl, and the run fails once every shader has been tried.
++        std::mutex failedMutex;
++        std::vector<XXH64_hash_t> failed;
++        auto fail = [&](XXH64_hash_t hash, const std::string& hlsl)
++            {
++                std::filesystem::path directory = std::string(output) + ".failed";
++                std::filesystem::create_directories(directory);
++                std::string path = (directory / fmt::format("{:016X}.hlsl", hash)).string();
++                writeAllBytes(path.c_str(), hlsl.data(), hlsl.size());
++
++                std::lock_guard lock(failedMutex);
++                failed.push_back(hash);
++            };
++
+         std::for_each(std::execution::par_unseq, shaders.begin(), shaders.end(), [&](auto& hashShaderPair)
+             {
+                 auto& shader = hashShaderPair.second;
+@@ -151,12 +168,20 @@ int main(int argc, char** argv)
+ 
+ #ifdef XENOS_RECOMP_DXIL
+                 shader.dxil = dxcCompiler.compile(recompiler.out, recompiler.isPixelShader, recompiler.specConstantsMask != 0, false);
+-                assert(shader.dxil != nullptr);
++                if (shader.dxil == nullptr)
++                {
++                    fail(hashShaderPair.first, recompiler.out);
++                    return;
++                }
+                 assert(*(reinterpret_cast<uint32_t *>(shader.dxil->GetBufferPointer()) + 1) != 0 && "DXIL was not signed properly!");
+ #endif
+ 
+                 IDxcBlob* spirv = dxcCompiler.compile(recompiler.out, recompiler.isPixelShader, false, true);
+-                assert(spirv != nullptr);
++                if (spirv == nullptr)
++                {
++                    fail(hashShaderPair.first, recompiler.out);
++                    return;
++                }
+ 
+                 bool result = smolv::Encode(spirv->GetBufferPointer(), spirv->GetBufferSize(), shader.spirv, smolv::kEncodeFlagStripDebugInfo);
+                 assert(result);
+@@ -168,6 +193,12 @@ int main(int argc, char** argv)
+                     fmt::println("Recompiling shaders... {}%", currentProgress / float(shaders.size()) * 100.0f);
+             });
+ 
++        if (!failed.empty())
++        {
++            fmt::println(stderr, "{} of {} shaders failed to compile (HLSL in {}.failed)", failed.size(), shaders.size(), output);
++            return 1;
++        }
++
+         fmt::println("Creating shader cache...");
+ 
+         StringBuffer f;

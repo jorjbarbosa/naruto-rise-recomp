@@ -1,7 +1,8 @@
 # Submodule patches
 
-Our changes to the submodules in `tools/`, kept as patches instead of a fork. Each folder is named after a
-submodule and holds `.patch` files (output of `git diff` inside the submodule), applied in alphabetical order.
+Our changes to the submodules (`tools/` and `thirdparty/`), kept as patches instead of a fork. Each folder is
+named after a submodule (the last part of its path) and holds `.patch` files (output of `git diff` inside the
+submodule), applied in alphabetical order.
 
 ## Usage
 
@@ -11,8 +12,8 @@ git submodule update --init --recursive
 ./patches/apply.ps1 -Revert    # undo, in reverse order
 ```
 
-After applying, `git status` in the project shows `tools/XenonRecomp (modified content)`. That is expected:
-the submodule stays on the upstream commit and the changes live only here.
+After applying, `git status` in the project shows the patched submodules as `(modified content)`. That is
+expected: each submodule stays on its upstream commit and the changes live only here.
 
 ### Updating the submodule
 
@@ -93,3 +94,59 @@ These are configuration items, in `config/default.toml` and `config/default_swit
 - Jump tables XenonAnalyse does not recognize: `0x8264D590`, `0x823EFDCC` and `0x824F85A4`.
 - Two modules (`AI2C.dll`): indirect call lookup over two code ranges and per-module symbol names. The game
   has a path without the DLL (it interprets the AI bytecode), so this can wait.
+
+## plume
+
+### 0001: D3D12 swap chain and adapter cleanup
+
+Bugs in `plume_d3d12.cpp`, all still present upstream at `b619e50`:
+
+- **Adapter selection.** When the shader model query of an adapter failed, the `continue` sat inside the
+  query loop, so the loop went on with the device and adapter it had just released. The adapter is now
+  skipped after the loop.
+- **Failed swap chain creation.** The `IDXGISwapChain1` leaked when `MakeWindowAssociation` failed, and the
+  destructor then walked `desc.textureCount` textures that were never created. It now walks `textures`.
+- **Failed resize.** A failed `ResizeBuffers` left the textures released, and the next resize released them
+  again through null pointers. Null textures are now skipped.
+- **Frame latency handle.** The waitable object from `GetFrameLatencyWaitableObject` was never closed.
+
+## XenosRecomp
+
+Findings from the shaders of Naruto: Rise of a Ninja (`game/xeshader.sdb`: 4,467 containers, 3,322 unique,
+1,513 vertex and 1,809 pixel shaders). The reference for what each shader does is the game itself: the SDB
+carries the original HLSL of its 20 shader families, and every shader was disassembled with JadeRE
+(`EngineSrc/Tools/JadeRE`, `shader-extract`, identical to the XDK's `xsd.exe`). Upstream translates every
+shader without a recompiler error; the patches cover what it dropped or could not compile.
+
+### 0001: shader databases
+
+- The SDB packs its containers back to back, so they sit at odd offsets (all 4,467 are at an offset of 1
+  modulo 4). The scan stepped 4 bytes at a time and found none; it now steps 1 byte.
+- A single input file that does not start with a container (a shader database) is scanned like a directory,
+  so the build passes `game/xeshader.sdb` directly instead of a folder holding it.
+
+### 0002: report compile failures
+
+The asserts that checked the DXC output are compiled out in Release, so the first shader that did not compile
+crashed the run on a null blob. Every shader is now tried, the HLSL of the failed ones is written to
+`<output>.failed/<hash>.hlsl`, and the run exits with an error.
+
+### 0003: vertex texture fetch
+
+Skinning reads the bone matrices from a 1D texture in the vertex shader (`TFetchBoneMatrix` in
+`01_vscommon.hlsl`; 1,062 `tfetch1D` in 118 vertex shaders of the SDB, 97 of them unique): three fetches per
+bone with `OffsetX` 0.5, 1.5 and 2.5 texels. Before, these shaders did not compile
+(`s16_Texture1DDescriptorIndex` undeclared).
+
+- Vertex shader sampler `sN` is texture fetch constant `16 + N` (`g_BoneMatrixSampler`, register `s0`, is
+  fetched from `tf16`). Descriptor slots in the shared constants are now indexed by fetch constant, 32 per
+  texture dimension and for the samplers, so vertex and pixel shader samplers no longer collide. The rest of
+  the shared constants moved from `c16` to `c32` (from byte 256 to 512 on SPIR-V).
+- `tfetch1D` samples the texture as a 2D texture one texel high, at the base level, with `OffsetX` applied in
+  texels.
+
+### 0004: texture gradients
+
+`getGradients` was dropped silently (115 in 89 cel pixel shaders, from `fwidth()` in `33_pscell.hlsl`). It now
+gives `(dS/dX, dS/dY, dT/dX, dT/dY)`. The order comes from the game: `fwidth(x)` compiles to
+`getGradients r2._xy_, r2.xx` followed by `|r2.y| + |r2.z|`.
