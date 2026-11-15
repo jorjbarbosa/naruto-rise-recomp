@@ -1,0 +1,5 @@
+# Game files, provided by the user and not redistributable
+/game/
+
+# Build output, including the generated C++ (build/ppc)
+/build/
