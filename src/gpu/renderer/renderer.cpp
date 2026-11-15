@@ -211,7 +211,15 @@ namespace gpu
     {
         impl_->Post([impl = impl_.get(), address, header] {
             impl->targets->ReleaseTexture(address, header);
-            impl->textures->Release(address);
+            impl->textures->Release(address, address + 1);
+        });
+    }
+
+    void Renderer::ReleaseMemory(uint32_t begin, uint32_t end)
+    {
+        impl_->Post([impl = impl_.get(), begin, end] {
+            impl->targets->ReleaseResolved(begin, end);
+            impl->textures->Release(begin, end);
         });
     }
 

@@ -5,6 +5,7 @@
 #include <atomic>
 #include <map>
 #include <mutex>
+#include <vector>
 #include <windows.h>
 
 namespace mem
@@ -27,7 +28,8 @@ namespace mem
 
     bool Init()
     {
-        g_base = static_cast<uint8_t*>(VirtualAlloc(nullptr, kSize, MEM_RESERVE, PAGE_READWRITE));
+        // MEM_WRITE_WATCH makes the OS record which pages are written (TakeWrittenPages).
+        g_base = static_cast<uint8_t*>(VirtualAlloc(nullptr, kSize, MEM_RESERVE | MEM_WRITE_WATCH, PAGE_READWRITE));
         if (g_base == nullptr)
             return false;
         AddVectoredExceptionHandler(1, CommitOnTouch);
@@ -41,6 +43,28 @@ namespace mem
         uint64_t begin = address & ~uint64_t(0xFFFF);
         uint64_t end = std::min<uint64_t>((uint64_t(address) + size + 0xFFFF) & ~uint64_t(0xFFFF), kSize);
         VirtualAlloc(g_base + begin, size_t(end - begin), MEM_COMMIT, PAGE_READWRITE);
+    }
+
+    bool TakeWrittenPages(uint32_t address, uint32_t size, std::vector<uint32_t>& pages)
+    {
+        if (size == 0)
+            return true;
+        uint64_t begin = address & ~uint64_t(kPageSize - 1);
+        uint64_t end = std::min<uint64_t>((uint64_t(address) + size + kPageSize - 1) & ~uint64_t(kPageSize - 1), kSize);
+        // One entry per page of the range is always enough.
+        thread_local std::vector<void*> written;
+        ULONG_PTR count = ULONG_PTR((end - begin) / kPageSize);
+        written.resize(count);
+        ULONG granularity = 0;
+        if (GetWriteWatch(WRITE_WATCH_FLAG_RESET, g_base + begin, SIZE_T(end - begin), written.data(), &count,
+                &granularity) != 0)
+        {
+            LOG_ONCE("memory: GetWriteWatch failed (error %lu); ranges count as written", GetLastError());
+            return false;
+        }
+        for (ULONG_PTR i = 0; i < count; i++)
+            pages.push_back(uint32_t(static_cast<uint8_t*>(written[i]) - g_base));
+        return true;
     }
 
     uint32_t AtomicLoad32(uint32_t a)

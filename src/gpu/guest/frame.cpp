@@ -121,6 +121,11 @@ namespace gpu
             Log("gpu: error: running without a renderer");
     }
 
+    void FreePhysicalMemory(uint32_t address, uint32_t size)
+    {
+        guest::ForgetMemory(address, size);
+    }
+
     void Swap(uint32_t frontBufferFetch)
     {
         // The front buffer is a texture the title resolved its frame into.

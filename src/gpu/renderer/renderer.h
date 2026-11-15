@@ -232,6 +232,9 @@ namespace gpu
         // the texture resolved there if that header made it (other headers over the same memory
         // leave a resolved texture alone).
         void ReleaseTexture(uint32_t address, uint32_t header);
+        // Guest memory at the GPU addresses [begin, end) is freed: every texture uploaded or resolved
+        // there is released.
+        void ReleaseMemory(uint32_t begin, uint32_t end);
 
         // Presents the texture resolved at the given GPU address, fitted to the window (black when
         // nothing was resolved there).

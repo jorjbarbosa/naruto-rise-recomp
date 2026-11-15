@@ -48,6 +48,8 @@ namespace gpu
         void Resolve(const ResolveOp& op);
         void ReleaseSurface(uint32_t key);
         void ReleaseTexture(uint32_t address, uint32_t header);
+        // Releases the textures resolved at the GPU addresses [begin, end), whatever header made them.
+        void ReleaseResolved(uint32_t begin, uint32_t end);
 
         // The texture resolved at a GPU address, or null when no resolve has written there.
         ResolvedTexture* Resolved(uint32_t address);

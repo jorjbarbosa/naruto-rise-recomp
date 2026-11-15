@@ -14,6 +14,9 @@ namespace gpu
     // presents the texture resolved at its address and paces the game at its presentation interval.
     void Swap(uint32_t frontBufferFetch);
 
+    // MmFreePhysicalMemory, before the memory is freed: releases the host textures of that memory.
+    void FreePhysicalMemory(uint32_t address, uint32_t size);
+
     // Null before InitializeEngines or when the renderer could not be created.
     Renderer* ActiveRenderer();
 }

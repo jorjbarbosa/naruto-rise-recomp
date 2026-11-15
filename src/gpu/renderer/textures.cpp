@@ -148,10 +148,10 @@ namespace gpu
         }
     }
 
-    void Textures::Release(uint32_t address)
+    void Textures::Release(uint32_t begin, uint32_t end)
     {
-        auto it = textures_.lower_bound({ address, 0 });
-        while (it != textures_.end() && it->first.first == address)
+        auto it = textures_.lower_bound({ begin, 0 });
+        while (it != textures_.end() && it->first.first < end)
         {
             context_.Retire(std::shared_ptr<Texture>(std::move(it->second)));
             it = textures_.erase(it);

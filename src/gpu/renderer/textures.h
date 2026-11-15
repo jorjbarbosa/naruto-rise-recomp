@@ -29,8 +29,9 @@ namespace gpu
 
         // Creates the texture on first use and records the copy of every level and face.
         void Upload(const TextureUpload& upload);
-        // Releases the textures uploaded from an address, once the GPU no longer uses them.
-        void Release(uint32_t address);
+        // Releases the textures uploaded from the GPU addresses [begin, end), once the GPU no longer
+        // uses them.
+        void Release(uint32_t begin, uint32_t end);
         // Sets the descriptor indices of a draw's fetch slot, recording the barrier that makes its
         // texture readable. A texture that is missing or not covered leaves the slot reading zero.
         void Bind(plume::RenderCommandList& list, uint32_t slot, const DrawTexture& texture, SharedConstants& shared);

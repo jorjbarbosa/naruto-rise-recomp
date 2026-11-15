@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <vector>
 
 // Guest memory: the whole 32-bit Xbox 360 address space, reserved up front and committed on first
 // touch. Guest values are big-endian.
@@ -27,6 +28,17 @@ namespace mem
     // an access violation, but host OS calls (ReadFile, WriteFile...) fail with ERROR_NOACCESS on
     // reserved pages instead of faulting, so call this before handing them guest memory.
     void Commit(uint32_t address, uint32_t size);
+
+    // The page size of the write watch.
+    constexpr uint32_t kPageSize = 0x1000;
+
+    // Write watch: appends the guest address of every page of the range written since the last call
+    // that covered it, and resets those pages. Every write counts: guest code, host code and the host
+    // OS (ReadFile into guest memory, which the runtime does with buffered, synchronous reads).
+    // Thread-safe, but a page is reported to one caller only, so callers that share pages must share
+    // what they take. False when the OS refuses the query (logged once): the caller then has to treat
+    // the whole range as written.
+    bool TakeWrittenPages(uint32_t address, uint32_t size, std::vector<uint32_t>& pages);
 
     inline uint8_t* Ptr(uint32_t address) { return g_base + address; }
     inline bool IsHostInGuest(const void* p) { return p >= g_base && p < g_base + kSize; }

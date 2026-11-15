@@ -13,6 +13,7 @@
 #define XXH_INLINE_ALL
 #include <xxhash.h>
 
+#include <algorithm>
 #include <map>
 #include <mutex>
 #include <set>
@@ -25,28 +26,39 @@ namespace gpu::guest
     {
         constexpr uint32_t kFetchBytes = 24;
         // The fetch fields that place the texture in memory and give its texels meaning: pitch and
-        // tiling, format, endian and base, size, mip range, dimension, packing and mip address.
-        constexpr uint32_t kLayoutMask[6] = { 0xFFC00000, 0xFFFFFFFF, 0xFFFFFFFF, 0, 0x000003FC, 0xFFFFFE00 };
+        // tiling, format, endian and base, size, border, mip range, dimension, packing and mip
+        // address. Equal fields give an equal layout, so a content keeps the layout it was described
+        // with.
+        constexpr uint32_t kLayoutMask[6] = { 0xFFC00000, 0xFFFFFFFF, 0xFFFFFFFF, 0x80000000, 0x000003FC, 0xFFFFFE00 };
 
         // DimensionField of a cube texture.
         constexpr uint32_t kDimensionCube = 3;
 
-        // What was uploaded for a (GPU address, layout key), when its memory was last checked, and the
-        // parts of its description a draw needs.
+        // GPU memory pages (mem::kPageSize) of the physical heap.
+        constexpr uint32_t kPageShift = 12;
+        constexpr uint32_t kPhysicalPages = 0x20000000 >> kPageShift;
+
+        // A (GPU address, layout key): its layout, the memory it reads, and the write check its last
+        // upload copied after.
         struct Content
         {
-            uint64_t hash = 0;
-            uint64_t checkedFrame = 0; // 0: check at the next use
-            bool uploaded = false;
+            textures::Layout layout;
+            std::vector<std::pair<uint32_t, uint32_t>> ranges; // GPU address, bytes
             DrawTexture::Kind kind = DrawTexture::Kind::None;
-            uint32_t mipMin = 0;
-            uint32_t mipMax = 0;
+            uint64_t uploadCheck = 0;  // 0: never uploaded
+            uint64_t checkedFrame = 0; // 0: check at the next use
         };
 
-        std::mutex g_mutex; // the state below (the render thread binds, any thread unlocks)
+        std::mutex g_mutex; // the state below (the render thread binds, any thread unlocks or frees)
         std::map<std::pair<uint32_t, uint64_t>, Content> g_contents; // ordered by address
         std::unordered_map<uint32_t, uint32_t> g_resolved;           // GPU address -> destination header
         uint64_t g_frame = 1;
+        // Write checks. The OS reports a written page to one check only, and contents share pages
+        // (several layouts over the same memory), so each page keeps the number of the last check
+        // that found it written: a content is stale when a page of it was found written after the
+        // check its upload copied after.
+        uint64_t g_check = 0;
+        std::vector<uint64_t> g_pageChecks(kPhysicalPages);
 
         // A fetch constant with its base and mip addresses as GPU addresses (headers hold guest
         // addresses, the device the GPU ones).
@@ -98,13 +110,60 @@ namespace gpu::guest
                 LOG_ONCE("gpu: the texture exponent adjustment is not applied yet");
         }
 
-        uint64_t HashMemory(const std::vector<std::pair<uint32_t, uint32_t>>& ranges)
+        // The ranges of a layout that lie in the physical heap, which is all the GPU addresses: a
+        // fetch can describe memory past its end, which nothing can have written.
+        std::vector<std::pair<uint32_t, uint32_t>> PhysicalRanges(const textures::Layout& layout)
         {
-            XXH3_state_t state;
-            XXH3_64bits_reset(&state);
+            constexpr uint64_t kEnd = uint64_t(kPhysicalPages) << kPageShift;
+            std::vector<std::pair<uint32_t, uint32_t>> ranges;
+            for (const auto& [address, bytes] : textures::MemoryRanges(layout))
+            {
+                uint64_t end = std::min<uint64_t>(uint64_t(address) + bytes, kEnd);
+                if (end > address)
+                    ranges.emplace_back(address, uint32_t(end - address));
+            }
+            return ranges;
+        }
+
+        // A new write check of a content's ranges (PhysicalRanges): the pages written since the last
+        // check that covered them get its number, check. Returns whether a page of the ranges was found
+        // written after the check `since`. A copy of the memory made after the check holds every
+        // write it found; later writes are found by later checks. Under g_mutex.
+        bool CheckWrites(const std::vector<std::pair<uint32_t, uint32_t>>& ranges, uint64_t since, uint64_t& check)
+        {
+            thread_local std::vector<uint32_t> written;
+            check = ++g_check;
+            bool stale = false;
             for (const auto& [address, bytes] : ranges)
-                XXH3_64bits_update(&state, mem::Ptr(GuestPhysical(address)), bytes);
-            return XXH3_64bits_digest(&state);
+            {
+                uint32_t first = address >> kPageShift;
+                uint32_t last = (address + bytes - 1) >> kPageShift;
+                written.clear();
+                if (!mem::TakeWrittenPages(GuestPhysical(address), bytes, written))
+                {
+                    // Without the OS's answer, every page counts as written.
+                    std::fill(g_pageChecks.begin() + first, g_pageChecks.begin() + last + 1, check);
+                    stale = true;
+                    continue;
+                }
+                for (uint32_t page : written)
+                    g_pageChecks[(page - GuestPhysical(0)) >> kPageShift] = check;
+                stale |= !written.empty();
+                // Pages another content's check found written after this content's upload.
+                for (uint32_t page = first; !stale && page <= last; page++)
+                    stale = g_pageChecks[page] > since;
+            }
+            return stale;
+        }
+
+        // Forgets the contents of the GPU addresses in [begin, end). Under g_mutex.
+        void EraseContents(uint32_t begin, uint32_t end)
+        {
+            auto first = g_contents.lower_bound({ begin, 0 });
+            auto last = first;
+            while (last != g_contents.end() && last->first.first < end)
+                ++last;
+            g_contents.erase(first, last);
         }
 
         // Marks the textures of an address to be checked at their next use. Under g_mutex.
@@ -140,51 +199,50 @@ namespace gpu::guest
                 continue;
             }
 
-            // A texture checked in this frame needs no description: its content holds the result.
+            // A content is described once; its layout follows from its key.
             texture.layout = LayoutKey(fetch);
             auto it = g_contents.find({ texture.address, texture.layout });
-            if (it != g_contents.end() && it->second.checkedFrame == g_frame)
+            if (it == g_contents.end())
             {
-                texture.kind = it->second.kind;
-                texture.mipMin = it->second.mipMin;
-                texture.mipMax = it->second.mipMax;
-                continue;
+                textures::Layout layout;
+                const char* reason = nullptr;
+                if (!textures::DescribeTexture(fetch, layout, reason))
+                {
+                    texture = {};
+                    LogUncovered(reason, fetch.Format());
+                    continue;
+                }
+                CheckUnapplied(fetch);
+                it = g_contents.emplace(std::pair(texture.address, texture.layout), Content()).first;
+                Content& content = it->second;
+                content.kind = layout.dimension == textures::Dimension::kCube ? DrawTexture::Kind::Cube
+                                                                               : DrawTexture::Kind::Planar;
+                content.ranges = PhysicalRanges(layout);
+                content.layout = std::move(layout);
             }
-            textures::Layout layout;
-            const char* reason = nullptr;
-            if (!textures::DescribeTexture(fetch, layout, reason))
-            {
-                texture = {};
-                LogUncovered(reason, fetch.Format());
-                continue;
-            }
-            CheckUnapplied(fetch);
-            Content& content = it != g_contents.end() ? it->second : g_contents[{ texture.address, texture.layout }];
-            content.kind = layout.dimension == textures::Dimension::kCube ? DrawTexture::Kind::Cube : DrawTexture::Kind::Planar;
-            content.mipMin = layout.mipMin;
-            content.mipMax = layout.mipMax;
+            Content& content = it->second;
             texture.kind = content.kind;
-            texture.mipMin = content.mipMin;
-            texture.mipMax = content.mipMax;
-
-            std::vector<std::pair<uint32_t, uint32_t>> ranges = textures::MemoryRanges(layout);
-            uint64_t hash = HashMemory(ranges);
-            content.checkedFrame = g_frame;
-            if (content.uploaded && hash == content.hash)
+            texture.mipMin = content.layout.mipMin;
+            texture.mipMax = content.layout.mipMax;
+            if (content.checkedFrame == g_frame)
                 continue;
-            content.hash = hash;
-            content.uploaded = true;
+
+            content.checkedFrame = g_frame;
+            uint64_t check = 0;
+            if (!CheckWrites(content.ranges, content.uploadCheck, check) && content.uploadCheck != 0)
+                continue;
+            content.uploadCheck = check;
 
             auto upload = std::make_unique<TextureUpload>();
             upload->address = texture.address;
             upload->layoutKey = texture.layout;
-            upload->layout = std::move(layout);
-            for (const auto& [address, bytes] : ranges)
+            upload->layout = content.layout;
+            upload->ranges = content.ranges;
+            for (const auto& [address, bytes] : content.ranges)
             {
                 const uint8_t* memory = mem::Ptr(GuestPhysical(address));
                 upload->data.insert(upload->data.end(), memory, memory + bytes);
             }
-            upload->ranges = std::move(ranges);
             renderer->UploadTexture(std::move(upload));
         }
     }
@@ -204,16 +262,42 @@ namespace gpu::guest
             if (resolved != g_resolved.end() && resolved->second == header)
                 g_resolved.erase(resolved);
             for (uint32_t address : { base, fetch.MipAddress() })
-            {
-                auto first = g_contents.lower_bound({ address, 0 });
-                auto last = first;
-                while (last != g_contents.end() && last->first.first == address)
-                    ++last;
-                g_contents.erase(first, last);
-            }
+                EraseContents(address, address + 1);
         }
         if (Renderer* renderer = ActiveRenderer())
             renderer->ReleaseTexture(KeyAddress(fetch), header);
+    }
+
+    void ForgetMemory(uint32_t address, uint32_t size)
+    {
+        uint32_t begin = GpuAddress(address);
+        uint32_t end = begin + size;
+        // A texture can keep its base and its mips in different allocations: every content that
+        // reads the freed memory goes, with the other layouts of its address (they share the host
+        // textures released by address).
+        std::set<uint32_t> outside;
+        {
+            std::lock_guard lock(g_mutex);
+            for (const auto& [key, content] : g_contents)
+            {
+                if (key.first >= begin && key.first < end)
+                    continue;
+                for (const auto& [rangeAddress, bytes] : content.ranges)
+                    if (rangeAddress < end && rangeAddress + bytes > begin)
+                        outside.insert(key.first);
+            }
+            EraseContents(begin, end);
+            for (uint32_t key : outside)
+                EraseContents(key, key + 1);
+            std::erase_if(g_resolved, [&](const auto& entry) { return entry.first >= begin && entry.first < end; });
+        }
+        Renderer* renderer = ActiveRenderer();
+        if (renderer == nullptr)
+            return;
+        renderer->ReleaseMemory(begin, end);
+        // Header 0 made no resolve: only the uploaded textures of those addresses go.
+        for (uint32_t key : outside)
+            renderer->ReleaseTexture(key, 0);
     }
 
     void EndTextureFrame()

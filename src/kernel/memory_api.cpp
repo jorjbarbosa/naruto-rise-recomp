@@ -1,5 +1,6 @@
 // Virtual, physical and pool memory.
 
+#include "gpu/gpu.h"
 #include "kernel/kernel.h"
 
 using namespace kernel;
@@ -123,6 +124,9 @@ GUEST_FUNC(MmAllocatePhysicalMemoryEx)
 // MmFreePhysicalMemory(type, address)
 GUEST_FUNC(MmFreePhysicalMemory)
 {
+    uint32_t allocBase, size;
+    if (mem::Query(ctx.r4.u32, &allocBase, &size) && allocBase == ctx.r4.u32)
+        gpu::FreePhysicalMemory(allocBase, size);
     mem::Free(ctx.r4.u32);
 }
 

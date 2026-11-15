@@ -247,4 +247,18 @@ namespace gpu
         context_.Retire(std::make_shared<ResolvedTexture>(std::move(it->second)));
         resolved_.erase(it);
     }
+
+    void Targets::ReleaseResolved(uint32_t begin, uint32_t end)
+    {
+        for (auto it = resolved_.begin(); it != resolved_.end();)
+        {
+            if (it->first < begin || it->first >= end)
+            {
+                ++it;
+                continue;
+            }
+            context_.Retire(std::make_shared<ResolvedTexture>(std::move(it->second)));
+            it = resolved_.erase(it);
+        }
+    }
 }
