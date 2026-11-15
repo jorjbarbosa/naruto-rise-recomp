@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
 
 namespace gpu
@@ -12,6 +13,7 @@ namespace gpu
         bool debugLayer = false; // ROAN_GPU_DEBUG=1: D3D12 debug layer
         bool vsync = true;       // ROAN_VSYNC=0: present without waiting for the vertical blank
         std::string adapter;     // ROAN_ADAPTER=<name>: adapter as listed in the log (default: Plume's choice)
+        std::filesystem::path pipelineList; // the pipeline list file (Pipelines); empty: none
 
         static Settings FromEnvironment()
         {

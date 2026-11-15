@@ -115,7 +115,12 @@ namespace gpu
             return;
         }
         // A quad of BeginVertices still waiting for its vertices goes before anything else posted.
-        g_renderer = Renderer::Create(window, Settings::FromEnvironment(),
+        Settings settings = Settings::FromEnvironment();
+        wchar_t executable[MAX_PATH];
+        DWORD length = GetModuleFileNameW(nullptr, executable, MAX_PATH);
+        if (length != 0 && length < MAX_PATH) // MAX_PATH: the path was cut short
+            settings.pipelineList = std::filesystem::path(executable).parent_path() / "cache" / "pipelines.bin";
+        g_renderer = Renderer::Create(window, settings,
             [](uint32_t fence) { guest::GetDevice().Publish(fence); }, [] { guest::FlushInlineDraw(); });
         if (!g_renderer)
             Log("gpu: error: running without a renderer");

@@ -170,7 +170,8 @@ namespace gpu
         impl->passes = std::make_unique<Passes>(impl->context->Device(), Presenter::kFormat);
         impl->targets = std::make_unique<Targets>(*impl->context, *impl->passes, *impl->descriptors);
         impl->textures = std::make_unique<Textures>(*impl->context, *impl->targets, *impl->descriptors);
-        impl->draws = std::make_unique<Draws>(*impl->context, *impl->targets, *impl->descriptors, *impl->textures);
+        impl->draws = std::make_unique<Draws>(*impl->context, *impl->targets, *impl->descriptors, *impl->textures,
+            settings.pipelineList);
         impl->Start();
         return std::unique_ptr<Renderer>(new Renderer(std::move(impl)));
     }

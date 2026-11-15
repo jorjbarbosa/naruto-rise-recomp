@@ -265,7 +265,8 @@ namespace gpu::guest
             if ((depthControl & kStencilEnable) != 0)
             {
                 uint32_t refMask = device.Register(reg::kStencilRefMask) & 0xFFFFFF;
-                op.state.stencilRefMask = refMask;
+                op.state.stencilMasks = refMask & ~0xFFu;
+                op.stencilReference = uint8_t(refMask);
                 if ((depthControl & kBackFaceStencil) != 0 &&
                     (device.Register(reg::kStencilRefMaskBack) & 0xFFFFFF) != refMask)
                     LOG_ONCE("gpu: the back face has its own stencil reference or masks; the front face's are used");

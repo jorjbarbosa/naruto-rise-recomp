@@ -120,7 +120,7 @@ namespace gpu
     struct RenderState
     {
         uint32_t depthControl = 0;   // RB_DEPTHCONTROL
-        uint32_t stencilRefMask = 0; // RB_STENCILREFMASK: reference, read mask, write mask
+        uint32_t stencilMasks = 0;   // RB_STENCILREFMASK without the reference: read mask, write mask
         uint32_t blendControl = 0;   // RB_BLENDCONTROL0
         uint32_t cullControl = 0;    // PA_SU_SC_MODE_CNTL bits 0..2: cull front, cull back, clockwise front
         uint32_t colorMask = 0;      // RB_COLOR_MASK bits 0..3 (render target 0)
@@ -191,6 +191,7 @@ namespace gpu
         SurfaceDesc color;         // key 0: no color target
         SurfaceDesc depth;         // key 0: no depth-stencil target
         RenderState state;
+        uint8_t stencilReference = 0; // per draw, not part of the pipeline
         std::array<float, 4> blendColor{};
         std::shared_ptr<const VertexInput> input;
 
