@@ -58,6 +58,9 @@ namespace kernel
     constexpr uint32_t X_ERROR_FILE_NOT_FOUND = 2;
     constexpr uint32_t X_ERROR_PATH_NOT_FOUND = 3;
     constexpr uint32_t X_ERROR_ACCESS_DENIED = 5;
+    constexpr uint32_t X_ERROR_INVALID_HANDLE = 6;
+    constexpr uint32_t X_ERROR_ALREADY_EXISTS = 183;
+    constexpr uint32_t X_ERROR_NOT_LOGGED_ON = 1245;
     constexpr uint32_t X_ERROR_INVALID_PARAMETER = 87;
     constexpr uint32_t X_ERROR_INSUFFICIENT_BUFFER = 122;
     constexpr uint32_t X_ERROR_NO_MORE_FILES = 18;
@@ -217,6 +220,16 @@ namespace kernel
 
     // Host path of a guest path ("D:\AI2C.DLL", "game:\...", symbolic links the game created).
     std::filesystem::path HostPath(const std::string& guestPath);
+
+    // The folder for data the game writes (profile, saves, other writable devices).
+    const std::filesystem::path& UserDir();
+
+    // Content roots: while "name" is mounted, "name:\..." resolves into hostDir (writable). Names
+    // are case-insensitive. Mount fails when the name is already mounted, Unmount when it is not.
+    // Thread-safe.
+    bool MountDevice(const std::string& name, const std::filesystem::path& hostDir);
+    bool UnmountDevice(const std::string& name);
+    bool IsDeviceMounted(const std::string& name);
 
     // Called by the stubs of imports that are not implemented.
     void ReportUnimplemented(const char* name, PPCContext& ctx);

@@ -1,20 +1,23 @@
-// XAM: system services of the dashboard (input, users, loader, notifications, content).
+// XAM: system services of the dashboard (input, loader, notifications, messages, memory, network).
 
-#include "kernel/kernel.h"
+#include "kernel/xam.h"
 
 #include "host/input.h"
+#include "kernel/kernel.h"
+
+#include <deque>
+#include <mutex>
+#include <utility>
+#include <vector>
 
 using namespace kernel;
 
 namespace kernel
 {
     void StoreVideoMode(uint32_t mode);
-}
 
-namespace
-{
     // XOVERLAPPED: result, length, context, event handle, completion routine, ..., extended error.
-    uint32_t CompleteOverlapped(uint32_t overlapped, uint32_t result, uint32_t length = 0)
+    uint32_t CompleteOverlapped(uint32_t overlapped, uint32_t result, uint32_t length)
     {
         if (overlapped == 0)
             return result;
@@ -37,25 +40,6 @@ GUEST_FUNC(XGetAVPack) { ctx.r3.u64 = 6; } // HDMI
 GUEST_FUNC(XGetGameRegion) { ctx.r3.u64 = 0xFFFF; }
 GUEST_FUNC(XGetLanguage) { ctx.r3.u64 = 1; } // English
 GUEST_FUNC(XamGetSystemVersion) { ctx.r3.u64 = (2u << 28) | (17559u << 8); }
-
-// ---- Users: nobody is signed in ----
-
-GUEST_FUNC(XamUserGetSigninState) { ctx.r3.u64 = 0; }
-GUEST_FUNC(XamUserGetXUID) { ctx.r3.u64 = X_ERROR_NO_SUCH_USER; }
-GUEST_FUNC(XamUserGetSigninInfo) { ctx.r3.u64 = X_ERROR_NO_SUCH_USER; }
-GUEST_FUNC(XamUserGetName) { ctx.r3.u64 = X_ERROR_NO_SUCH_USER; }
-
-GUEST_FUNC(XamUserCheckPrivilege)
-{
-    if (ctx.r5.u32 != 0)
-        mem::Store32(ctx.r5.u32, 0);
-    ctx.r3.u64 = X_ERROR_NO_SUCH_USER;
-}
-
-// XamUserReadProfileSettings(titleId, user, xuidCount, xuids, settingCount, settingIds, size*, buffer, overlapped)
-GUEST_FUNC(XamUserReadProfileSettings) { ctx.r3.u64 = CompleteOverlapped(StackArg32(ctx, 8), X_ERROR_NO_SUCH_USER); }
-// XamUserWriteProfileSettings(titleId, user, settingCount, settings, overlapped)
-GUEST_FUNC(XamUserWriteProfileSettings) { ctx.r3.u64 = CompleteOverlapped(ctx.r7.u32, X_ERROR_NO_SUCH_USER); }
 
 // ---- Input: the player slots of host/input (gamepads, keyboard on slot 0) ----
 // The game polls users 0-3 through the XDK XInput wrappers (822DD968/70/80, flags 1) and treats any
@@ -120,15 +104,76 @@ GUEST_FUNC(XamInputSetState)
 }
 
 // ---- Notifications ----
+// Each listener has its own queue; a notification goes to the listeners whose area mask has the
+// bit of its area (XNOTIFY_SYSTEM is bit 0 for area 0).
 
-GUEST_FUNC(XamNotifyCreateListener)
+namespace
 {
-    auto object = std::make_shared<KernelObject>(ObjectType::Notification);
-    ctx.r3.u64 = CreateHandle(object);
+    struct NotificationListener : KernelObject
+    {
+        NotificationListener() : KernelObject(ObjectType::Notification) {}
+
+        uint64_t areas = 0;
+        std::deque<std::pair<uint32_t, uint32_t>> queue; // (id, parameter), under g_notifyMutex
+    };
+
+    std::mutex g_notifyMutex;
+    std::vector<std::weak_ptr<NotificationListener>> g_listeners;
 }
 
-// XNotifyGetNext(handle, matchId, id*, parameter*): nothing to report.
-GUEST_FUNC(XNotifyGetNext) { ctx.r3.u64 = 0; }
+namespace kernel
+{
+    void PostNotification(uint32_t id, uint32_t param)
+    {
+        uint32_t area = (id >> 16) & 0x1F;
+        std::lock_guard lock(g_notifyMutex);
+        std::erase_if(g_listeners, [](const auto& listener) { return listener.expired(); });
+        for (auto& weak : g_listeners)
+        {
+            auto listener = weak.lock();
+            if (listener != nullptr && (listener->areas >> area & 1) != 0)
+                listener->queue.emplace_back(id, param);
+        }
+    }
+}
+
+// XamNotifyCreateListener(areas): areas is a 64-bit mask.
+GUEST_FUNC(XamNotifyCreateListener)
+{
+    auto listener = std::make_shared<NotificationListener>();
+    listener->areas = ctx.r3.u64;
+    {
+        std::lock_guard lock(g_notifyMutex);
+        g_listeners.push_back(listener);
+    }
+    ctx.r3.u64 = CreateHandle(listener);
+}
+
+// XNotifyGetNext(handle, matchId, id*, parameter*): pops the oldest notification, or the oldest with
+// matchId when it is not 0. Returns 1 when one was popped, 0 otherwise.
+GUEST_FUNC(XNotifyGetNext)
+{
+    auto listener = std::dynamic_pointer_cast<NotificationListener>(ObjectFromHandle(ctx.r3.u32));
+    uint32_t match = ctx.r4.u32;
+    uint32_t idOut = ctx.r5.u32;
+    uint32_t paramOut = ctx.r6.u32;
+    ctx.r3.u64 = 0;
+    if (listener == nullptr)
+        return;
+
+    std::lock_guard lock(g_notifyMutex);
+    auto it = std::find_if(listener->queue.begin(), listener->queue.end(),
+        [match](const auto& entry) { return match == 0 || entry.first == match; });
+    if (it == listener->queue.end())
+        return;
+    if (idOut != 0)
+        mem::Store32(idOut, it->first);
+    if (paramOut != 0)
+        mem::Store32(paramOut, it->second);
+    listener->queue.erase(it);
+    ctx.r3.u64 = 1;
+}
+
 GUEST_FUNC(XNotifyPositionUI) {}
 
 // ---- XMsg: the XMP system music player (app 0xFA) ----
@@ -258,16 +303,6 @@ GUEST_FUNC(XamFree)
 {
     mem::Free(ctx.r3.u32);
     ctx.r3.u64 = X_ERROR_SUCCESS;
-}
-
-// ---- Content and enumeration: no storage devices yet ----
-
-// XamEnumerate(handle, flags, buffer, size, itemsReturned*, overlapped)
-GUEST_FUNC(XamEnumerate)
-{
-    if (ctx.r7.u32 != 0)
-        mem::Store32(ctx.r7.u32, 0);
-    ctx.r3.u64 = CompleteOverlapped(ctx.r8.u32, X_ERROR_NO_MORE_FILES);
 }
 
 // ---- Networking: always offline ----

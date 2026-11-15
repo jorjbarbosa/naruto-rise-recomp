@@ -114,7 +114,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    kernel::SetPaths(gameDir.string(), (exeDir / "userdata").string());
+    kernel::SetPaths(gameDir.string(), (exeDir / "data" / "user").string());
     if (!LoadExecutable(gameDir / "default.xex"))
         return 1;
     // XAudioInitialize reads the XMA context base early in the title's startup.

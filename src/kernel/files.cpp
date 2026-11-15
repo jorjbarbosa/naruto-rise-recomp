@@ -20,6 +20,9 @@ namespace
     std::mutex g_linkMutex;
     std::unordered_map<std::string, std::string> g_symbolicLinks; // lower-case link -> target
 
+    std::mutex g_mountMutex;
+    std::unordered_map<std::string, fs::path> g_mounts; // lower-case device -> host folder
+
     // FILE_ATTRIBUTE_* come from windows.h and have the same values on the Xbox 360.
     constexpr uint32_t kFileDirectoryFile = 0x01; // NtCreateFile option
 
@@ -109,6 +112,17 @@ namespace
 
         while (!rest.empty() && rest.front() == '\\')
             rest.erase(rest.begin());
+
+        {
+            std::lock_guard lock(g_mountMutex);
+            auto mount = g_mounts.find(device);
+            if (mount != g_mounts.end())
+            {
+                hostPath = mount->second / rest;
+                readOnly = false;
+                return true;
+            }
+        }
 
         if (device == "game" || device == "d" || device == "cdrom0" || device == "media")
         {
@@ -274,6 +288,29 @@ namespace kernel
         bool readOnly;
         ResolvePath(guestPath, hostPath, readOnly);
         return hostPath;
+    }
+
+    const std::filesystem::path& UserDir()
+    {
+        return g_userDir;
+    }
+
+    bool MountDevice(const std::string& name, const std::filesystem::path& hostDir)
+    {
+        std::lock_guard lock(g_mountMutex);
+        return g_mounts.emplace(Lower(name), hostDir).second;
+    }
+
+    bool UnmountDevice(const std::string& name)
+    {
+        std::lock_guard lock(g_mountMutex);
+        return g_mounts.erase(Lower(name)) != 0;
+    }
+
+    bool IsDeviceMounted(const std::string& name)
+    {
+        std::lock_guard lock(g_mountMutex);
+        return g_mounts.contains(Lower(name));
     }
 }
 
