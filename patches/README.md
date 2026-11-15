@@ -75,9 +75,16 @@ Validation done: the game's `memcmp` and `D3DXFloat16To32Array`, recompiled, wer
 `memcmp` and against independently computed values. The generated translation units that use the new
 instructions compile with clang-cl.
 
+### 0003: non-trapping division
+
+Division by zero and `INT_MIN / -1` do not trap on PowerPC (the result is undefined), but the C++ that
+XenonRecomp emitted (`a / b`) traps on x86. `divw`, `divwu`, `divd` and `divdu` now give 0 for a zero divisor
+and wrap around on overflow (`divw` divides in 64 bits). The game has 1,046 of these instructions; the first
+one to hit a zero divisor is in `D3D::InternalScalerSetup`, on the first frame.
+
 ### Not covered by the patches
 
-These are configuration items (the game's TOML), not code:
+These are configuration items, in `config/default.toml` and `config/default_switch_tables.toml`:
 
 - `invalid_instructions`:
   - zero padding;
