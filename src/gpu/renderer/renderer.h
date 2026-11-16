@@ -278,6 +278,9 @@ namespace gpu
         Rect scissor;
     };
 
+    // The console's vertical blank rate: presentation intervals count its vblanks.
+    constexpr uint32_t kVblankRate = 60;
+
     // The host GPU: a D3D12 device, queue and swap chain through Plume. Operations are posted from
     // the guest threads and run in posting order on the owner thread, which alone touches the
     // D3D12 objects. A completion thread waits for the GPU and reports the end of each batch.
@@ -327,8 +330,17 @@ namespace gpu
         bool ReadResolved(uint32_t address, ResolvedImage& image);
 
         // Presents the texture resolved at the given GPU address, fitted to the window (black when
-        // nothing was resolved there).
-        void Present(uint32_t frontAddress);
+        // nothing was resolved there). When the display can pace (vsync on, a window with an area,
+        // refreshMillihertz within 1 Hz of a multiple of 60 Hz) and vblanks != 0, the image is held
+        // for vblanks vertical blanks of 60 Hz after the previous one; otherwise it is presented at
+        // once. Returns the number to pass to WaitPresented, 0 when the owner is stopping.
+        uint64_t Present(uint32_t frontAddress, uint32_t vblanks, uint32_t refreshMillihertz);
+        // Blocks until the present is handed to the swap chain, which for a paced present is once the
+        // previous image is on screen. True when the display paced it. Any thread.
+        bool WaitPresented(uint64_t present);
+        // Whether the display paced the last present: a hint for the caller to wait for the next one
+        // instead of pacing itself. Any thread.
+        bool DisplayPaces() const;
         // The ramp the presents posted after it map the front buffer through.
         void SetGammaRamp(const GammaRamp& ramp);
 

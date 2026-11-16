@@ -1,7 +1,7 @@
 // The frame: D3DDevice_Swap runs as the original and reaches the host through VdSwap, which presents
-// the front buffer (the texture the title resolved its frame into) and paces the game. The frame
-// batch closes in the KickOff at the end of the Swap, and the Swap waits for the previous frame's
-// fence, so at most one frame is in flight.
+// the front buffer (the texture the title resolved its frame into) and paces the game, by the
+// display's refreshes or by a QPC limiter. The frame batch closes in the KickOff at the end of the
+// Swap, and the Swap waits for the previous frame's fence, so at most one frame is in flight.
 
 #include "gpu/gpu.h"
 
@@ -22,36 +22,49 @@ namespace gpu
 {
     namespace
     {
-        constexpr uint32_t kVblankRate = 60;
         // D3DPRESENT_INTERVAL_IMMEDIATE: present without waiting.
         constexpr uint32_t kIntervalImmediate = 0x80000000;
         constexpr uint32_t kMaxInterval = 4;
 
         std::unique_ptr<Renderer> g_renderer;
 
-        // Paces the frames at the presentation interval. A frame that arrives early waits for its
-        // deadline; a late one starts a new phase instead of catching up. Render thread only.
+        // The title's presentation interval in 60 Hz vblanks; 0 for D3DPRESENT_INTERVAL_IMMEDIATE.
+        uint32_t VblankInterval(uint32_t interval)
+        {
+            static uint32_t last = ~0u;
+            if (interval != last)
+            {
+                Log("gpu: presentation interval %u", interval);
+                last = interval;
+            }
+            if ((interval & kIntervalImmediate) != 0)
+                return 0;
+            // D3DPRESENT_INTERVAL_DEFAULT (0) waits for one vblank, like D3DPRESENT_INTERVAL_ONE.
+            if (interval == 0)
+                return 1;
+            if (interval > kMaxInterval)
+            {
+                LOG_ONCE("gpu: presentation interval %u clamped to %u", interval, kMaxInterval);
+                return kMaxInterval;
+            }
+            return interval;
+        }
+
+        // Paces the frames with the QPC clock when the display cannot: one frame per given number of
+        // 60 Hz vblanks, none for 0. A frame that arrives early waits for its deadline; a late one
+        // starts a new phase instead of catching up. Render thread only.
         class FrameLimiter
         {
         public:
-            void Pace(uint32_t interval)
+            void Pace(uint32_t vblanks)
             {
-                if (interval != interval_)
+                if (vblanks != vblanks_)
                 {
-                    Log("gpu: presentation interval %u", interval);
-                    interval_ = interval;
+                    vblanks_ = vblanks;
                     next_ = 0;
                 }
-                if ((interval & kIntervalImmediate) != 0)
+                if (vblanks == 0)
                     return;
-                // D3DPRESENT_INTERVAL_DEFAULT (0) waits for one vblank, like D3DPRESENT_INTERVAL_ONE.
-                if (interval == 0)
-                    interval = 1;
-                if (interval > kMaxInterval)
-                {
-                    LOG_ONCE("gpu: presentation interval %u clamped to %u", interval, kMaxInterval);
-                    interval = kMaxInterval;
-                }
                 if (frequency_ == 0)
                 {
                     LARGE_INTEGER frequency;
@@ -60,7 +73,7 @@ namespace gpu
                     timer_ = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
                 }
 
-                int64_t period = int64_t(interval) * frequency_ / kVblankRate;
+                int64_t period = int64_t(vblanks) * frequency_ / kVblankRate;
                 int64_t now = Now();
                 if (next_ != 0 && now < next_)
                 {
@@ -93,7 +106,7 @@ namespace gpu
 
             int64_t frequency_ = 0;
             int64_t next_ = 0;
-            uint32_t interval_ = ~0u;
+            uint32_t vblanks_ = ~0u;
             HANDLE timer_ = nullptr;
         };
 
@@ -151,10 +164,15 @@ namespace gpu
             g_renderer->SetGammaRamp(ramp);
         }
 
-        if (g_renderer)
-            g_renderer->Present(front.address);
+        // One clock: the display when its refresh rate is a multiple of 60 Hz (each frame then stays
+        // the interval's vblanks on screen, and the next frame starts once the previous one is
+        // shown), the limiter otherwise. The wait is only for a renderer whose display paced the
+        // last frame; otherwise the frame's tail of owner work overlaps the next frame as before.
+        uint32_t vblanks = VblankInterval(device != 0 ? mem::Load32(device + guest::dev::kPresentInterval) : 1);
+        uint64_t present = g_renderer ? g_renderer->Present(front.address, vblanks, host::DisplayRefreshMillihertz()) : 0;
         guest::EndTextureFrame();
         guest::EndBufferFrame();
-        g_limiter.Pace(device != 0 ? mem::Load32(device + guest::dev::kPresentInterval) : 1);
+        bool paced = g_renderer && g_renderer->DisplayPaces() && g_renderer->WaitPresented(present);
+        g_limiter.Pace(paced ? 0 : vblanks);
     }
 }

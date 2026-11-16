@@ -15,6 +15,7 @@
 
 #include <plume_d3d12.h>
 
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <future>
@@ -96,6 +97,14 @@ namespace gpu
         std::unique_ptr<Draws> draws;
         std::unique_ptr<Presenter> presenter;
         Renderer::BeforePost beforePost;
+
+        // Presents: numbered as they are posted, and the last one the owner handed to the swap chain.
+        std::atomic<uint64_t> presentsPosted{ 0 };
+        std::mutex presentMutex;
+        std::condition_variable presentDone;
+        uint64_t presentsDone = 0; // presentMutex
+        bool lastPaced = false;    // presentMutex
+        std::atomic<bool> displayPaces{ false };
 
     private:
         void OwnerMain()
@@ -262,11 +271,39 @@ namespace gpu
         return result.get();
     }
 
-    void Renderer::Present(uint32_t frontAddress)
+    uint64_t Renderer::Present(uint32_t frontAddress, uint32_t vblanks, uint32_t refreshMillihertz)
     {
-        impl_->Post([impl = impl_.get(), frontAddress] {
-            impl->presenter->Present(*impl->passes, impl->targets->Resolved(frontAddress));
-        });
+        uint64_t present = impl_->presentsPosted.fetch_add(1) + 1;
+        if (!impl_->Post([impl = impl_.get(), frontAddress, vblanks, refreshMillihertz, present] {
+                impl->presenter->Present(*impl->passes, impl->targets->Resolved(frontAddress), vblanks, refreshMillihertz,
+                    [&](bool paced) {
+                        impl->displayPaces = paced;
+                        {
+                            std::lock_guard lock(impl->presentMutex);
+                            if (present > impl->presentsDone)
+                            {
+                                impl->presentsDone = present;
+                                impl->lastPaced = paced;
+                            }
+                        }
+                        impl->presentDone.notify_all();
+                    });
+            }))
+            return 0;
+        return present;
+    }
+
+    bool Renderer::WaitPresented(uint64_t present)
+    {
+        // A posted task always runs (the owner drains its queue before stopping).
+        std::unique_lock lock(impl_->presentMutex);
+        impl_->presentDone.wait(lock, [&] { return impl_->presentsDone >= present; });
+        return impl_->presentsDone == present && impl_->lastPaced;
+    }
+
+    bool Renderer::DisplayPaces() const
+    {
+        return impl_->displayPaces;
     }
 
     void Renderer::SetGammaRamp(const GammaRamp& ramp)
