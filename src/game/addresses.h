@@ -9,6 +9,10 @@
 #include <cstdint>
 
 // Hooked functions: the symbols of the recompiled functions (see ppc/ppc_hook.h).
+// The main loop (82684920) calls the first three, in this order, once per iteration; nothing else
+// calls them.
+#define JADE_HUD_MAP sub_82677D20       // the HUD map; its result is the world change's r3
+#define JADE_WORLD_CHANGE sub_826843D8  // the pending world change (and the file cache's one-time setup)
 #define JADE_MAIN_STEP sub_82684518     // one loop iteration: logic, view block, end of frame
 #define JADE_VIEW_SETUP sub_82684050    // first call of the view block (r3 view)
 #define JADE_VIEW_PREPARE sub_8259E908  // second call of the view block (r3 view)

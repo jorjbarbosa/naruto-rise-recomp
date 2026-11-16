@@ -24,10 +24,15 @@
 // ROAN_DESTRUCTION_WAITS=0 turns the waits off (the counters stay). The hooks run on whichever thread
 // calls the engine functions.
 
+#include <cstdint>
 #include <string>
 
 namespace game::destruction
 {
     // The counters, one line.
     std::string Summary();
+
+    // Calls of the sector switch on the main thread since the start, with or without work: once per
+    // tick when the delivery between ticks runs without it (state interpolation step 2).
+    uint64_t SectorSwitches();
 }

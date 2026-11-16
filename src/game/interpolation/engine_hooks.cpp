@@ -1,13 +1,18 @@
-// The overrides of the Jade engine functions the state interpolation front observes. Each one runs
-// the original and forwards to the probes (motion record, purity probe). With the probes off, the
-// main step tests two flags and the other hooks one thread-local flag before calling the original.
+// The overrides of the Jade engine functions the state interpolation front observes or gates. The
+// three loop functions ask the clock whether the iteration runs the logic; the others run the original
+// and forward to the probes (motion record, purity probe, data watch). With the clock and the probes
+// off, the loop functions test their flags and the other hooks one thread-local flag before calling
+// the original.
 
 #include "game/addresses.h"
+#include "game/interpolation/clock.h"
 #include "game/interpolation/data_watch.h"
 #include "game/interpolation/motion_record.h"
 #include "game/interpolation/purity_probe.h"
 #include "kernel/kernel.h"
 
+DECLARE_ORIGINAL(JADE_HUD_MAP);
+DECLARE_ORIGINAL(JADE_WORLD_CHANGE);
 DECLARE_ORIGINAL(JADE_MAIN_STEP);
 DECLARE_ORIGINAL(JADE_VIEW_SETUP);
 DECLARE_ORIGINAL(JADE_DISPLAY);
@@ -19,34 +24,58 @@ namespace
 {
     namespace interpolation = game::interpolation;
 
-    // Set on the thread that runs the main step, between its entry and its exit, when a probe is on.
-    // The engine also displays and delivers outside the main step (world loading, the loading
-    // screen's thread); the probes only look inside it.
+    // Set on the thread that runs the main step, between its entry and its exit, when a probe is on;
+    // also in an iteration without a tick, whose view block the probes see like the main step's. The
+    // engine also displays and delivers outside the main step (world loading, the loading screen's
+    // thread); the probes only look inside it.
     thread_local bool t_inMainStep = false;
     uint64_t g_iteration = 0; // main thread
 }
 
+// The HUD map (82677D20), the main loop's first call. Hooked so an iteration without a tick skips it.
+PPC_FUNC(JADE_HUD_MAP)
+{
+    if (interpolation::clock::Enabled() && !interpolation::clock::LogicRuns())
+        return;
+    ORIGINAL(JADE_HUD_MAP)(ctx, base);
+}
+
+// The pending world change (826843D8), the main loop's second call. Hooked so an iteration without a
+// tick skips it: a world change belongs to the logic.
+PPC_FUNC(JADE_WORLD_CHANGE)
+{
+    if (interpolation::clock::Enabled() && !interpolation::clock::LogicRuns())
+        return;
+    ORIGINAL(JADE_WORLD_CHANGE)(ctx, base);
+}
+
 // The main step (82684518): one iteration of the main loop, the logic, the view block and the end of
-// frame. Hooked to bracket it for the probes; the purity probe compares and replays after it.
+// frame. Hooked so an iteration without a tick runs only the view block (clock.h), and to bracket it
+// for the probes; the purity probe compares and replays after it.
 PPC_FUNC(JADE_MAIN_STEP)
 {
+    bool gated = interpolation::clock::Enabled();
     bool motion = interpolation::motion::Enabled();
     bool purity = interpolation::purity::Enabled();
     bool watch = interpolation::watch::Enabled();
-    if (!motion && !purity && !watch)
+    if (!gated && !motion && !purity && !watch)
     {
         ORIGINAL(JADE_MAIN_STEP)(ctx, base);
         return;
     }
+    bool logic = !gated || interpolation::clock::LogicRuns();
     g_iteration++;
     if (motion)
-        interpolation::motion::MainStepStart(g_iteration);
+        interpolation::motion::MainStepStart(g_iteration, logic, interpolation::clock::Current().alpha);
     if (purity)
         interpolation::purity::MainStepStart();
     if (watch)
         interpolation::watch::MainStepStart();
-    t_inMainStep = true;
-    ORIGINAL(JADE_MAIN_STEP)(ctx, base);
+    t_inMainStep = motion || purity || watch;
+    if (logic)
+        ORIGINAL(JADE_MAIN_STEP)(ctx, base);
+    else
+        interpolation::clock::RunBetweenTicks(ctx, base);
     t_inMainStep = false;
     if (motion)
         interpolation::motion::MainStepEnd();
@@ -54,6 +83,8 @@ PPC_FUNC(JADE_MAIN_STEP)
         interpolation::purity::MainStepEnd(ctx, base);
     if (watch)
         interpolation::watch::MainStepEnd();
+    if (gated)
+        interpolation::clock::IterationEnd();
 }
 
 // View setup (82684050), the first call of the view block. Hooked to mark the block's start for the

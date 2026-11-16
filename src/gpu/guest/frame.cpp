@@ -18,6 +18,7 @@
 #include "host/window.h"
 #include "kernel/kernel.h"
 
+#include <atomic>
 #include <windows.h>
 
 namespace gpu
@@ -29,6 +30,7 @@ namespace gpu
         constexpr uint32_t kMaxInterval = 4;
 
         std::unique_ptr<Renderer> g_renderer;
+        std::atomic<uint32_t> g_paceRate{ 0 }; // SetPaceRate
 
         // The title's presentation interval in 60 Hz vblanks; 0 for D3DPRESENT_INTERVAL_IMMEDIATE.
         uint32_t VblankInterval(uint32_t interval)
@@ -53,19 +55,26 @@ namespace gpu
         }
 
         // Paces the frames with the QPC clock when the display cannot: one frame per given number of
-        // 60 Hz vblanks, none for 0. A frame that arrives early waits for its deadline; a late one
-        // starts a new phase instead of catching up. Render thread only.
+        // 60 Hz vblanks, or at a rate (1 / rate s) when one is given; none for neither. A frame that
+        // arrives early waits for its deadline; a late one starts a new phase instead of catching up.
+        // The deadlines of a phase are computed from its start, so a period that is not a whole number
+        // of clock ticks does not drift. Render thread only.
         class FrameLimiter
         {
         public:
-            void Pace(uint32_t vblanks)
+            // Under a rate every Swap is paced at it, whatever interval the title asked for (immediate
+            // included), and a change of that interval does not start a new phase.
+            void Pace(uint32_t vblanks, uint32_t rate)
             {
-                if (vblanks != vblanks_)
+                if (rate != rate_ || (rate == 0 && vblanks != vblanks_))
                 {
+                    if (rate != rate_ && rate != 0)
+                        Log("gpu: pacing at %u frames/s", rate);
                     vblanks_ = vblanks;
-                    next_ = 0;
+                    rate_ = rate;
+                    start_ = 0;
                 }
-                if (vblanks == 0)
+                if (rate == 0 && vblanks == 0)
                     return;
                 if (frequency_ == 0)
                 {
@@ -75,26 +84,30 @@ namespace gpu
                     timer_ = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
                 }
 
-                int64_t period = int64_t(vblanks) * frequency_ / kVblankRate;
+                // The period is ticks / frames clock ticks.
+                int64_t ticks = rate != 0 ? frequency_ : int64_t(vblanks) * frequency_;
+                int64_t frames = rate != 0 ? int64_t(rate) : int64_t(kVblankRate);
                 int64_t now = Now();
-                if (next_ != 0 && now < next_)
+                int64_t next = start_ + (frame_ + 1) * ticks / frames;
+                if (start_ != 0 && now < next)
                 {
                     // Sleep to about 1 ms before the deadline, then spin.
                     int64_t margin = frequency_ / 1000;
-                    if (timer_ != nullptr && next_ - now > margin)
+                    if (timer_ != nullptr && next - now > margin)
                     {
                         LARGE_INTEGER due;
-                        due.QuadPart = -((next_ - now - margin) * 10'000'000 / frequency_);
+                        due.QuadPart = -((next - now - margin) * 10'000'000 / frequency_);
                         if (SetWaitableTimer(timer_, &due, 0, nullptr, nullptr, FALSE))
                             WaitForSingleObject(timer_, INFINITE);
                     }
-                    while (Now() < next_)
+                    while (Now() < next)
                         YieldProcessor();
-                    next_ += period;
+                    frame_++;
                 }
                 else
                 {
-                    next_ = now + period;
+                    start_ = now;
+                    frame_ = 0;
                 }
             }
 
@@ -107,8 +120,10 @@ namespace gpu
             }
 
             int64_t frequency_ = 0;
-            int64_t next_ = 0;
+            int64_t start_ = 0; // the start of the phase, 0 before the first frame
+            int64_t frame_ = 0; // frames paced since the start of the phase
             uint32_t vblanks_ = ~0u;
+            uint32_t rate_ = 0;
             HANDLE timer_ = nullptr;
         };
 
@@ -169,12 +184,22 @@ namespace gpu
         // the interval's vblanks on screen, and the next frame starts once the previous one is
         // shown), the limiter otherwise. The wait is only for a renderer whose display paced the
         // last frame; otherwise the frame's tail of owner work overlaps the next frame as before.
+        // Under a pace rate (SetPaceRate) the limiter paces at it and the frame is presented at once:
+        // the display holds a frame only for whole 60 Hz vblanks.
+        uint32_t rate = g_paceRate.load(std::memory_order_relaxed);
         uint32_t vblanks = VblankInterval(device != 0 ? mem::Load32(device + guest::dev::kPresentInterval) : 1);
-        uint64_t present = g_renderer ? g_renderer->Present(front.address, vblanks, host::DisplayRefreshMillihertz()) : 0;
+        uint64_t present = g_renderer
+            ? g_renderer->Present(front.address, rate != 0 ? 0 : vblanks, host::DisplayRefreshMillihertz())
+            : 0;
         guest::EndTextureFrame();
         guest::EndBufferFrame();
         guest::EndWatchFrame();
-        bool paced = g_renderer && g_renderer->DisplayPaces() && g_renderer->WaitPresented(present);
-        g_limiter.Pace(paced ? 0 : vblanks);
+        bool paced = rate == 0 && g_renderer && g_renderer->DisplayPaces() && g_renderer->WaitPresented(present);
+        g_limiter.Pace(paced ? 0 : vblanks, rate);
+    }
+
+    void SetPaceRate(uint32_t rate)
+    {
+        g_paceRate.store(rate, std::memory_order_relaxed);
     }
 }

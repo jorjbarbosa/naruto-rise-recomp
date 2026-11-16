@@ -15,8 +15,10 @@ namespace game::interpolation::motion
     // Whether the record is on (read once).
     bool Enabled();
 
-    // The main step starts (iteration: its index) and ends.
-    void MainStepStart(uint64_t iteration);
+    // The main step starts and ends. iteration is the loop iteration's index, tick whether it runs the
+    // logic (without, it runs only the view block: state interpolation step 2), alpha the image time
+    // past the last tick in periods.
+    void MainStepStart(uint64_t iteration, bool tick, float alpha);
     void MainStepEnd();
 
     // The display of the main step's view block starts and ends.

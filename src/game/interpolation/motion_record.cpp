@@ -46,9 +46,13 @@ namespace game::interpolation::motion
         LARGE_INTEGER g_frequency{};
         LARGE_INTEGER g_start{};
         uint64_t g_iteration = 0;
+        bool g_tick = true;
+        float g_alpha = 0.0f;
         uint64_t g_mainSteps = 0;
+        uint64_t g_ticks = 0;
         uint64_t g_displays = 0;
         uint64_t g_rateSteps = 0;
+        uint64_t g_rateTicks = 0;
         uint64_t g_rateDisplays = 0;
         int64_t g_rateStart = 0;
         bool g_inDisplay = false;
@@ -95,12 +99,11 @@ namespace game::interpolation::motion
             return { out[0], out[1], out[2] };
         }
 
-        // The row prefix: display, us, iteration, tick, alpha, cut. The logic runs in every iteration
-        // and nothing is interpolated yet (state interpolation steps 2 and 4 change both).
+        // The row prefix: display, us, iteration, tick, alpha, cut.
         void WritePrefix(int64_t us, uint32_t cut)
         {
-            std::fprintf(g_file, "%llu,%lld,%llu,1,0.0000,%u,", (unsigned long long)g_displays, (long long)us,
-                (unsigned long long)g_iteration, cut);
+            std::fprintf(g_file, "%llu,%lld,%llu,%u,%.4f,%u,", (unsigned long long)g_displays, (long long)us,
+                (unsigned long long)g_iteration, g_tick ? 1u : 0u, g_alpha, cut);
         }
 
         void LogRates()
@@ -110,13 +113,15 @@ namespace game::interpolation::motion
             uint32_t time = TimeStructure();
             if (seconds > 0 && time != 0)
             {
-                Log("motion: %.1f main steps/s, %.1f displays/s, fixed step %u, period %.4f s, dt %.4f s",
-                    double(g_mainSteps - g_rateSteps) / seconds, double(g_displays - g_rateDisplays) / seconds,
+                Log("motion: %.1f main steps/s, %.1f ticks/s, %.1f displays/s, fixed step %u, period %.4f s, dt %.4f s",
+                    double(g_mainSteps - g_rateSteps) / seconds, double(g_ticks - g_rateTicks) / seconds,
+                    double(g_displays - g_rateDisplays) / seconds,
                     mem::Load32(time + jade::tim::kFixedStep), LoadFloat(time + jade::tim::kPeriod),
                     LoadFloat(time + jade::tim::kDtScaled));
             }
             g_rateStart = now;
             g_rateSteps = g_mainSteps;
+            g_rateTicks = g_ticks;
             g_rateDisplays = g_displays;
         }
     }
@@ -141,9 +146,13 @@ namespace game::interpolation::motion
         return g_enabled == 1;
     }
 
-    void MainStepStart(uint64_t iteration)
+    void MainStepStart(uint64_t iteration, bool tick, float alpha)
     {
         g_iteration = iteration;
+        g_tick = tick;
+        g_alpha = alpha;
+        if (tick)
+            g_ticks++;
     }
 
     void MainStepEnd()

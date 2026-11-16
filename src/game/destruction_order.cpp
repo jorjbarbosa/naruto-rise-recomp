@@ -94,6 +94,7 @@ namespace game::destruction
         uint64_t g_gaveUpAt = UINT64_MAX;
 
         std::atomic<uint64_t> g_otherDestroys{ 0 };
+        std::atomic<uint64_t> g_sectorSwitches{ 0 };
 
         // The device lock records its owner by the title's thread id, which the kernel keeps as the
         // thread's id ([[r13+256]+332], 822DCE28).
@@ -268,6 +269,11 @@ namespace game::destruction
         }
         return out;
     }
+
+    uint64_t SectorSwitches()
+    {
+        return g_sectorSwitches.load(std::memory_order_relaxed);
+    }
 }
 
 namespace destruction = game::destruction;
@@ -303,9 +309,11 @@ PPC_FUNC(JADE_DISPLAY_DESTROYS)
 // Sector switch (8267DA90, r3 the switch state): run by the delivery with its flag set, else by the
 // end of frame, so once per tick. It destroys the objects of the sectors it leaves, but the sector
 // manager's target (+44) stays set while a sector is active, so most calls destroy nothing. Hooked to
-// wait at its first destroy or engine free.
+// wait at its first destroy or engine free, and to count its calls on the main thread.
 PPC_FUNC(JADE_SECTOR_SWITCH)
 {
+    if (kernel::CurrentThread() == kernel::MainThread())
+        destruction::g_sectorSwitches.fetch_add(1, std::memory_order_relaxed);
     uint32_t sectors = mem::Load32(game::jade::kSectors);
     bool work = sectors != 0 && mem::Load32(sectors + game::jade::kSectorsTarget) != 0;
     destruction::RunSite(destruction::kSectorSwitch, work, true,

@@ -247,37 +247,6 @@ namespace game::interpolation::purity
             return changes;
         }
 
-        // The time structure's dt, set to 0 for the replay and put back after it.
-        class ZeroDt
-        {
-        public:
-            ZeroDt() : time_(TimeStructure())
-            {
-                if (time_ == 0)
-                    return;
-                dt_ = mem::Load64(time_ + jade::tim::kDt);
-                dtScaled_ = mem::Load32(time_ + jade::tim::kDtScaled);
-                dtRaw_ = mem::Load32(time_ + jade::tim::kDtRaw);
-                mem::Store64(time_ + jade::tim::kDt, 0);
-                mem::Store32(time_ + jade::tim::kDtScaled, 0);
-                mem::Store32(time_ + jade::tim::kDtRaw, 0);
-            }
-
-            void Restore()
-            {
-                if (time_ == 0)
-                    return;
-                mem::Store64(time_ + jade::tim::kDt, dt_);
-                mem::Store32(time_ + jade::tim::kDtScaled, dtScaled_);
-                mem::Store32(time_ + jade::tim::kDtRaw, dtRaw_);
-            }
-
-        private:
-            uint32_t time_;
-            uint64_t dt_ = 0;
-            uint32_t dtScaled_ = 0, dtRaw_ = 0;
-        };
-
         // One run, at the end of a main step whose view block was taken. False when the series has
         // to stop.
         bool ProbeRun(PPCContext& ctx, uint8_t* base)
@@ -311,16 +280,17 @@ namespace game::interpolation::purity
 
             // Replay: the view block again, with the dt at 0 and without the sector switch. The render
             // thread is held before it starts the replayed packet, so what changed is the view block's
-            // doing (and other threads'). The probe's own stores to the dt stay outside the window of
-            // the write watch, and the dt is back when the words are compared.
+            // doing (and other threads'). The probe's own stores to the dt and the cut counter stay
+            // outside the window of the write watch, and both are back when the words are compared
+            // (the counter, a known per-display writer, is no longer reported).
             snapshot = Snapshot(pages);
             std::vector<uint32_t> replayPages;
-            ZeroDt zeroDt;
+            ExtraViewBlockState extraState;
             TakePages(replayPages);
             HoldDrawing();
-            RunViewBlock(ctx, base, false);
+            RunViewBlock(ctx, base, false, ViewBlockCalls::kOriginals);
             TakePages(replayPages);
-            zeroDt.Restore();
+            extraState.Restore();
             std::vector<Change> changes = Changed(pages, snapshot);
             ReleaseDrawing();
             if (!WaitForPacketsDrawn(kPacketTimeout))
