@@ -1,0 +1,281 @@
+{
+    "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+    "format": 1,
+    "game": {
+        "kind": "iso_or_folder",
+        "label": "Your Naruto: Rise of a Ninja Xbox 360 disc image (.iso), or a complete extracted copy of the game that includes default.xex.",
+        "check": {
+            "file": "default.xex",
+            "xdvdfs": "default.xex"
+        }
+    },
+    "start": {
+        "program": [
+            "narutorise.exe"
+        ],
+        "args": [
+            "--show_startup_menu=false"
+        ]
+    },
+    "config": [
+        {
+            "id": "main",
+            "format": "toml",
+            "file": [
+                {
+                    "path": "{install}/data/narutorise.toml"
+                }
+            ],
+            "game_path": "custom_game_root"
+        }
+    ],
+    "saves": [
+        "{install}/data/user"
+    ],
+    "folders": {
+        "saves": [
+            {
+                "path": "{install}/data/user"
+            }
+        ],
+        "logs": [
+            {
+                "path": "{install}/data/logs"
+            }
+        ],
+        "mods": [
+            {
+                "path": "{install}/data/mods"
+            }
+        ]
+    },
+    "settings": [
+        {
+            "id": "language",
+            "label": "Game language",
+            "help": "The language of the game's text and voices. Available text and voices depend on your game files.",
+            "choices": [
+                {
+                    "label": "English",
+                    "set": {
+                        "user_language": "1"
+                    }
+                },
+                {
+                    "label": "French",
+                    "set": {
+                        "user_language": "4"
+                    }
+                },
+                {
+                    "label": "German",
+                    "set": {
+                        "user_language": "3"
+                    }
+                },
+                {
+                    "label": "Spanish",
+                    "set": {
+                        "user_language": "5"
+                    }
+                },
+                {
+                    "label": "Italian",
+                    "set": {
+                        "user_language": "6"
+                    }
+                }
+            ],
+            "defaults": {
+                "user_language": "1"
+            }
+        },
+        {
+            "id": "resolution",
+            "label": "Resolution",
+            "help": "How sharp the game is drawn. Higher needs a stronger graphics card.",
+            "choices": [
+                {
+                    "label": "720p (original)",
+                    "set": {
+                        "resolution_scale": "1",
+                        "draw_resolution_scale_x": "1",
+                        "draw_resolution_scale_y": "1",
+                        "internal_resolution_scale": "0.0"
+                    }
+                },
+                {
+                    "label": "1440p",
+                    "set": {
+                        "resolution_scale": "2",
+                        "draw_resolution_scale_x": "2",
+                        "draw_resolution_scale_y": "2",
+                        "internal_resolution_scale": "0.0"
+                    }
+                },
+                {
+                    "label": "4K",
+                    "set": {
+                        "resolution_scale": "3",
+                        "draw_resolution_scale_x": "3",
+                        "draw_resolution_scale_y": "3",
+                        "internal_resolution_scale": "0.0"
+                    }
+                },
+                {
+                    "label": "5K",
+                    "set": {
+                        "resolution_scale": "4",
+                        "draw_resolution_scale_x": "4",
+                        "draw_resolution_scale_y": "4",
+                        "internal_resolution_scale": "0.0"
+                    }
+                }
+            ],
+            "defaults": {
+                "resolution_scale": "1",
+                "draw_resolution_scale_x": "1",
+                "draw_resolution_scale_y": "1",
+                "internal_resolution_scale": "0.0"
+            }
+        },
+        {
+            "id": "fullscreen",
+            "label": "Full screen",
+            "help": "Fills your screen. Off uses a window.",
+            "choices": [
+                {
+                    "label": "Off",
+                    "set": {
+                        "fullscreen": "false"
+                    }
+                },
+                {
+                    "label": "On",
+                    "set": {
+                        "fullscreen": "true"
+                    }
+                }
+            ],
+            "defaults": {
+                "fullscreen": "true"
+            }
+        },
+        {
+            "id": "aspect_ratio",
+            "label": "Aspect ratio",
+            "help": "Automatic fits the window or monitor. 16:9 keeps the game's original screen, with bars on wider monitors. Native renderer only.",
+            "choices": [
+                {
+                    "label": "Automatic",
+                    "set": {
+                        "aspect_ratio": "\"auto\""
+                    }
+                },
+                {
+                    "label": "16:9",
+                    "set": {
+                        "aspect_ratio": "\"16:9\""
+                    }
+                }
+            ],
+            "defaults": {
+                "aspect_ratio": "\"auto\""
+            }
+        },
+        {
+            "id": "vsync",
+            "label": "V-Sync",
+            "help": "Stops screen tearing. Keeps the frame rate at or below your monitor's.",
+            "choices": [
+                {
+                    "label": "Off",
+                    "set": {
+                        "vsync": "false",
+                        "d3d12_host_vsync": "false"
+                    }
+                },
+                {
+                    "label": "On",
+                    "set": {
+                        "vsync": "true",
+                        "d3d12_host_vsync": "true"
+                    }
+                }
+            ],
+            "defaults": {
+                "vsync": "true",
+                "d3d12_host_vsync": "true"
+            }
+        },
+        {
+            "id": "frame_rate",
+            "label": "Frame rate",
+            "help": "Above 30, extra frames are drawn between the game's own steps. The game's speed and physics stay the same.",
+            "choices": [
+                {
+                    "label": "30 fps (original)",
+                    "set": {
+                        "frame_rate": "30"
+                    }
+                },
+                {
+                    "label": "60 fps",
+                    "set": {
+                        "frame_rate": "60"
+                    }
+                },
+                {
+                    "label": "120 fps",
+                    "set": {
+                        "frame_rate": "120"
+                    }
+                }
+            ],
+            "defaults": {
+                "frame_rate": "60"
+            }
+        },
+        {
+            "id": "skip_intro",
+            "label": "Skip intro videos",
+            "help": "Skips the company logos at start. The story intro still plays.",
+            "choices": [
+                {
+                    "label": "Off",
+                    "set": {
+                        "skip_intro_videos": "false"
+                    }
+                },
+                {
+                    "label": "On",
+                    "set": {
+                        "skip_intro_videos": "true"
+                    }
+                }
+            ],
+            "defaults": {
+                "skip_intro_videos": "true"
+            }
+        }
+    ],
+    "actions": [
+        {
+            "id": "saves",
+            "label": "Saves",
+            "help": "Your saves, DLC and mods.",
+            "open": "saves"
+        },
+        {
+            "id": "logs",
+            "label": "Logs",
+            "help": "Session logs, for bug reports.",
+            "open": "logs"
+        }
+    ],
+    "requires": [
+        "start",
+        "settings.toml",
+        "settings.choices"
+    ]
+}
