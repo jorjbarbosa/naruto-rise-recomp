@@ -5,6 +5,7 @@
 #include "game/addresses.h"
 #include "game/destruction_order.h"
 #include "game/interpolation/view_block.h"
+#include "game/interpolation/view_clock.h"
 #include "game/interpolation/world.h"
 #include "gpu/gpu.h"
 #include "log.h"
@@ -53,6 +54,7 @@ namespace game::interpolation::clock
             double simulated = 0;       // the ticks' raw dt (+68), seconds
             uint64_t gameTime = 0;      // +48 at the start, µs
             uint64_t sectorSwitches = 0; // destruction::SectorSwitches() at the start
+            view_clock::Totals view;     // view_clock::Current() at the start
         };
         Window g_window;
 
@@ -99,6 +101,7 @@ namespace game::interpolation::clock
             g_window.start = now;
             g_window.gameTime = time != 0 ? mem::Load64(time + jade::tim::kGameTime) : 0;
             g_window.sectorSwitches = destruction::SectorSwitches();
+            g_window.view = view_clock::Current();
         }
 
         void Report(double now)
@@ -110,10 +113,17 @@ namespace game::interpolation::clock
             uint32_t time = TimeStructure();
             uint64_t gameTime = time != 0 ? mem::Load64(time + jade::tim::kGameTime) : 0;
             uint64_t switches = destruction::SectorSwitches() - w.sectorSwitches;
-            Log("clock: %.1f s: %.2f iterations/s, %.2f ticks/s, simulated %.4f s/s, game time %.4f s/s, "
-                "sector switches %.3f per tick, resyncs %llu, drops %llu (%.1f ms), without a view block %llu; "
-                "gate %s, period %.6f s, pace %u",
+            const view_clock::Totals view = view_clock::Current() - w.view;
+            Log("clock: %.1f s: %.2f iterations/s, %.2f ticks/s, simulated %.4f s/s, view %.4f s/s in %llu view blocks "
+                "(%llu foreign dt), image time scopes %llu (tick %llu, waited %llu), render thread reads %llu "
+                "(waited %llu, overlaps %llu), "
+                "game time %.4f s/s, sector switches %.3f per tick, resyncs %llu, drops %llu (%.1f ms), without a "
+                "view block %llu; gate %s, period %.6f s, pace %u",
                 seconds, double(w.iterations) / seconds, double(w.ticks) / seconds, w.simulated / seconds,
+                view.viewSeconds / seconds, (unsigned long long)view.viewBlocks, (unsigned long long)view.foreign,
+                (unsigned long long)view.imageScopes, (unsigned long long)view.tickScopes,
+                (unsigned long long)view.scopeWaits, (unsigned long long)view.renderReads,
+                (unsigned long long)view.renderWaits, (unsigned long long)view.renderOverlaps,
                 double(int64_t(gameTime - w.gameTime)) * 1e-6 / seconds,
                 w.ticks != 0 ? double(switches) / double(w.ticks) : 0.0, (unsigned long long)w.resyncs,
                 (unsigned long long)w.drops, w.dropped * 1e3, (unsigned long long)w.noViewBlock,
@@ -162,6 +172,8 @@ namespace game::interpolation::clock
                     g_started = true;
                     g_frameTime = now;
                     g_tickTime = now - double(period);
+                    g_frame.ticks = 0;
+                    g_frame.timeline++;
                 }
                 else
                 {
@@ -188,7 +200,10 @@ namespace game::interpolation::clock
                 // frames of 1/60 s), and without the realignment the ticks would fall behind the
                 // frames by that much each until one slipped a frame (after about 600 ticks).
                 if (g_frame.tick)
+                {
                     g_tickTime = std::min(g_tickTime + double(period), g_frameTime);
+                    g_frame.ticks++;
+                }
                 g_frame.alpha = float(std::clamp((g_frameTime - g_tickTime) / double(period), 0.0, 1.0));
             }
         }
@@ -229,7 +244,7 @@ namespace game::interpolation::clock
     {
         bool ran;
         {
-            ExtraViewBlockState extraState;
+            ExtraViewBlockState extraState(ExtraDt::kViewClock);
             ran = RunViewBlock(ctx, base, false, ViewBlockCalls::kHooked);
         }
         if (!ran)

@@ -27,16 +27,25 @@ namespace game::interpolation
     // block ran.
     bool RunViewBlock(PPCContext& ctx, uint8_t* base, bool sectorSwitch, ViewBlockCalls calls);
 
+    // What an extra view block does with the time structure's dt (+56, +64, +68).
+    enum class ExtraDt
+    {
+        // Set to 0, so what the display integrates by the dt (the material animators, step 0 section 7)
+        // does not advance again. For the purity probe's replay, which runs the originals.
+        kZero,
+        // Left alone: the hooked view setup and delivery give it the image's advance (view_clock.h).
+        // For the iterations without a tick.
+        kViewClock,
+    };
+
     // The state a view block outside the tick's own (between ticks, the purity probe's replay) must
-    // leave as the tick left it. On construction it sets the time structure's dt (+56, +64, +68) to 0,
-    // so what the display integrates by the dt does not advance again (the material animators, step 0
-    // section 7), and saves the camera cut counter, which the display decrements per call and the
-    // console decrements once per tick. Restore, or the end of the scope when Restore was not called,
-    // puts both back. Main thread.
+    // leave as the tick left it. On construction it saves the camera cut counter, which the display
+    // decrements per call and the console decrements once per tick, and handles the dt as dt says.
+    // Restore, or the end of the scope when Restore was not called, puts both back. Main thread.
     class ExtraViewBlockState
     {
     public:
-        ExtraViewBlockState();
+        explicit ExtraViewBlockState(ExtraDt dt);
         ~ExtraViewBlockState();
         ExtraViewBlockState(const ExtraViewBlockState&) = delete;
         ExtraViewBlockState& operator=(const ExtraViewBlockState&) = delete;
@@ -45,7 +54,7 @@ namespace game::interpolation
 
     private:
         bool restored_ = false;
-        uint32_t time_;
+        uint32_t time_; // the time structure whose dt was set to 0, or 0
         uint64_t dt_ = 0;
         uint32_t dtScaled_ = 0, dtRaw_ = 0;
         uint32_t cutCounter_;

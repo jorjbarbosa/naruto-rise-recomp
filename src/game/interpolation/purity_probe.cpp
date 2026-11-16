@@ -5,6 +5,7 @@
 #include "game/addresses.h"
 #include "game/interpolation/diagnostics.h"
 #include "game/interpolation/view_block.h"
+#include "game/interpolation/view_clock.h"
 #include "game/interpolation/world.h"
 #include "game/render_packets.h"
 #include "host/window.h"
@@ -285,7 +286,8 @@ namespace game::interpolation::purity
             // (the counter, a known per-display writer, is no longer reported).
             snapshot = Snapshot(pages);
             std::vector<uint32_t> replayPages;
-            ExtraViewBlockState extraState;
+            ExtraViewBlockState extraState(ExtraDt::kZero);
+            view_clock::ReplayScope replayTime; // under the gate: the phases at the image time replayed
             TakePages(replayPages);
             HoldDrawing();
             RunViewBlock(ctx, base, false, ViewBlockCalls::kOriginals);

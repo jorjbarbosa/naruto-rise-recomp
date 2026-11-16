@@ -4,6 +4,7 @@
 
 #include "game/addresses.h"
 #include "game/interpolation/diagnostics.h"
+#include "game/interpolation/view_clock.h"
 #include "game/interpolation/world.h"
 #include "log.h"
 
@@ -180,10 +181,18 @@ namespace game::interpolation::motion
         uint32_t time = TimeStructure();
 
         WritePrefix(us, cut);
-        std::fprintf(g_file, "F,,%u,%zu,%zu,%.6f,%u,%.6f,\n", g_rendered, g_actors.size(), g_bones.size(),
+        std::fprintf(g_file, "F,,%u,%zu,%zu,%.6f,%u,%.6f,%.6f\n", g_rendered, g_actors.size(), g_bones.size(),
             time != 0 ? LoadFloat(time + jade::tim::kPeriod) : 0.0f,
             time != 0 ? mem::Load32(time + jade::tim::kFixedStep) : 0u,
-            time != 0 ? LoadFloat(time + jade::tim::kDtScaled) : 0.0f);
+            time != 0 ? LoadFloat(time + jade::tim::kDtScaled) : 0.0f,
+            time != 0 ? LoadFloat(time + jade::tim::kDtRaw) : 0.0f);
+        view_clock::Times times = view_clock::CurrentTimes();
+        if (times.active)
+        {
+            // The view clock's image and tick game times, µs.
+            WritePrefix(us, cut);
+            std::fprintf(g_file, "T,,%llu,%llu,,,,,\n", (unsigned long long)times.image, (unsigned long long)times.tick);
+        }
         if (g_view != 0)
         {
             Vector position = LoadVector(g_view + jade::view::kCameraPosition);

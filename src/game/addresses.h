@@ -34,6 +34,23 @@
 #define JADE_FREE sub_820C0018          // the engine's free: through the memory manager's vtable +20
 #define JADE_HEAP_FREE sub_82188C88     // the heap's free (r3 heap, r4 block): every free and realloc ends here
 
+// Readers of the game time (step 3 document, section 4). On the display's path, main thread:
+#define JADE_MODIFIER_1_APPLY sub_8260B188   // OnduleTonCorps: amplitudes and a fade from the game time
+#define JADE_MODIFIER_26_APPLY sub_826089D8  // the object's scale from a sine of the game time
+#define JADE_MODIFIER_37_STEP sub_82608138   // type 37's Apply step: sines and wraps of the game time (r3 record)
+#define JADE_MODIFIER_42_ANGLE sub_825D2820  // types 42 and 45: an angle, from the game time when f1 <= 0
+#define JADE_MODIFIER_47_TIME sub_82635778   // type 47: hands the game time to a shader parameter
+#define JADE_MODIFIER_59_APPLY sub_8269EEC8  // vegetation wind: a phase from the game time, then the wind field
+#define JADE_WIND_FIELD sub_8267D450         // steps to the next wind source once per distinct game time
+#define JADE_GRASS_WAVES sub_825972A8        // the grass' nine wave cosines of the game time
+#define JADE_GRASS_GUST sub_82597780         // the grass' gust from the game time, into the draw block
+#define JADE_GRASS_SCROLL sub_82599CD8       // adds a step from the game time to the grass scroll (r3 +312), per call
+#define JADE_TECHNIQUE_WAVE sub_82103770     // a technique's texture wave from the game time and the position
+// On the render thread (screen effects, vtable slot +20 of their classes):
+#define JADE_SCREEN_EFFECT_FADE sub_8211BF38
+#define JADE_SCREEN_EFFECT_SCROLL sub_8211C278
+#define JADE_SCREEN_EFFECT_PROGRESS sub_8211EA08
+
 namespace game::jade
 {
     // Globals.
@@ -67,7 +84,16 @@ namespace game::jade
         constexpr uint32_t kDtRaw = 68;    // float, seconds
         constexpr uint32_t kFixedStep = 72; // nonzero: kDtRaw is kPeriod and the clock is not read
         constexpr uint32_t kPeriod = 76;    // float, seconds: the fixed step's period
+        // 64-bit, µs: the game time spent locked (+92 nonzero); the phase consumers read the game time
+        // minus it, some through its low word (+100).
+        constexpr uint32_t kLocked = 96;
         constexpr uint32_t kSize = 136;
+    }
+
+    // The grass patch handed to JADE_GRASS_SCROLL.
+    namespace grass
+    {
+        constexpr uint32_t kScroll = 312; // float: the scroll, plus one step per call
     }
 
     // The view object ([kView]).

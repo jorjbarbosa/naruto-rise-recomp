@@ -9,10 +9,9 @@
 // 1/60 s in fights) the clock runs on the timeline of the presented frames: each iteration is one
 // frame of 1 / rate s, and it is a tick (the three calls run as the original) when a period of image
 // time is due since the last tick. An iteration without a tick runs only the view block, with the
-// delivery's flag 0 (the sector switch stays with the tick), the dt at 0 (what the display integrates
-// by the dt does not advance twice) and the camera cut counter put back after it (it counts ticks as
-// on the console; view_block.h, ExtraViewBlockState). Nothing is interpolated yet: each tick is shown
-// until the next.
+// delivery's flag 0 (the sector switch stays with the tick) and the camera cut counter put back after
+// it (it counts ticks as on the console; view_block.h, ExtraViewBlockState). The dt of every view
+// block, the tick's and the others, is the image's advance since the previous one (view_clock.h).
 //
 // The gate decides only under the fixed step, with a period of at least 1.25 frames. Otherwise every
 // iteration is a tick: under the fixed step the limiter then paces at the tick rate (1 / period), so
@@ -39,6 +38,11 @@ namespace game::interpolation::clock
         bool tick = true;    // the logic runs in this iteration
         float period = 0.0f; // the tick period (+76) while the gate decides, else 0
         float alpha = 0.0f;  // image time past the last tick, in periods, 0 to 1; 0 without the gate
+        // While the gate decides: the timeline, which changes when it restarts (a change of the gate,
+        // the period or the pace), and the ticks taken since it started. The view clock takes the
+        // image's advance from them and alpha.
+        uint32_t timeline = 0;
+        uint64_t ticks = 0;
     };
     const Frame& Current();
 

@@ -1,14 +1,15 @@
 // The overrides of the Jade engine functions the state interpolation front observes or gates. The
 // three loop functions ask the clock whether the iteration runs the logic; the others run the original
-// and forward to the probes (motion record, purity probe, data watch). With the clock and the probes
-// off, the loop functions test their flags and the other hooks one thread-local flag before calling
-// the original.
+// and forward to the view clock and the probes (motion record, purity probe, data watch). With the
+// clock and the probes off, the loop functions test their flags and the other hooks one thread-local
+// flag before calling the original.
 
 #include "game/addresses.h"
 #include "game/interpolation/clock.h"
 #include "game/interpolation/data_watch.h"
 #include "game/interpolation/motion_record.h"
 #include "game/interpolation/purity_probe.h"
+#include "game/interpolation/view_clock.h"
 #include "kernel/kernel.h"
 
 DECLARE_ORIGINAL(JADE_HUD_MAP);
@@ -24,10 +25,10 @@ namespace
 {
     namespace interpolation = game::interpolation;
 
-    // Set on the thread that runs the main step, between its entry and its exit, when a probe is on;
-    // also in an iteration without a tick, whose view block the probes see like the main step's. The
-    // engine also displays and delivers outside the main step (world loading, the loading screen's
-    // thread); the probes only look inside it.
+    // Set on the thread that runs the main step, between its entry and its exit, when the clock or a
+    // probe is on; also in an iteration without a tick, whose view block the hooks treat like the main
+    // step's. The engine also displays and delivers outside the main step (world loading, the loading
+    // screen's thread); the view clock and the probes only act inside it.
     thread_local bool t_inMainStep = false;
     uint64_t g_iteration = 0; // main thread
 }
@@ -71,12 +72,14 @@ PPC_FUNC(JADE_MAIN_STEP)
         interpolation::purity::MainStepStart();
     if (watch)
         interpolation::watch::MainStepStart();
-    t_inMainStep = motion || purity || watch;
+    t_inMainStep = true;
     if (logic)
         ORIGINAL(JADE_MAIN_STEP)(ctx, base);
     else
         interpolation::clock::RunBetweenTicks(ctx, base);
     t_inMainStep = false;
+    if (gated)
+        interpolation::view_clock::ViewBlockEnd();
     if (motion)
         interpolation::motion::MainStepEnd();
     if (purity)
@@ -87,10 +90,13 @@ PPC_FUNC(JADE_MAIN_STEP)
         interpolation::clock::IterationEnd();
 }
 
-// View setup (82684050), the first call of the view block. Hooked to mark the block's start for the
-// purity probe.
+// View setup (82684050), the first call of the view block. Hooked so the view clock gives the block the
+// image's dt, and to mark the block's start for the probes (after the view clock's stores, which stay
+// out of the purity probe's window).
 PPC_FUNC(JADE_VIEW_SETUP)
 {
+    if (t_inMainStep && interpolation::clock::Enabled())
+        interpolation::view_clock::ViewBlockStart();
     if (t_inMainStep && interpolation::purity::Enabled())
         interpolation::purity::ViewBlockStart();
     if (t_inMainStep && interpolation::watch::Enabled())
@@ -114,7 +120,7 @@ PPC_FUNC(JADE_DISPLAY)
 }
 
 // The delivery (8259FF40, r3 view, r4 sector switch), the last call of the view block. Hooked to mark
-// the block's end for the purity probe.
+// the block's end for the probes, then to put the tick's dt back.
 PPC_FUNC(JADE_DELIVER)
 {
     uint32_t view = ctx.r3.u32;
@@ -123,6 +129,8 @@ PPC_FUNC(JADE_DELIVER)
         interpolation::purity::ViewBlockEnd();
     if (t_inMainStep && interpolation::watch::Enabled())
         interpolation::watch::ViewBlockEnd(view);
+    if (t_inMainStep && interpolation::clock::Enabled())
+        interpolation::view_clock::ViewBlockEnd();
 }
 
 // Render of one object by the display (825E28D0, WOR_Render_One_GO, r6 the object). Hooked so the

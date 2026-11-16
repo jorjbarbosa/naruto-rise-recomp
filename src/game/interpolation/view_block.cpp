@@ -63,8 +63,8 @@ namespace game::interpolation
         return true;
     }
 
-    ExtraViewBlockState::ExtraViewBlockState()
-        : time_(TimeStructure()), cutCounter_(mem::Load32(jade::kCutCounter))
+    ExtraViewBlockState::ExtraViewBlockState(ExtraDt dt)
+        : time_(dt == ExtraDt::kZero ? TimeStructure() : 0), cutCounter_(mem::Load32(jade::kCutCounter))
     {
         if (time_ == 0)
             return;
