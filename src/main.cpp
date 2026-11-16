@@ -5,6 +5,7 @@
 
 #include "apu/xma.h"
 #include "host/input.h"
+#include "host/paths.h"
 #include "host/window.h"
 #include "kernel/kernel.h"
 #include "loader.h"
@@ -70,13 +71,6 @@ namespace
         std::_Exit(1);
     }
 
-    fs::path ExecutableDirectory()
-    {
-        wchar_t path[MAX_PATH];
-        GetModuleFileNameW(nullptr, path, MAX_PATH);
-        return fs::path(path).parent_path();
-    }
-
     // Host thread of the guest main thread. The host main thread runs the window.
     DWORD WINAPI GuestMain(void*)
     {
@@ -94,7 +88,7 @@ int main(int argc, char** argv)
 {
     g_trace = getenv("ROAN_TRACE") != nullptr;
 
-    fs::path exeDir = ExecutableDirectory();
+    fs::path exeDir = host::ExecutableDirectory();
     fs::path gameDir = argc > 1 ? fs::path(argv[1]) : exeDir / ".." / ".." / "game";
     std::error_code error;
     gameDir = fs::weakly_canonical(gameDir, error);

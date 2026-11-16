@@ -3,6 +3,8 @@
 // Guest addresses and D3D::CDevice offsets of the XDK 6274 D3D library in default.xex, named in one
 // place. Names come from the XDK library match (EngineSrc build/xenonmatch) where there is one.
 
+#include "ppc/ppc_hook.h"
+
 #include <cstdint>
 
 // Hooked functions: the symbols of the recompiled functions. A definition with PPC_FUNC(<name>)
@@ -33,12 +35,6 @@
 
 // Functions of the library that host code calls as they are.
 #define D3D_SET_PENDING_SHADERS sub_82141178      // D3D::SetPending_Shaders(device, state mask), returns the mask
-
-// The recompiled implementation of a hooked function, to run the original from its hook:
-// DECLARE_ORIGINAL(D3D_RESOLVE); ... ORIGINAL(D3D_RESOLVE)(ctx, base);
-#define ORIGINAL(name) ORIGINAL_EXPANDED(name)
-#define ORIGINAL_EXPANDED(name) __imp__##name
-#define DECLARE_ORIGINAL(name) extern "C" PPC_FUNC(ORIGINAL(name))
 
 namespace gpu::guest
 {

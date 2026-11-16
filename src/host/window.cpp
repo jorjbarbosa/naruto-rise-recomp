@@ -32,6 +32,8 @@ namespace host
                 millihertz = uint32_t(std::lround(mode->refresh_rate * 1000.0f));
             g_refreshMillihertz = millihertz;
         }
+        std::atomic<uint32_t> g_diagnosticKeyPresses{ 0 };
+        constexpr SDL_Scancode kDiagnosticKey = SDL_SCANCODE_F8;
     }
 
     bool CreateMainWindow(const char* title, int width, int height)
@@ -83,6 +85,8 @@ namespace host
                 return !g_quitRequested;
             if (event.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED || event.type == SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED)
                 UpdateRefreshRate();
+            if (event.type == SDL_EVENT_KEY_DOWN && event.key.scancode == kDiagnosticKey && !event.key.repeat)
+                g_diagnosticKeyPresses.fetch_add(1, std::memory_order_relaxed);
             HandleInputEvent(event);
         }
         Log("error: SDL_WaitEvent failed: %s", SDL_GetError());
@@ -95,5 +99,10 @@ namespace host
         SDL_Event event{};
         event.type = SDL_EVENT_QUIT;
         SDL_PushEvent(&event);
+    }
+
+    uint32_t DiagnosticKeyPresses()
+    {
+        return g_diagnosticKeyPresses.load(std::memory_order_relaxed);
     }
 }

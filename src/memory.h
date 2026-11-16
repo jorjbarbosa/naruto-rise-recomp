@@ -22,6 +22,14 @@ namespace mem
     inline uint8_t* g_base = nullptr;
     constexpr uint64_t kSize = 0x100000000ull;
 
+    // Ranges of the map above, [begin, end).
+    constexpr uint32_t kSystemHeapBegin = 0x30000000, kSystemHeapEnd = 0x40000000;
+    constexpr uint32_t kVirtualHeapBegin = 0x40000000, kVirtualHeapEnd = 0x70000000;
+    constexpr uint32_t kStackBegin = 0x70000000, kStackEnd = 0x7F000000;
+    constexpr uint32_t kImageBegin = 0x82000000, kImageEnd = 0x82C60000;
+    constexpr uint32_t kAi2cImageBegin = 0x88000000, kAi2cImageEnd = 0x883C0000;
+    constexpr uint32_t kPhysicalBegin = 0xA0000000, kPhysicalEnd = 0xC0000000;
+
     bool Init();
 
     // Commits the pages of a guest range. Guest pages are otherwise committed on first touch through

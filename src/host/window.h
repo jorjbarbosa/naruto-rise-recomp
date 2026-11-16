@@ -19,4 +19,7 @@ namespace host
     bool RunEventLoop();
     // Ends RunEventLoop. Any thread.
     void RequestQuit();
+    // How many times F8 was pressed in the window: the runtime's diagnostic key, not a game input
+    // (the state interpolation purity probe runs on it). Any thread.
+    uint32_t DiagnosticKeyPresses();
 }

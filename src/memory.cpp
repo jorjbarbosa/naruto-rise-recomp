@@ -183,10 +183,10 @@ namespace mem
         std::map<uint32_t, uint32_t> m_used;
     };
 
-    static RangeAllocator g_system(0x30000000, 0x40000000);
-    static RangeAllocator g_virtual(0x40000000, 0x70000000);
-    static RangeAllocator g_stack(0x70000000, 0x7F000000);
-    static RangeAllocator g_physical(0xA0000000, 0xC0000000);
+    static RangeAllocator g_system(kSystemHeapBegin, kSystemHeapEnd);
+    static RangeAllocator g_virtual(kVirtualHeapBegin, kVirtualHeapEnd);
+    static RangeAllocator g_stack(kStackBegin, kStackEnd);
+    static RangeAllocator g_physical(kPhysicalBegin, kPhysicalEnd);
 
     static RangeAllocator& HeapFor(Heap heap)
     {
@@ -201,10 +201,10 @@ namespace mem
 
     static RangeAllocator* HeapForAddress(uint32_t address)
     {
-        if (address >= 0x30000000 && address < 0x40000000) return &g_system;
-        if (address >= 0x40000000 && address < 0x70000000) return &g_virtual;
-        if (address >= 0x70000000 && address < 0x7F000000) return &g_stack;
-        if (address >= 0xA0000000 && address < 0xC0000000) return &g_physical;
+        if (address >= kSystemHeapBegin && address < kSystemHeapEnd) return &g_system;
+        if (address >= kVirtualHeapBegin && address < kVirtualHeapEnd) return &g_virtual;
+        if (address >= kStackBegin && address < kStackEnd) return &g_stack;
+        if (address >= kPhysicalBegin && address < kPhysicalEnd) return &g_physical;
         return nullptr;
     }
 
