@@ -1,4 +1,4 @@
-// Host copies of guest vertex buffers: default-heap buffers filled through the upload buffers.
+// Host copies of guest vertex and index buffers, filled through the upload buffers.
 
 #include "gpu/renderer/buffers.h"
 
@@ -13,22 +13,25 @@ namespace gpu
 {
     void Buffers::Upload(const BufferUpload& upload)
     {
-        Key key{ upload.address, uint32_t(upload.data.size()) };
-        std::shared_ptr<plume::RenderBuffer> buffer = context_.Device().createBuffer(
-            plume::RenderBufferDesc::VertexBuffer(upload.data.size(), plume::RenderHeapType::DEFAULT));
+        uint64_t size = upload.data.size();
+        // The flag decides the state a read puts the buffer in (vertex input or index input).
+        plume::RenderBufferDesc desc = upload.key.format == BufferFormat::Vertex
+            ? plume::RenderBufferDesc::VertexBuffer(size, plume::RenderHeapType::DEFAULT)
+            : plume::RenderBufferDesc::IndexBuffer(size, plume::RenderHeapType::DEFAULT);
+        std::shared_ptr<plume::RenderBuffer> buffer = context_.Device().createBuffer(desc);
         if (static_cast<plume::D3D12Buffer*>(buffer.get())->d3d == nullptr)
         {
-            LOG_ONCE("gpu: a vertex buffer of %zu bytes cannot be created", upload.data.size());
-            Forget(key.first, key.second);
+            LOG_ONCE("gpu: a host buffer of %llu bytes cannot be created", (unsigned long long)size);
+            Forget(upload.key);
             return;
         }
-        Context::Upload staging = context_.Allocate(upload.data.size(), 16);
-        memcpy(staging.data, upload.data.data(), upload.data.size());
+        Context::Upload staging = context_.Allocate(size, 16);
+        memcpy(staging.data, upload.data.data(), size);
         plume::RenderCommandList& list = context_.Commands();
         list.barriers(plume::RenderBarrierStage::COPY, plume::RenderBufferBarrier(buffer.get(), plume::RenderBufferAccess::WRITE));
-        list.copyBufferRegion(plume::RenderBufferReference(buffer.get(), 0), staging.Reference(), upload.data.size());
+        list.copyBufferRegion(plume::RenderBufferReference(buffer.get(), 0), staging.Reference(), size);
 
-        auto it = buffers_.find(key);
+        auto it = buffers_.find(upload.key);
         if (it != buffers_.end())
         {
             context_.Retire(std::move(it->second));
@@ -36,15 +39,15 @@ namespace gpu
         }
         else
         {
-            buffers_.emplace(key, std::move(buffer));
+            buffers_.emplace(upload.key, std::move(buffer));
         }
     }
 
     void Buffers::Release(uint32_t begin, uint32_t end)
     {
-        for (auto it = buffers_.begin(); it != buffers_.end() && it->first.first < end;)
+        for (auto it = buffers_.begin(); it != buffers_.end() && it->first.address < end;)
         {
-            if (uint64_t(it->first.first) + it->first.second > begin)
+            if (uint64_t(it->first.address) + it->first.bytes > begin)
             {
                 context_.Retire(std::move(it->second));
                 it = buffers_.erase(it);
@@ -56,18 +59,18 @@ namespace gpu
         }
     }
 
-    void Buffers::Forget(uint32_t address, uint32_t bytes)
+    void Buffers::Forget(const BufferKey& key)
     {
-        auto it = buffers_.find({ address, bytes });
+        auto it = buffers_.find(key);
         if (it == buffers_.end())
             return;
         context_.Retire(std::move(it->second));
         buffers_.erase(it);
     }
 
-    plume::RenderBuffer* Buffers::Bind(plume::RenderCommandList& list, uint32_t address, uint32_t bytes)
+    plume::RenderBuffer* Buffers::Bind(plume::RenderCommandList& list, const BufferKey& key)
     {
-        auto it = buffers_.find({ address, bytes });
+        auto it = buffers_.find(key);
         if (it == buffers_.end())
             return nullptr;
         list.barriers(plume::RenderBarrierStage::GRAPHICS,

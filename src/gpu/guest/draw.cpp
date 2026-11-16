@@ -18,7 +18,10 @@
 #include "kernel/kernel.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cstring>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -40,11 +43,6 @@ namespace gpu::guest
         constexpr uint32_t kInlineVertices = 4;
         constexpr uint32_t kInlineStride = 20;
         constexpr uint32_t kInlineFetch = kStreamFetchBase;
-
-        // GPU endian swaps (fetch constants, index buffers).
-        constexpr uint32_t kEndian8in16 = 1;
-        constexpr uint32_t kEndian8in32 = 2;
-        constexpr uint32_t kEndian16in32 = 3;
 
         // Fetch constants: dword 0 holds the type in bits 0..1 (3: vertex). A vertex fetch constant
         // has the address in dword 0, the endian swap in bits 0..1 and the size in dwords in bits
@@ -113,6 +111,14 @@ namespace gpu::guest
             uint32_t endian = 0;
         };
 
+        // Where a vertex stream of a draw comes from.
+        struct StreamPlan
+        {
+            StreamSource source;
+            bool inlineFetch = false; // the BeginVertices quad's vertices
+            bool hosted = false;      // the host has a copy of the whole buffer
+        };
+
         // The space of the BeginVertices stream in the vertex data of a draw.
         struct InlineStream
         {
@@ -154,15 +160,63 @@ namespace gpu::guest
             }
         }
 
-        uint32_t Swap32(uint32_t value, uint32_t endian)
+        // The float constants of one shader stage as the host shaders read them: the device's block in
+        // host order, kept current from the dirty mask, which is read before the draw's commit clears
+        // it, and the snapshot the draws share until the block changes. Used by the drawing thread; the
+        // title draws from one thread at a time, as the device itself requires.
+        class ConstantShadow
         {
-            switch (endian)
+        public:
+            ConstantShadow(uint32_t block, uint32_t dirty) : block_(block), dirty_(dirty) {}
+
+            // Copies the groups the dirty mask marks (everything the first time).
+            void Refresh(uint32_t device)
             {
-            case kEndian8in16: return ((value & 0x00FF00FF) << 8) | ((value >> 8) & 0x00FF00FF);
-            case kEndian8in32: return __builtin_bswap32(value);
-            case kEndian16in32: return (value << 16) | (value >> 16);
-            default: return value;
+                uint64_t mask = valid_ ? mem::Load64(device + dirty_) : ~0ull;
+                for (; mask != 0; mask &= mask - 1)
+                {
+                    uint32_t at = (63 - uint32_t(std::countr_zero(mask))) * dev::kConstantGroupBytes;
+                    uint8_t group[dev::kConstantGroupBytes];
+                    CopySwapped(group, mem::Ptr(device + block_ + at), sizeof(group));
+                    if (memcmp(bytes_.data() + at, group, sizeof(group)) == 0)
+                        continue;
+                    memcpy(bytes_.data() + at, group, sizeof(group));
+                    snapshot_.reset();
+                }
+                valid_ = true;
             }
+
+            // The block as of the last refresh.
+            std::shared_ptr<const ConstantBlock> Snapshot()
+            {
+                if (!snapshot_)
+                {
+                    auto block = std::make_shared_for_overwrite<ConstantBlock>();
+                    *block = bytes_;
+                    snapshot_ = std::move(block);
+                }
+                return snapshot_;
+            }
+
+        private:
+            uint32_t block_; // offsets in the device
+            uint32_t dirty_;
+            ConstantBlock bytes_{};
+            bool valid_ = false;
+            std::shared_ptr<const ConstantBlock> snapshot_; // null: the block changed since the last one
+        };
+
+        ConstantShadow g_vertexConstants(dev::kVertexConstants, dev::kVertexConstantsDirty);
+        ConstantShadow g_pixelConstants(dev::kPixelConstants, dev::kPixelConstantsDirty);
+
+        // Before a draw's commit: the constant shadows take what the commit is about to send.
+        void RefreshConstants()
+        {
+            uint32_t device = GetDevice().Address();
+            if (device == 0)
+                return;
+            g_vertexConstants.Refresh(device);
+            g_pixelConstants.Refresh(device);
         }
 
         bool ReadStreamSource(uint32_t device, uint32_t fetch, StreamSource& source)
@@ -207,21 +261,18 @@ namespace gpu::guest
                 {
                     uint32_t raw;
                     memcpy(&raw, source + 4 * i, 4);
-                    indices[i] = Swap32(raw, endian);
+                    indices[i] = SwapEndian32(raw, endian);
                 }
             }
             else
             {
-                // The GPU swaps whole dwords: 8in32 and 16in32 also exchange the two 16-bit indices
-                // of each dword, 8in16 and 8in32 swap the bytes of each index.
                 uint32_t first = data + 2 * call.startIndex;
-                uint32_t exchange = endian == kEndian8in32 || endian == kEndian16in32 ? 2 : 0;
-                bool swap = endian == kEndian8in16 || endian == kEndian8in32;
+                Index16Swap swap = DecodeIndex16Swap(endian);
                 for (uint32_t i = 0; i < call.count; i++)
                 {
                     uint16_t raw;
-                    memcpy(&raw, mem::Ptr((first + 2 * i) ^ exchange), 2);
-                    indices[i] = swap ? __builtin_bswap16(raw) : raw;
+                    memcpy(&raw, mem::Ptr((first + 2 * i) ^ swap.exchange), 2);
+                    indices[i] = swap.swapBytes ? __builtin_bswap16(raw) : raw;
                 }
             }
             return true;
@@ -464,6 +515,104 @@ namespace gpu::guest
             return op.color.key != 0 || op.depth.key != 0;
         }
 
+        // The host copy of the index buffer of an indexed draw, when it has one (dynamic indices have
+        // none) and holds the indices the draw reads.
+        std::optional<BufferKey> HostedIndexBuffer(uint32_t device, const DrawCall& call)
+        {
+            uint32_t buffer = mem::Load32(device + dev::kIndexBuffer);
+            if (buffer == 0)
+                return std::nullopt;
+            std::optional<IndexData> data = ReadIndexData(buffer);
+            if (!data)
+                return std::nullopt;
+            uint32_t common = mem::Load32(buffer + res::kCommon);
+            bool index32 = (common & res::kIndex32) != 0;
+            BufferKey key{ data->address, data->bytes, index32 ? BufferFormat::Index32 : BufferFormat::Index16,
+                uint8_t((common >> res::kIndexEndianShift) & 3) };
+            uint64_t end = (uint64_t(call.startIndex) + call.count) * (index32 ? 4 : 2);
+            if (end > key.bytes || !UseHostedBuffer(key))
+                return std::nullopt;
+            return key;
+        }
+
+        // The indices of a draw as a triangle list rebased to the first vertex it reads, and the
+        // vertices of each stream from that vertex on: copied, or the range of the host copy of its
+        // buffer (plans[i].hosted). inlineStream receives the space of the BeginVertices stream in the
+        // vertex data. False when the draw is skipped.
+        bool CaptureCopied(const Device& device, uint32_t devAddress, const DrawCall& call, const VertexLayout& layout,
+            const std::array<StreamPlan, kMaxVertexStreams>& plans, DrawOp& op, std::optional<InlineStream>* inlineStream)
+        {
+            // A list is read in place.
+            if (call.primitive == kTriangleList)
+            {
+                DrawCall whole = call;
+                whole.count -= whole.count % 3;
+                if (!ReadIndices(devAddress, whole, op.indices))
+                    return false;
+            }
+            else
+            {
+                CaptureVector<uint32_t> indices;
+                if (!ReadIndices(devAddress, call, indices))
+                    return false;
+                std::optional<uint32_t> reset;
+                if (call.indexed && (device.Register(reg::kRasterControl) & kMultiPrimitive) != 0)
+                    reset = device.Register(reg::kResetIndex);
+                if (!ToTriangleList(call.primitive, indices, reset, op.indices))
+                    return false;
+            }
+            if (op.indices.empty())
+                return false;
+            auto [lowest, highest] = std::minmax_element(op.indices.begin(), op.indices.end());
+            int64_t first = int64_t(*lowest) + call.baseVertex;
+            uint32_t minIndex = *lowest;
+            uint32_t vertexCount = *highest - *lowest + 1;
+            if (first < 0)
+            {
+                LOG_ONCE("gpu: a draw reads vertices before its vertex buffer; it is skipped");
+                return false;
+            }
+            for (uint32_t& index : op.indices)
+                index -= minIndex;
+
+            const VertexInput& input = *layout.input;
+            op.hosted.resize(layout.streamFetch.size());
+            for (size_t stream = 0; stream < layout.streamFetch.size(); stream++)
+            {
+                const StreamSource& source = plans[stream].source;
+                // A stream of stride 0 holds one vertex: the extent of its elements.
+                uint64_t stride = input.strides[stream];
+                uint64_t begin = uint64_t(first) * stride;
+                uint64_t bytes = uint64_t(vertexCount) * stride;
+                if (stride == 0)
+                    for (const VertexElement& element : input.elements)
+                        if (element.stream == stream)
+                            bytes = std::max<uint64_t>(bytes, element.offset + 4 * element.dwords);
+                size_t at = op.vertices.size();
+                op.streamOffsets.push_back(uint32_t(at));
+                if (plans[stream].inlineFetch && inlineStream != nullptr)
+                    *inlineStream = InlineStream{ uint32_t(at), uint32_t(std::min<uint64_t>(bytes, source.bytes)) };
+                // A buffer the host keeps a copy of is read from it; other vertices are copied.
+                if (plans[stream].hosted && begin + bytes <= source.bytes)
+                {
+                    op.hosted[stream] = { GpuAddress(source.address), source.bytes, uint32_t(begin), uint32_t(bytes) };
+                    continue;
+                }
+                if (at + bytes > kMaxVertexBytes)
+                {
+                    LOG_ONCE("gpu: a draw reads %llu bytes of vertices; it is skipped", (unsigned long long)bytes);
+                    return false;
+                }
+                // Past the end of the buffer the vertices read as zero.
+                op.vertices.resize(at + size_t(bytes));
+                size_t copied = begin < source.bytes ? size_t(std::min<uint64_t>(bytes, source.bytes - begin)) : 0;
+                if (copied != 0)
+                    memcpy(op.vertices.data() + at, mem::Ptr(source.address + uint32_t(begin)), copied);
+                memset(op.vertices.data() + at + copied, 0, size_t(bytes) - copied);
+            }
+            return true;
+        }
+
         // Builds the host draw from the state the original's commit left. inlineStream receives the
         // space of the BeginVertices stream in the vertex data. Null when the draw is skipped.
         std::unique_ptr<DrawOp> Capture(PPCContext& ctx, uint8_t* base, const DrawCall& call,
@@ -514,104 +663,72 @@ namespace gpu::guest
             if (!layout)
                 return nullptr;
 
-            std::unique_ptr<DrawOp> op = std::make_unique_for_overwrite<DrawOp>();
+            std::unique_ptr<DrawOp> op = std::make_unique<DrawOp>();
             op->vertexShader = vertexShader->key;
             op->pixelShader = pixelShader ? pixelShader->key : 0;
             op->input = layout->input;
             if (!ReadState(device, devAddress, *op) || !ReadTargets(device, *op, depthOnly))
                 return nullptr;
 
-            // Indices: a triangle list, rebased to the first vertex the draw reads. A list is read in place.
-            if (call.primitive == kTriangleList)
-            {
-                DrawCall whole = call;
-                whole.count -= whole.count % 3;
-                if (!ReadIndices(devAddress, whole, op->indices))
-                    return nullptr;
-            }
-            else
-            {
-                CaptureVector<uint32_t> indices;
-                if (!ReadIndices(devAddress, call, indices))
-                    return nullptr;
-                std::optional<uint32_t> reset;
-                if (call.indexed && (device.Register(reg::kRasterControl) & kMultiPrimitive) != 0)
-                    reset = device.Register(reg::kResetIndex);
-                if (!ToTriangleList(call.primitive, indices, reset, op->indices))
-                    return nullptr;
-            }
-            if (op->indices.empty())
-                return nullptr;
-            auto [lowest, highest] = std::minmax_element(op->indices.begin(), op->indices.end());
-            int64_t first = int64_t(*lowest) + call.baseVertex;
-            uint32_t minIndex = *lowest;
-            op->vertexCount = *highest - *lowest + 1;
-            if (first < 0)
-            {
-                LOG_ONCE("gpu: a draw reads vertices before its vertex buffer; it is skipped");
-                return nullptr;
-            }
-            for (uint32_t& index : op->indices)
-                index -= minIndex;
-
-            // Vertex streams: the bytes of the vertices the draw reads, as they are in guest memory.
+            // Vertex streams: where each comes from, and how the shader decodes its elements.
             const VertexInput& input = *layout->input;
-            op->hosted.resize(layout->streamFetch.size());
-            for (size_t stream = 0; stream < layout->streamFetch.size(); stream++)
+            size_t streams = layout->streamFetch.size();
+            if (streams > kMaxVertexStreams)
+            {
+                LOG_ONCE("gpu: a draw reads %zu vertex streams; it is skipped", streams);
+                return nullptr;
+            }
+            std::array<StreamPlan, kMaxVertexStreams> plans;
+            bool allHosted = true;
+            for (size_t stream = 0; stream < streams; stream++)
             {
                 uint32_t fetch = layout->streamFetch[stream];
-                StreamSource source;
-                if (call.inlineVertices != 0 && fetch == kInlineFetch)
+                StreamPlan& plan = plans[stream];
+                plan.inlineFetch = call.inlineVertices != 0 && fetch == kInlineFetch;
+                if (plan.inlineFetch)
                 {
-                    source = { call.inlineVertices, kInlineVertices * kInlineStride, kEndian8in32 };
+                    plan.source = { call.inlineVertices, kInlineVertices * kInlineStride, kEndian8in32 };
                 }
-                else if (!ReadStreamSource(devAddress, fetch, source))
+                else if (!ReadStreamSource(devAddress, fetch, plan.source))
                 {
                     LOG_ONCE("gpu: vertex fetch constant %u is not a vertex buffer; its draws are skipped", fetch);
                     return nullptr;
                 }
-                // A stream of stride 0 holds one vertex: the extent of its elements.
-                uint64_t stride = input.strides[stream];
-                uint64_t begin = uint64_t(first) * stride;
-                uint64_t bytes = uint64_t(op->vertexCount) * stride;
-                if (stride == 0)
-                    for (const VertexElement& element : input.elements)
-                        if (element.stream == stream)
-                            bytes = std::max<uint64_t>(bytes, element.offset + 4 * element.dwords);
-                size_t at = op->vertices.size();
-                op->streamOffsets.push_back(uint32_t(at));
-                bool inlineFetch = call.inlineVertices != 0 && fetch == kInlineFetch;
-                if (inlineFetch && inlineStream != nullptr)
-                    *inlineStream = InlineStream{ uint32_t(at), uint32_t(std::min<uint64_t>(bytes, source.bytes)) };
-                // A buffer the host keeps a copy of is read from it; other vertices are copied.
-                uint32_t buffer = GpuAddress(source.address);
-                if (!inlineFetch && stride != 0 && begin + bytes <= source.bytes && UseHostedBuffer(buffer, source.bytes))
-                {
-                    op->hosted[stream] = { buffer, source.bytes, uint32_t(begin), uint32_t(bytes) };
-                }
-                else
-                {
-                    if (at + bytes > kMaxVertexBytes)
-                    {
-                        LOG_ONCE("gpu: a draw reads %llu bytes of vertices; it is skipped", (unsigned long long)bytes);
-                        return nullptr;
-                    }
-                    // Past the end of the buffer the vertices read as zero.
-                    op->vertices.resize(at + size_t(bytes));
-                    size_t copied = begin < source.bytes ? size_t(std::min<uint64_t>(bytes, source.bytes - begin)) : 0;
-                    if (copied != 0)
-                        memcpy(op->vertices.data() + at, mem::Ptr(source.address + uint32_t(begin)), copied);
-                    memset(op->vertices.data() + at + copied, 0, size_t(bytes) - copied);
-                }
+                // A stream of stride 0 holds one vertex and is always copied.
+                plan.hosted = !plan.inlineFetch && input.strides[stream] != 0 &&
+                    UseHostedBuffer({ GpuAddress(plan.source.address), plan.source.bytes });
+                allHosted &= plan.hosted;
                 for (size_t element = 0; element < layout->descriptors.size(); element++)
                     if (input.elements[element].stream == stream)
                         op->shared.vertexFetch[element] =
-                            layout->descriptors[element] | source.endian << kDescriptorEndianShift;
+                            layout->descriptors[element] | plan.source.endian << kDescriptorEndianShift;
+            }
+
+            // A triangle list over buffers the host has copies of is drawn from them as it is. A negative
+            // base vertex can read before the vertex buffers, which the copy path checks.
+            std::optional<BufferKey> indexBuffer;
+            if (allHosted && call.indexed && call.primitive == kTriangleList && call.baseVertex >= 0)
+                indexBuffer = HostedIndexBuffer(devAddress, call);
+            if (indexBuffer)
+            {
+                op->hostedIndices = { *indexBuffer, call.startIndex, call.count - call.count % 3, call.baseVertex };
+                if (op->hostedIndices.count == 0)
+                    return nullptr;
+                op->hosted.resize(streams);
+                for (size_t stream = 0; stream < streams; stream++)
+                {
+                    const StreamSource& source = plans[stream].source;
+                    op->hosted[stream] = { GpuAddress(source.address), source.bytes, 0, source.bytes };
+                }
+            }
+            else if (!CaptureCopied(device, devAddress, call, *layout, plans, *op, inlineStream))
+            {
+                return nullptr;
             }
 
             // Constants, as the host shaders read them.
-            CopySwapped(op->vertexConstants.data(), mem::Ptr(devAddress + dev::kVertexConstants), dev::kConstantBytes);
-            CopySwapped(op->pixelConstants.data(), mem::Ptr(devAddress + dev::kPixelConstants), dev::kConstantBytes);
+            op->vertexConstants = g_vertexConstants.Snapshot();
+            op->pixelConstants = g_pixelConstants.Snapshot();
             op->shared.booleans = (mem::Load32(devAddress + dev::kVertexBooleans) & 0xFFFF) |
                 (mem::Load32(devAddress + dev::kPixelBooleans) & 0xFFFF) << 16;
             // Last: the uploads it posts are only needed by a draw that is posted.
@@ -651,7 +768,8 @@ DECLARE_ORIGINAL(D3D_DRAW_VERTICES);
 DECLARE_ORIGINAL(D3D_BEGIN_VERTICES);
 
 // D3DDevice_DrawIndexedVertices(device, primitive, base vertex, start index, index count). Replaced
-// to post the host draw after the original, whose packets nothing executes.
+// to post the host draw after the original, whose packets nothing executes; the constant shadows
+// follow the dirty masks before the original's commit clears them.
 PPC_FUNC(D3D_DRAW_INDEXED_VERTICES)
 {
     DrawCall call;
@@ -660,29 +778,33 @@ PPC_FUNC(D3D_DRAW_INDEXED_VERTICES)
     call.baseVertex = int32_t(ctx.r5.u32);
     call.startIndex = ctx.r6.u32;
     call.count = ctx.r7.u32;
+    RefreshConstants();
     ORIGINAL(D3D_DRAW_INDEXED_VERTICES)(ctx, base);
     Post(Capture(ctx, base, call));
 }
 
 // D3DDevice_DrawVertices(device, primitive, start vertex, vertex count). Replaced to post the host
-// draw after the original, whose packets nothing executes.
+// draw after the original, whose packets nothing executes (constants as in DrawIndexedVertices).
 PPC_FUNC(D3D_DRAW_VERTICES)
 {
     DrawCall call;
     call.primitive = ctx.r4.u32;
     call.baseVertex = int32_t(ctx.r5.u32);
     call.count = ctx.r6.u32;
+    RefreshConstants();
     ORIGINAL(D3D_DRAW_VERTICES)(ctx, base);
     Post(Capture(ctx, base, call));
 }
 
 // D3DDevice_BeginVertices(device, ...): commits the state and returns the space for the vertices
-// of a quad (null on failure). Replaced to build the host draw of the quad; the title writes the
+// of a quad (null on failure). Replaced to build the host draw of the quad (constants as in
+// DrawIndexedVertices); the title writes the
 // vertices after the call and ends with an inline EndVertices, so the quad is kept until
 // FlushInlineDraw.
 PPC_FUNC(D3D_BEGIN_VERTICES)
 {
     FlushInlineDraw();
+    RefreshConstants();
     ORIGINAL(D3D_BEGIN_VERTICES)(ctx, base);
     uint32_t vertices = ctx.r3.u32;
     if (vertices == 0)

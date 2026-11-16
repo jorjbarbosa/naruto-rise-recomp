@@ -31,6 +31,14 @@ namespace gpu::guest
         }
     }
 
+    std::optional<IndexData> ReadIndexData(uint32_t header)
+    {
+        uint32_t data = mem::Load32(header + res::kIndexData);
+        if (data < GuestPhysical(0))
+            return std::nullopt;
+        return IndexData{ GpuAddress(data), mem::Load32(header + res::kIndexSize) };
+    }
+
     std::optional<SurfaceDesc> DescribeSurface(uint32_t header)
     {
         uint32_t size = mem::Load32(header + res::kSurfaceSize);
@@ -80,7 +88,8 @@ using namespace gpu::guest;
 DECLARE_ORIGINAL(D3D_DESTROY_RESOURCE);
 
 // D3D::DestroyResource(resource), reached when the last reference is released: the host side goes
-// first (surfaces, textures, the copies of a vertex buffer's memory), then the original frees the header.
+// first (surfaces, textures, the copies of a vertex or index buffer's memory), then the original frees
+// the header.
 PPC_FUNC(D3D_DESTROY_RESOURCE)
 {
     uint32_t resource = ctx.r3.u32;
@@ -99,6 +108,12 @@ PPC_FUNC(D3D_DESTROY_RESOURCE)
             VertexFetch fetch = DecodeVertexFetch(mem::Load32(resource + res::kVertexBufferFetch),
                 mem::Load32(resource + res::kVertexBufferFetch + 4));
             ForgetBuffers(fetch.address, fetch.address + fetch.bytes);
+            break;
+        }
+        case res::kTypeIndexBuffer:
+        {
+            if (std::optional<IndexData> data = ReadIndexData(resource))
+                ForgetBuffers(data->address, data->address + data->bytes);
             break;
         }
         default:

@@ -364,8 +364,8 @@ using namespace gpu::guest;
 DECLARE_ORIGINAL(D3D_UNLOCK_RESOURCE);
 
 // D3D::UnlockResource(resource, base, mip): decrements the lock count and, on the last unlock,
-// flushes the CPU writes to the resource's memory. Replaced so that the textures and vertex buffers of
-// that memory are checked again at their next use, also within the frame.
+// flushes the CPU writes to the resource's memory. Replaced so that the textures, vertex buffers and
+// index buffers of that memory are checked again at their next use, also within the frame.
 PPC_FUNC(D3D_UNLOCK_RESOURCE)
 {
     uint32_t resource = ctx.r3.u32;
@@ -379,6 +379,12 @@ PPC_FUNC(D3D_UNLOCK_RESOURCE)
         VertexFetch fetch = DecodeVertexFetch(mem::Load32(resource + res::kVertexBufferFetch),
             mem::Load32(resource + res::kVertexBufferFetch + 4));
         InvalidateBuffers(fetch.address, fetch.address + fetch.bytes);
+        return;
+    }
+    if ((common & res::kTypeMask) == res::kTypeIndexBuffer)
+    {
+        if (std::optional<IndexData> data = ReadIndexData(resource))
+            InvalidateBuffers(data->address, data->address + data->bytes);
         return;
     }
     if ((common & res::kTypeMask) != res::kTypeTexture)

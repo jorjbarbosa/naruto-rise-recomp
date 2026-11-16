@@ -56,6 +56,9 @@ namespace gpu
         Upload Allocate(uint64_t size, uint64_t alignment);
         // The alignment of a constant buffer view's data.
         static constexpr uint64_t kConstantAlignment = 256;
+        // The number the open command list (or the next one) is submitted as. An Upload stays valid
+        // for the work recorded while this number does not change.
+        uint64_t OpenSubmission() const { return submitted_ + 1; }
 
     private:
         struct List

@@ -232,9 +232,9 @@ namespace gpu
         impl_->Post([impl = impl_.get(), begin, end] { impl->buffers->Release(begin, end); });
     }
 
-    void Renderer::ReleaseBuffer(uint32_t address, uint32_t bytes)
+    void Renderer::ReleaseBuffer(const BufferKey& key)
     {
-        impl_->Post([impl = impl_.get(), address, bytes] { impl->buffers->Forget(address, bytes); });
+        impl_->Post([impl = impl_.get(), key] { impl->buffers->Forget(key); });
     }
 
     void Renderer::ReleaseSurface(uint32_t key)

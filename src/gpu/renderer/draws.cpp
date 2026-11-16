@@ -42,6 +42,32 @@ namespace gpu
             alphaOnly = alpha && !color;
             return color || alpha;
         }
+
+        bool Same(const VertexStreams& a, const VertexStreams& b)
+        {
+            if (a.count != b.count)
+                return false;
+            for (uint32_t i = 0; i < a.count; i++)
+                if (a.views[i].buffer != b.views[i].buffer || a.views[i].size != b.views[i].size ||
+                    a.slots[i].stride != b.slots[i].stride)
+                    return false;
+            return true;
+        }
+
+        bool Same(const plume::RenderIndexBufferView& a, const plume::RenderIndexBufferView& b)
+        {
+            return a.buffer == b.buffer && a.size == b.size && a.format == b.format;
+        }
+
+        // Sets a root constant buffer unless it is the one already set.
+        void SetRoot(plume::RenderCommandList& list, std::optional<plume::RenderBufferReference>& current,
+            const plume::RenderBufferReference& reference, uint32_t index)
+        {
+            if (current && *current == reference)
+                return;
+            list.setGraphicsRootDescriptor(reference, index);
+            current = reference;
+        }
     }
 
     Draws::Draws(Context& context, Targets& targets, Descriptors& descriptors, Textures& textures, Buffers& buffers,
@@ -61,6 +87,32 @@ namespace gpu
     }
 
     Draws::~Draws() = default;
+
+    plume::RenderBufferReference Draws::Shared(const SharedConstants& shared)
+    {
+        // SharedConstants has no padding (its size is asserted), so equal values have equal bytes.
+        if (shared_.submission != context_.OpenSubmission() || memcmp(&shared_.values, &shared, sizeof(shared)) != 0)
+        {
+            constexpr uint64_t kBytes = (sizeof(SharedConstants) + Context::kConstantAlignment - 1) & ~(Context::kConstantAlignment - 1);
+            shared_.upload = context_.Allocate(kBytes, Context::kConstantAlignment);
+            memcpy(shared_.upload.data, &shared, sizeof(shared));
+            shared_.values = shared;
+            shared_.submission = context_.OpenSubmission();
+        }
+        return shared_.upload.Reference();
+    }
+
+    plume::RenderBufferReference Draws::Constants(ConstantUpload& last, const std::shared_ptr<const ConstantBlock>& block)
+    {
+        if (block != last.block || last.submission != context_.OpenSubmission())
+        {
+            last.upload = context_.Allocate(block->size(), Context::kConstantAlignment);
+            memcpy(last.upload.data, block->data(), block->size());
+            last.block = block;
+            last.submission = context_.OpenSubmission();
+        }
+        return last.upload.Reference();
+    }
 
     void Draws::Draw(DrawOp& op)
     {
@@ -88,8 +140,19 @@ namespace gpu
             return;
         plume::RenderCommandList& list = context_.Commands();
 
-        // Vertex streams: the copied ones from the upload buffers, the hosted ones from their host copies;
-        // a draw whose host copy is missing is skipped.
+        // The state the last draw set stays unless the command list changed or something else drew in
+        // between: every other drawing sets a pipeline of its own, which becomes Plume's active one.
+        const auto& d3dList = static_cast<const plume::D3D12CommandList&>(list);
+        if (state_.submission != context_.OpenSubmission() ||
+            d3dList.activeGraphicsPipelineLayout != static_cast<const plume::D3D12PipelineLayout*>(layout_.get()) ||
+            static_cast<const plume::RenderPipeline*>(d3dList.activeGraphicsPipeline) != state_.pipeline)
+        {
+            state_ = ListState();
+            state_.submission = context_.OpenSubmission();
+        }
+
+        // Vertex streams and indices: the copied ones from the upload buffers, the hosted ones from their
+        // host copies; a draw whose host copy is missing is skipped.
         Context::Upload vertices;
         if (!op.vertices.empty())
         {
@@ -97,27 +160,48 @@ namespace gpu
             memcpy(vertices.data, op.vertices.data(), op.vertices.size());
         }
         const VertexInput& input = *op.input;
-        std::vector<plume::RenderVertexBufferView> views;
-        std::vector<plume::RenderInputSlot> slots;
-        for (uint32_t i = 0; i < input.strides.size(); i++)
+        VertexStreams streams;
+        streams.count = uint32_t(input.strides.size());
+        for (uint32_t i = 0; i < streams.count; i++)
         {
             const HostedStream& hosted = op.hosted[i];
             if (hosted.bytes == 0)
             {
                 uint32_t end = i + 1 < op.streamOffsets.size() ? op.streamOffsets[i + 1] : uint32_t(op.vertices.size());
-                views.emplace_back(plume::RenderBufferReference(vertices.buffer, vertices.offset + op.streamOffsets[i]),
-                    end - op.streamOffsets[i]);
+                streams.views[i] = plume::RenderVertexBufferView(
+                    plume::RenderBufferReference(vertices.buffer, vertices.offset + op.streamOffsets[i]), end - op.streamOffsets[i]);
             }
-            else if (plume::RenderBuffer* buffer = buffers_.Bind(list, hosted.address, hosted.bytes))
+            else if (plume::RenderBuffer* buffer = buffers_.Bind(list, BufferKey{ hosted.address, hosted.bytes }))
             {
-                views.emplace_back(plume::RenderBufferReference(buffer, hosted.offset), hosted.size);
+                streams.views[i] = plume::RenderVertexBufferView(plume::RenderBufferReference(buffer, hosted.offset), hosted.size);
             }
             else
             {
                 LOG_ONCE("gpu: a draw reads a vertex buffer the host has no copy of; it is skipped");
                 return;
             }
-            slots.emplace_back(i, input.strides[i]);
+            streams.slots[i] = plume::RenderInputSlot(i, input.strides[i]);
+        }
+        const HostedIndices& hostedIndices = op.hostedIndices;
+        plume::RenderIndexBufferView indexView;
+        if (hostedIndices.key.bytes != 0)
+        {
+            plume::RenderBuffer* buffer = buffers_.Bind(list, hostedIndices.key);
+            if (buffer == nullptr)
+            {
+                LOG_ONCE("gpu: a draw reads an index buffer the host has no copy of; it is skipped");
+                return;
+            }
+            bool index32 = hostedIndices.key.format == BufferFormat::Index32;
+            indexView = plume::RenderIndexBufferView(plume::RenderBufferReference(buffer, 0),
+                hostedIndices.key.bytes & (index32 ? ~3u : ~1u), index32 ? plume::RenderFormat::R32_UINT : plume::RenderFormat::R16_UINT);
+        }
+        else
+        {
+            Context::Upload indices = context_.Allocate(op.indices.size() * 4, 4);
+            memcpy(indices.data, op.indices.data(), op.indices.size() * 4);
+            indexView = plume::RenderIndexBufferView(indices.Reference(), uint32_t(op.indices.size() * 4),
+                plume::RenderFormat::R32_UINT);
         }
 
         SharedConstants shared = op.shared;
@@ -125,47 +209,72 @@ namespace gpu
             textures_.Bind(list, slot, op.textures[slot], shared);
         targets_.BindForDraw(list, op.color, op.depth);
 
-        // Per-draw data in the upload buffers.
-        constexpr uint64_t kSharedBytes = (sizeof(SharedConstants) + Context::kConstantAlignment - 1) & ~(Context::kConstantAlignment - 1);
-        Context::Upload constants = context_.Allocate(2 * op.vertexConstants.size() + kSharedBytes, Context::kConstantAlignment);
-        memcpy(constants.data, op.vertexConstants.data(), op.vertexConstants.size());
-        memcpy(constants.data + op.vertexConstants.size(), op.pixelConstants.data(), op.pixelConstants.size());
-        memcpy(constants.data + 2 * op.vertexConstants.size(), &shared, sizeof(shared));
-        Context::Upload indices = context_.Allocate(op.indices.size() * 4, 4);
-        memcpy(indices.data, op.indices.data(), op.indices.size() * 4);
+        plume::RenderBufferReference vertexConstants = Constants(vertexConstants_, op.vertexConstants);
+        plume::RenderBufferReference pixelConstants = Constants(pixelConstants_, op.pixelConstants);
+        plume::RenderBufferReference sharedConstants = Shared(shared);
 
-        list.setGraphicsPipelineLayout(layout_.get());
-        list.setPipeline(pipeline);
-        descriptors_.Bind(list);
-        list.setGraphicsRootDescriptor(constants.Reference(), kVertexConstantsRoot);
-        list.setGraphicsRootDescriptor({ constants.buffer, constants.offset + op.vertexConstants.size() }, kPixelConstantsRoot);
-        list.setGraphicsRootDescriptor({ constants.buffer, constants.offset + 2 * op.vertexConstants.size() },
-            kSharedConstantsRoot);
+        if (!state_.layoutSet)
+        {
+            list.setGraphicsPipelineLayout(layout_.get());
+            descriptors_.Bind(list);
+            state_.layoutSet = true;
+        }
+        if (pipeline != state_.pipeline)
+        {
+            list.setPipeline(pipeline);
+            state_.pipeline = pipeline;
+        }
+        SetRoot(list, state_.vertexConstants, vertexConstants, kVertexConstantsRoot);
+        SetRoot(list, state_.pixelConstants, pixelConstants, kPixelConstantsRoot);
+        SetRoot(list, state_.sharedConstants, sharedConstants, kSharedConstantsRoot);
 
-        ID3D12GraphicsCommandList* d3d = static_cast<plume::D3D12CommandList&>(list).d3d;
+        ID3D12GraphicsCommandList* d3d = d3dList.d3d;
         bool alphaOnly = false;
         if (op.color.key != 0 && UsesBlendColor(op.state.blendControl, alphaOnly))
         {
-            float color[4] = { op.blendColor[0], op.blendColor[1], op.blendColor[2], op.blendColor[3] };
+            std::array<float, 4> color = op.blendColor;
             if (alphaOnly)
-                std::fill(color, color + 3, op.blendColor[3]);
-            d3d->OMSetBlendFactor(color);
+                std::fill(color.begin(), color.begin() + 3, op.blendColor[3]);
+            if (!state_.blendFactor || *state_.blendFactor != color)
+            {
+                d3d->OMSetBlendFactor(color.data());
+                state_.blendFactor = color;
+            }
         }
         // Plume sets the reference of the pipeline when it differs from the last one it set; every
         // pipeline has 0, so it never overrides this one.
-        if (op.depth.key != 0 && (op.state.depthControl & kStencilEnable) != 0)
+        if (op.depth.key != 0 && (op.state.depthControl & kStencilEnable) != 0 && state_.stencilReference != op.stencilReference)
+        {
             d3d->OMSetStencilRef(op.stencilReference);
+            state_.stencilReference = op.stencilReference;
+        }
 
         const plume::RenderViewport viewport(op.viewport[0], op.viewport[1], op.viewport[2], op.viewport[3], op.viewport[4],
             op.viewport[5]);
-        const plume::RenderRect rect(scissor.left, scissor.top, scissor.right, scissor.bottom);
-        list.setViewports(&viewport, 1);
-        list.setScissors(&rect, 1);
-
-        list.setVertexBuffers(0, views.data(), uint32_t(views.size()), slots.data());
-        const plume::RenderIndexBufferView indexView(indices.Reference(), uint32_t(op.indices.size() * 4),
-            plume::RenderFormat::R32_UINT);
-        list.setIndexBuffer(&indexView);
-        list.drawIndexedInstanced(uint32_t(op.indices.size()), 1, 0, 0, 0);
+        if (!state_.viewport || *state_.viewport != viewport)
+        {
+            list.setViewports(&viewport, 1);
+            state_.viewport = viewport;
+        }
+        if (!state_.scissor || *state_.scissor != scissor)
+        {
+            const plume::RenderRect rect(scissor.left, scissor.top, scissor.right, scissor.bottom);
+            list.setScissors(&rect, 1);
+            state_.scissor = scissor;
+        }
+        if (!state_.streams || !Same(*state_.streams, streams))
+        {
+            list.setVertexBuffers(0, streams.views.data(), streams.count, streams.slots.data());
+            state_.streams = streams;
+        }
+        if (!state_.indices || !Same(*state_.indices, indexView))
+        {
+            list.setIndexBuffer(&indexView);
+            state_.indices = indexView;
+        }
+        if (hostedIndices.key.bytes != 0)
+            list.drawIndexedInstanced(hostedIndices.count, 1, hostedIndices.first, hostedIndices.baseVertex, 0);
+        else
+            list.drawIndexedInstanced(uint32_t(op.indices.size()), 1, 0, 0, 0);
     }
 }

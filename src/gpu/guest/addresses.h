@@ -65,6 +65,12 @@ namespace gpu::guest
         constexpr uint32_t kVertexConstants = 0x780;
         constexpr uint32_t kPixelConstants = 0x1780;
         constexpr uint32_t kConstantBytes = 0x1000;
+        // Dirty masks of those float constants (64 bits each): bit 63 - i marks the 64 bytes of
+        // constants 4i..4i+3. Every writer sets its bits; the commit inside the three draws
+        // (D3D::SetPending_AluConstants, no other caller) sends the marked groups and clears the mask.
+        constexpr uint32_t kVertexConstantsDirty = 0;
+        constexpr uint32_t kPixelConstantsDirty = 8;
+        constexpr uint32_t kConstantGroupBytes = 64;
 
         // Boolean shader constants: vertex shader b0..b31, pixel shader b0..b31.
         constexpr uint32_t kVertexBooleans = 10112;
@@ -146,6 +152,7 @@ namespace gpu::guest
         constexpr uint32_t kCommon = 0;
         constexpr uint32_t kTypeMask = 0xF;
         constexpr uint32_t kTypeVertexBuffer = 1;
+        constexpr uint32_t kTypeIndexBuffer = 2;
         constexpr uint32_t kTypeTexture = 3;
         constexpr uint32_t kTypeSurface = 4;
         // Bits 8..11: the lock count, which UnlockResource decrements.
@@ -169,8 +176,9 @@ namespace gpu::guest
         // D3DIndexBuffer. Common word: bit 31 set for 32-bit indices, bits 29..30 the endian swap.
         constexpr uint32_t kIndex32 = 0x80000000;
         constexpr uint32_t kIndexEndianShift = 29;
-        // Address of the index data.
+        // Guest address and size in bytes of the index data.
         constexpr uint32_t kIndexData = 0x18;
+        constexpr uint32_t kIndexSize = 0x1C;
 
         // D3DVertexDeclaration: an id the library gives each declaration at its first patch (0
         // before).

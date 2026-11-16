@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <compare>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -37,6 +38,7 @@ namespace gpu
         int32_t bottom = 0;
 
         bool Empty() const { return left >= right || top >= bottom; }
+        bool operator==(const Rect&) const = default;
     };
 
     inline Rect Intersect(const Rect& a, const Rect& b)
@@ -97,6 +99,10 @@ namespace gpu
     };
     static_assert(sizeof(SharedConstants) == 44 * 16);
 
+    // The float constants of one shader stage (256 float4, host order): a root constant buffer of the
+    // translated shaders (register b0 or b1, space4).
+    using ConstantBlock = std::array<uint8_t, 4096>;
+
     // SPEC_CONSTANT_ALPHA_TEST: the pixel shader discards pixels whose alpha is below the threshold.
     constexpr uint32_t kSpecAlphaTest = 2;
 
@@ -112,6 +118,9 @@ namespace gpu
 
         bool operator==(const VertexElement&) const = default;
     };
+
+    // The vertex streams a draw can read: one per vertex fetch stride of the device.
+    constexpr uint32_t kMaxVertexStreams = 16;
 
     // The vertex input of a draw. Shared by the draws of one (vertex shader, declaration, strides).
     struct VertexInput
@@ -183,11 +192,31 @@ namespace gpu
         std::vector<uint8_t> data;
     };
 
-    // The content of a guest vertex buffer for the host copy of (GPU address, data size), as it is in
-    // guest memory.
-    struct BufferUpload
+    // How the host copy of a guest buffer holds its data: a vertex buffer as it is in guest memory, an
+    // index buffer as indices in host order.
+    enum class BufferFormat : uint8_t
+    {
+        Vertex,
+        Index16,
+        Index32,
+    };
+
+    // The host copy of a guest buffer: the buffer's GPU address and size, the format of the copy and,
+    // for an index buffer, the GPU endian swap the copy undid.
+    struct BufferKey
     {
         uint32_t address = 0;
+        uint32_t bytes = 0;
+        BufferFormat format = BufferFormat::Vertex;
+        uint8_t endian = 0;
+
+        auto operator<=>(const BufferKey&) const = default;
+    };
+
+    // The content of the host copy of a guest buffer, in the copy's format.
+    struct BufferUpload
+    {
+        BufferKey key;
         std::vector<uint8_t> data;
     };
 
@@ -199,6 +228,16 @@ namespace gpu
         uint32_t bytes = 0;   // the buffer's size; 0: the stream is in DrawOp::vertices
         uint32_t offset = 0;  // the first vertex the draw reads
         uint32_t size = 0;
+    };
+
+    // The indices a draw reads from the host copy of a guest index buffer: count indices from first,
+    // each plus baseVertex.
+    struct HostedIndices
+    {
+        BufferKey key; // key.bytes 0: the indices are in DrawOp::indices
+        uint32_t first = 0;
+        uint32_t count = 0;
+        int32_t baseVertex = 0;
     };
 
     // A color texture resolved from a surface, read back: RGBA8 in the surface's color order, rows
@@ -248,8 +287,7 @@ namespace gpu
     using CaptureVector = std::vector<T, UninitializedAllocator<T>>;
 
     // A draw: shaders, targets, state, and copies of the vertices, indices and constants it reads.
-    // Everything is a triangle list by then. Made with std::make_unique_for_overwrite: the capture
-    // writes every byte of the constants, which value initialization would zero first.
+    // Everything is a triangle list by then.
     struct DrawOp
     {
         uint64_t vertexShader = 0; // shader cache keys; pixel shader 0: depth only
@@ -262,15 +300,20 @@ namespace gpu
         std::shared_ptr<const VertexInput> input;
 
         // Vertex data: stream i starts at streamOffsets[i] and is laid out with its stride, unless
-        // hosted[i] names the host copy it reads instead.
+        // hosted[i] names the host copy it reads instead (with hostedIndices every stream is hosted and
+        // streamOffsets is empty).
         CaptureVector<uint8_t> vertices;
         std::vector<uint32_t> streamOffsets;
         std::vector<HostedStream> hosted;
+        // Indices: a triangle list rebased to the first vertex the streams hold, unless hostedIndices
+        // names the host copy of the index buffer (then every stream is hosted from its start).
         CaptureVector<uint32_t> indices;
-        uint32_t vertexCount = 0;
+        HostedIndices hostedIndices;
 
-        std::array<uint8_t, 4096> vertexConstants;
-        std::array<uint8_t, 4096> pixelConstants;
+        // Float constants as the host shaders read them, shared by the draws in a row that have the
+        // same values.
+        std::shared_ptr<const ConstantBlock> vertexConstants;
+        std::shared_ptr<const ConstantBlock> pixelConstants;
         SharedConstants shared; // descriptor indices filled by the renderer from textures
         std::array<DrawTexture, SharedConstants::kFetchSlots> textures{}; // by texture fetch constant
 
@@ -307,7 +350,7 @@ namespace gpu
         // Fills the host texture of (address, layout key) with new content; draws posted after it
         // sample it.
         void UploadTexture(std::unique_ptr<TextureUpload> upload);
-        // Fills the host copy of the vertex buffer (address, data size); draws posted after it read it.
+        // Fills the host copy of a guest buffer (upload->key); draws posted after it read it.
         void UploadBuffer(std::unique_ptr<BufferUpload> upload);
 
         // The guest surface is gone; its host texture is released once the GPU no longer uses it.
@@ -319,10 +362,10 @@ namespace gpu
         // Guest memory at the GPU addresses [begin, end) is freed: every texture uploaded or resolved
         // there is released.
         void ReleaseMemory(uint32_t begin, uint32_t end);
-        // The host copies of the vertex buffers that overlap the GPU addresses [begin, end) go.
+        // The host copies of the buffers that overlap the GPU addresses [begin, end) go.
         void ReleaseBuffers(uint32_t begin, uint32_t end);
-        // The host copy of the vertex buffer (address, bytes) goes.
-        void ReleaseBuffer(uint32_t address, uint32_t bytes);
+        // The host copy of a guest buffer goes.
+        void ReleaseBuffer(const BufferKey& key);
 
         // Reads back the color texture resolved at a GPU address, once the work posted before it has
         // run. Blocks the caller until the GPU is idle; for the rare CPU reads of a resolve. False when
