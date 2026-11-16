@@ -21,6 +21,14 @@
 #define JADE_DRAW_PACKET sub_820FC008   // render thread: draws a handed packet (r3 packet)
 #define JADE_DEVICE_LOCK sub_820E73A8   // takes the D3D device lock (recursive, per thread; r3 the lock)
 #define JADE_DEVICE_UNLOCK sub_820E7428 // releases it
+#define JADE_END_OF_FRAME sub_8267DDC0  // main step row 11: the sector switch if the delivery did not run it, deferred destruction
+#define JADE_DISPLAY_DESTROYS sub_82659F40 // under the display: destroys the objects queued at kDisplayDestroyCount
+#define JADE_SECTOR_SWITCH sub_8267DA90 // r3 the switch state (+4 set: ran this tick); destroys the sectors it leaves
+#define JADE_DEFERRED_DESTROY sub_82659060 // r3 the queue (+4 count): releases, destroys and frees what it holds
+#define JADE_DESTROY_OBJECT sub_8266BA98 // destroys a game object (r3)
+#define JADE_DESTROY_OBJECT_CHECKED sub_8266C1F0 // drops the object (r3) from a world change list, then JADE_DESTROY_OBJECT
+#define JADE_FREE sub_820C0018          // the engine's free: through the memory manager's vtable +20
+#define JADE_HEAP_FREE sub_82188C88     // the heap's free (r3 heap, r4 block): every free and realloc ends here
 
 namespace game::jade
 {
@@ -33,6 +41,18 @@ namespace game::jade
     constexpr uint32_t kCutCounter = 0x82C0EB34;  // camera cut counter: 4 on a cut, minus one per display
     constexpr uint32_t kDisplayData = 0x82C0EFA4; // the view being displayed
     constexpr uint32_t kPacketPending = 0x82C0F038; // set by JADE_HAND_PACKET: 1 when the handed packet is to be drawn
+    constexpr uint32_t kDeviceLock = 0x82C0F008;    // pointer to the D3D device lock (device_lock::)
+    constexpr uint32_t kDeferredQueue = 0x82C0EBF4; // pointer to JADE_DEFERRED_DESTROY's queue: +4 its count
+    constexpr uint32_t kDisplayDestroyCount = 0x82C0EBE0; // objects JADE_DISPLAY_DESTROYS will destroy
+    constexpr uint32_t kSectors = 0x8272F2B0;       // the sector manager: JADE_SECTOR_SWITCH works only when it and its +44 are set
+    constexpr uint32_t kSectorsTarget = 44;
+
+    // The D3D device lock ([kDeviceLock]), recursive per thread.
+    namespace device_lock
+    {
+        constexpr uint32_t kOwner = 4; // the owner's thread id, -1 when free
+        constexpr uint32_t kCount = 8; // recursion count
+    }
 
     // The time structure ([kTime]).
     namespace tim

@@ -179,6 +179,8 @@ namespace kernel
     };
 
     GuestThread* CurrentThread();
+    // The title's main thread (the one that runs _xstart), or null before it starts. Any thread.
+    GuestThread* MainThread();
     GuestThread* ThreadById(uint32_t id);
     GuestThread* ThreadByObject(uint32_t kthread);
     std::shared_ptr<KernelObject> ThreadObject(GuestThread* thread);

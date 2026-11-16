@@ -30,6 +30,7 @@ namespace kernel
         std::vector<std::unique_ptr<HostThread>> g_threads; // threads are never freed
         std::atomic<uint32_t> g_nextThreadId{ 1 };
         thread_local HostThread* t_current = nullptr;
+        std::atomic<GuestThread*> g_mainThread{ nullptr };
 
         std::mutex g_tlsMutex;
         uint64_t g_tlsUsed = 0;
@@ -162,6 +163,11 @@ namespace kernel
         return nullptr;
     }
 
+    GuestThread* MainThread()
+    {
+        return g_mainThread.load(std::memory_order_acquire);
+    }
+
     std::shared_ptr<KernelObject> ThreadObject(GuestThread* thread)
     {
         return thread != nullptr ? thread->object : nullptr;
@@ -172,6 +178,7 @@ namespace kernel
         HostThread* thread = NewThread(stackSize, 0);
         thread->name = "main";
         thread->body = GuestEntry(entry, 0, 0);
+        g_mainThread.store(thread, std::memory_order_release);
         RunGuest(thread);
     }
 
