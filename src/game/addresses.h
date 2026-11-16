@@ -53,6 +53,9 @@ namespace game::jade
         constexpr uint32_t kCameraDirection = 460; // 3 floats
         constexpr uint32_t kCameraPosition = 476;  // 3 floats
         constexpr uint32_t kWorld = 2248;          // the world the view block displays
+        // ul_RenderingCounter: +1 per view block in GDI_BeforeDisplay (8259E908, JADE_VIEW_PREPARE)
+        // unless the display flags (+2240) have DoNotRender (0x80).
+        constexpr uint32_t kRenderingCounter = 0x964;
         // The extent the probes label: up to the last field the delivery writes (+2572, 8259FF40).
         constexpr uint32_t kProbeSize = 2576;
     }

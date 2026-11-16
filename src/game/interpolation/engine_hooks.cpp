@@ -3,6 +3,7 @@
 // main step tests two flags and the other hooks one thread-local flag before calling the original.
 
 #include "game/addresses.h"
+#include "game/interpolation/data_watch.h"
 #include "game/interpolation/motion_record.h"
 #include "game/interpolation/purity_probe.h"
 #include "kernel/kernel.h"
@@ -31,7 +32,8 @@ PPC_FUNC(JADE_MAIN_STEP)
 {
     bool motion = interpolation::motion::Enabled();
     bool purity = interpolation::purity::Enabled();
-    if (!motion && !purity)
+    bool watch = interpolation::watch::Enabled();
+    if (!motion && !purity && !watch)
     {
         ORIGINAL(JADE_MAIN_STEP)(ctx, base);
         return;
@@ -41,6 +43,8 @@ PPC_FUNC(JADE_MAIN_STEP)
         interpolation::motion::MainStepStart(g_iteration);
     if (purity)
         interpolation::purity::MainStepStart();
+    if (watch)
+        interpolation::watch::MainStepStart();
     t_inMainStep = true;
     ORIGINAL(JADE_MAIN_STEP)(ctx, base);
     t_inMainStep = false;
@@ -48,6 +52,8 @@ PPC_FUNC(JADE_MAIN_STEP)
         interpolation::motion::MainStepEnd();
     if (purity)
         interpolation::purity::MainStepEnd(ctx, base);
+    if (watch)
+        interpolation::watch::MainStepEnd();
 }
 
 // View setup (82684050), the first call of the view block. Hooked to mark the block's start for the
@@ -56,6 +62,8 @@ PPC_FUNC(JADE_VIEW_SETUP)
 {
     if (t_inMainStep && interpolation::purity::Enabled())
         interpolation::purity::ViewBlockStart();
+    if (t_inMainStep && interpolation::watch::Enabled())
+        interpolation::watch::ViewBlockStart();
     ORIGINAL(JADE_VIEW_SETUP)(ctx, base);
 }
 
@@ -78,9 +86,12 @@ PPC_FUNC(JADE_DISPLAY)
 // the block's end for the purity probe.
 PPC_FUNC(JADE_DELIVER)
 {
+    uint32_t view = ctx.r3.u32;
     ORIGINAL(JADE_DELIVER)(ctx, base);
     if (t_inMainStep && interpolation::purity::Enabled())
         interpolation::purity::ViewBlockEnd();
+    if (t_inMainStep && interpolation::watch::Enabled())
+        interpolation::watch::ViewBlockEnd(view);
 }
 
 // Render of one object by the display (825E28D0, WOR_Render_One_GO, r6 the object). Hooked so the
