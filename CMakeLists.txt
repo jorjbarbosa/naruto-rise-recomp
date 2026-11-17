@@ -91,7 +91,13 @@ if(NOT EXISTS "${SHADER_CACHE}")
 endif()
 add_library(shader_cache OBJECT "${SHADER_CACHE}")
 target_include_directories(shader_cache PRIVATE "${CMAKE_SOURCE_DIR}/src/gpu/renderer")
+target_link_libraries(shader_cache PRIVATE plume)
 target_compile_options(shader_cache PRIVATE -Wno-everything)
+
+# The SPIR-V half of the cache is SMOL-V encoded (XenosRecomp); the runtime decodes it for Vulkan.
+add_library(smolv STATIC "${XENOS_THIRDPARTY_DIR}/smol-v/source/smolv.cpp")
+target_include_directories(smolv PUBLIC "${XENOS_THIRDPARTY_DIR}/smol-v/source")
+target_compile_options(smolv PRIVATE -Wno-everything)
 
 file(GLOB ZSTD_SOURCES "${XENOS_THIRDPARTY_DIR}/zstd/lib/common/*.c" "${XENOS_THIRDPARTY_DIR}/zstd/lib/decompress/*.c")
 add_library(zstd_decompress STATIC ${ZSTD_SOURCES})
@@ -180,7 +186,8 @@ file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
 add_executable(roan-xenon ${SOURCES} ${GPU_SHADER_HEADERS} ${PPC_MODULE_OBJECTS} $<TARGET_OBJECTS:shader_cache>)
 target_include_directories(roan-xenon PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_BINARY_DIR}/generated"
     "${PPC_OUTPUT_DIR}" "${XENOS_THIRDPARTY_DIR}/xxHash")
-target_link_libraries(roan-xenon PRIVATE ppc_common XenonUtils plume zstd_decompress SDL3::SDL3-static ffmpeg_avcodec dbghelp)
+target_link_libraries(roan-xenon PRIVATE ppc_common XenonUtils plume zstd_decompress smolv SDL3::SDL3-static ffmpeg_avcodec
+    dbghelp)
 target_compile_options(roan-xenon PRIVATE /EHsc /Z7 -Wno-unused-parameter -Wno-null-arithmetic)
 target_link_options(roan-xenon PRIVATE /DEBUG /STACK:16777216)
 set_target_properties(roan-xenon PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

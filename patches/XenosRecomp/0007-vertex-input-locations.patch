@@ -1,0 +1,60 @@
+diff --git a/XenosRecomp/shader_recompiler.cpp b/XenosRecomp/shader_recompiler.cpp
+index 9e81321..45dc3ee 100644
+--- a/XenosRecomp/shader_recompiler.cpp
++++ b/XenosRecomp/shader_recompiler.cpp
+@@ -49,35 +49,6 @@ static constexpr const char* USAGE_SEMANTICS[] =
+     "SAMPLE"
+ };
+ 
+-struct DeclUsageLocation
+-{
+-    DeclUsage usage;
+-    uint32_t usageIndex;
+-    uint32_t location;
+-};
+-
+-// NOTE: These are specialized Vulkan locations for Unleashed Recompiled. Change as necessary. Likely not going to work with other games.
+-static constexpr DeclUsageLocation USAGE_LOCATIONS[] =
+-{
+-    { DeclUsage::Position, 0, 0 },
+-    { DeclUsage::Normal, 0, 1 },
+-    { DeclUsage::Tangent, 0, 2 },
+-    { DeclUsage::Binormal, 0, 3 },
+-    { DeclUsage::TexCoord, 0, 4 },
+-    { DeclUsage::TexCoord, 1, 5 },
+-    { DeclUsage::TexCoord, 2, 6 },
+-    { DeclUsage::TexCoord, 3, 7 },
+-    { DeclUsage::Color, 0, 8 },
+-    { DeclUsage::BlendIndices, 0, 9 },
+-    { DeclUsage::BlendWeight, 0, 10 },
+-    { DeclUsage::Color, 1, 11 },
+-    { DeclUsage::TexCoord, 4, 12 },
+-    { DeclUsage::TexCoord, 5, 13 },
+-    { DeclUsage::TexCoord, 6, 14 },
+-    { DeclUsage::TexCoord, 7, 15 },
+-    { DeclUsage::Position, 1, 15 },
+-};
+-
+ static constexpr std::pair<DeclUsage, size_t> INTERPOLATORS[] =
+ {
+     { DeclUsage::TexCoord, 0 },
+@@ -1329,16 +1300,9 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+ 
+             value = vertexShader->vertexElementsAndInterpolators[vertexShader->field18 + i];
+ 
+-            out += '\t';
+-
+-            for (auto& usageLocation : USAGE_LOCATIONS)
+-            {
+-                if (usageLocation.usage == vertexElement.usage && usageLocation.usageIndex == vertexElement.usageIndex)
+-                {
+-                    print("[[vk::location({})]] ", usageLocation.location);
+-                    break;
+-                }
+-            }
++            // Vulkan matches vertex attributes by location: element i is at location i, as the host
++            // binds it (the element's index also selects its fetch descriptor).
++            print("\t[[vk::location({})]] ", i);
+ 
+             // The raw dwords of the element, decoded by vfetch.
+             println("in uint4 i{0}{1} : {2}{1},", USAGE_VARIABLES[uint32_t(vertexElement.usage)],

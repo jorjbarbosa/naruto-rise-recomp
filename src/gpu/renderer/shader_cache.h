@@ -4,9 +4,10 @@
 // build/shaders/shader_cache.cpp (scripts/recompile.ps1). That file includes this header for the
 // declarations of its data.
 
+#include <plume_render_interface_types.h>
+
 #include <cstddef>
 #include <cstdint>
-#include <span>
 #include <vector>
 
 // An entry of the generated table, which is sorted by hash. The hash (XXH3-64 of the shader
@@ -32,17 +33,25 @@ extern const size_t g_spirvCacheDecompressedSize;
 
 namespace gpu
 {
-    // The DXIL of the translated shaders, decompressed once. Read-only after construction.
+    // The translated shaders in one format, DXIL or SPIR-V, decompressed once. Read-only after
+    // construction, so any thread may use it.
     class ShaderCache
     {
     public:
-        // Fatal when the cache does not decompress: the build is broken.
-        ShaderCache();
+        // Fatal when the format's cache does not decompress: the build is broken.
+        explicit ShaderCache(plume::RenderShaderFormat format);
 
-        // The DXIL of the shader with the key, or empty when the shader database has no such shader.
-        std::span<const uint8_t> Dxil(uint64_t key) const;
+        // Whether the shader database has a shader with the key in this format.
+        bool Has(uint64_t key) const;
+        // The code of the shader with the key, or empty when there is none or its SPIR-V does not
+        // decode (logged). The SPIR-V is stored SMOL-V encoded and decoded here.
+        std::vector<uint8_t> Code(uint64_t key) const;
 
     private:
-        std::vector<uint8_t> dxil_;
+        // The entry of the key with code in this format, or null.
+        const ShaderCacheEntry* Find(uint64_t key) const;
+
+        plume::RenderShaderFormat format_;
+        std::vector<uint8_t> data_;
     };
 }

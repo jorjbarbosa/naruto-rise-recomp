@@ -1,32 +1,65 @@
-// The translated shaders: decompression of the generated DXIL cache and lookup by key.
+// The translated shaders: decompression of the generated DXIL or SPIR-V cache and lookup by key.
 
 #include "gpu/renderer/shader_cache.h"
 
 #include "log.h"
 
+#include <smolv.h>
 #include <zstd.h>
 
 #include <algorithm>
 
 namespace gpu
 {
-    ShaderCache::ShaderCache()
+    ShaderCache::ShaderCache(plume::RenderShaderFormat format) : format_(format)
     {
-        dxil_.resize(g_dxilCacheDecompressedSize);
-        size_t size = ZSTD_decompress(dxil_.data(), dxil_.size(), g_compressedDxilCache, g_dxilCacheCompressedSize);
-        if (ZSTD_isError(size) || size != dxil_.size())
+        bool dxil = format == plume::RenderShaderFormat::DXIL;
+        const uint8_t* compressed = dxil ? g_compressedDxilCache : g_compressedSpirvCache;
+        size_t compressedSize = dxil ? g_dxilCacheCompressedSize : g_spirvCacheCompressedSize;
+        data_.resize(dxil ? g_dxilCacheDecompressedSize : g_spirvCacheDecompressedSize);
+        size_t size = ZSTD_decompress(data_.data(), data_.size(), compressed, compressedSize);
+        if (ZSTD_isError(size) || size != data_.size())
             Fatal("gpu: the shader cache does not decompress (%s)", ZSTD_isError(size) ? ZSTD_getErrorName(size) : "size");
-        Log("gpu: shader cache with %zu shaders, %zu MB of DXIL", g_shaderCacheEntryCount, dxil_.size() >> 20);
+        Log("gpu: shader cache with %zu shaders, %zu MB of %s", g_shaderCacheEntryCount, data_.size() >> 20,
+            dxil ? "DXIL" : "SMOL-V");
     }
 
-    std::span<const uint8_t> ShaderCache::Dxil(uint64_t key) const
+    const ShaderCacheEntry* ShaderCache::Find(uint64_t key) const
     {
         const ShaderCacheEntry* begin = g_shaderCacheEntries;
         const ShaderCacheEntry* end = begin + g_shaderCacheEntryCount;
         const ShaderCacheEntry* entry = std::lower_bound(begin, end, key,
             [](const ShaderCacheEntry& e, uint64_t hash) { return e.hash < hash; });
-        if (entry == end || entry->hash != key || uint64_t(entry->dxilOffset) + entry->dxilSize > dxil_.size())
+        if (entry == end || entry->hash != key)
+            return nullptr;
+        bool dxil = format_ == plume::RenderShaderFormat::DXIL;
+        uint64_t offset = dxil ? entry->dxilOffset : entry->spirvOffset;
+        uint64_t size = dxil ? entry->dxilSize : entry->spirvSize;
+        if (size == 0 || offset + size > data_.size())
+            return nullptr;
+        return entry;
+    }
+
+    bool ShaderCache::Has(uint64_t key) const
+    {
+        return Find(key) != nullptr;
+    }
+
+    std::vector<uint8_t> ShaderCache::Code(uint64_t key) const
+    {
+        const ShaderCacheEntry* entry = Find(key);
+        if (entry == nullptr)
             return {};
-        return { dxil_.data() + entry->dxilOffset, entry->dxilSize };
+        if (format_ == plume::RenderShaderFormat::DXIL)
+            return { data_.data() + entry->dxilOffset, data_.data() + entry->dxilOffset + entry->dxilSize };
+
+        const uint8_t* smolv = data_.data() + entry->spirvOffset;
+        std::vector<uint8_t> spirv(smolv::GetDecodedBufferSize(smolv, entry->spirvSize));
+        if (spirv.empty() || !smolv::Decode(smolv, entry->spirvSize, spirv.data(), spirv.size()))
+        {
+            Log("gpu: the SPIR-V of shader %016llX does not decode", (unsigned long long)key);
+            return {};
+        }
+        return spirv;
     }
 }

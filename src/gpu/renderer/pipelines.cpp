@@ -137,7 +137,7 @@ namespace gpu
     }
 
     Pipelines::Pipelines(plume::RenderDevice& device, const plume::RenderPipelineLayout& layout, std::filesystem::path listFile)
-        : device_(device), layout_(layout)
+        : device_(device), layout_(layout), cache_(ShaderFormat(device))
     {
         if (listFile.empty())
             return;
@@ -186,7 +186,7 @@ namespace gpu
                     break;
                 input->id = key.input;
                 // A key whose shaders the cache lost (another shader database) is left out.
-                if (cache_.Dxil(key.vertexShader).empty() || (key.pixelShader != 0 && cache_.Dxil(key.pixelShader).empty()))
+                if (!cache_.Has(key.vertexShader) || (key.pixelShader != 0 && !cache_.Has(key.pixelShader)))
                     continue;
                 if (entries_.try_emplace(key, Entry{ State::Queued, std::move(input), nullptr }).second)
                     queue_.push_back(key);
@@ -338,12 +338,10 @@ namespace gpu
         auto it = shaders_.find(key);
         if (it != shaders_.end())
             return it->second.get();
-        std::span<const uint8_t> dxil = cache_.Dxil(key);
+        std::vector<uint8_t> code = cache_.Code(key);
         std::unique_ptr<plume::RenderShader> shader;
-        if (ShaderFormat(device_) != plume::RenderShaderFormat::DXIL)
-            LOG_ONCE("gpu: the translated shaders are not loaded on Vulkan yet; their draws are skipped");
-        else if (!dxil.empty())
-            shader = device_.createShader(dxil.data(), dxil.size(), "main", plume::RenderShaderFormat::DXIL);
+        if (!code.empty())
+            shader = device_.createShader(code.data(), code.size(), "main", ShaderFormat(device_));
         else
             Log("gpu: shader %016llX is not in the shader cache; its draws are skipped", (unsigned long long)key);
         return shaders_.emplace(key, std::move(shader)).first->second.get();

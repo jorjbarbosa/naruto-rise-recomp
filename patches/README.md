@@ -297,6 +297,16 @@ the GPU clips in. The planes live in the shared constants at `c38`-`c43` (byte 6
 is zero and clips nothing. The clip distances come after the interpolators, so the pixel shader inputs keep
 their registers.
 
+### 0007: vertex input locations
+
+Vulkan matches vertex attributes by location only. Upstream took each input's location from
+`USAGE_LOCATIONS`, a table written for Unleashed Recompiled (its own comment says so), where Position1 and
+TexCoord7 share location 15 and usages missing from the table get no location. The host binds element `i` of
+the declaration at location `i`, so on Vulkan most draws would have read the wrong streams (in a sampled
+shader the elements Position0, Color0, Color1, Normal0, Tangent0, TexCoord0, TexCoord1 sat at 0, 8, 11, 1,
+2, 4, 5). Element `i` is now at location `i`, the index that also selects its fetch descriptor
+(`g_VertexFetchDescriptor(i)`), and the table is gone. DXIL matches by semantic and does not change.
+
 ## ffmpeg
 
 FFmpeg n7.1.5, shallow. The runtime builds only libavutil and libavcodec with the `xma1` decoder, from the

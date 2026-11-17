@@ -114,6 +114,11 @@ namespace gpu
         const plume::RenderPipeline* pipeline = pipelines_->Get(key, *op.input);
         if (pipeline == nullptr)
             return;
+        if (ShaderFormat(context_.Device()) != plume::RenderShaderFormat::DXIL)
+        {
+            LOG_ONCE("gpu: the draws are not recorded on Vulkan yet (no draw constants)");
+            return;
+        }
         const SurfaceDesc& target = op.color.key != 0 ? op.color : op.depth;
         Rect scissor = Intersect(op.scissor, { 0, 0, int32_t(target.width), int32_t(target.height) });
         if (scissor.Empty())
