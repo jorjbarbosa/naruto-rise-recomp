@@ -109,6 +109,46 @@ at `0x3B8000` of `0x3C0000`, so copying `image.size` bytes read past the buffer.
 whole image, with the rest zero (as the console loader leaves it). `default.xex` is unaffected (its sizes
 match).
 
+### 0006: funclets keep their registers in the context
+
+The `*_as_local` options turn registers into local variables of each recompiled function, which is only
+right when no register carries a value between functions outside the calling convention. In Naruto the
+compiler's SEH funclets do:
+
+- **What a funclet is.** The body of a `__finally` block (or an `__except` filter), emitted as a separate
+  function right after its parent. On the normal path the parent calls it with
+  `addi r12, rN, <frame size>` and `bl`. The funclet is part of the parent's body: it rebuilds the parent's
+  frame pointer from `r12` and reads and writes the parent's non-volatile registers (for example
+  `mr r3, r30` before `_unlock`).
+- **What would break.** With local registers the funclet gets zeros in place of the parent's values. This
+  was found in the generated code before the first run: the funclet of the thread start-up wrapper
+  (`0x82184364`, parent `0x82183AD0`) loads from `r27 + 1408` with its own, zero `r27`.
+- **The fix.** `Recompiler::FindContextRegisterFunctions` finds every `bl` preceded by `addi r12, rN, imm`
+  whose target is not a register save/restore helper. The target, the function holding the call and the
+  save/restore helpers are recompiled with every register in the context, as without the options. Any
+  other function follows the calling convention, so the two kinds can call each other. In both modules
+  `addi` is the only instruction that sets `r12` right before a call, apart from the two callers of the
+  stack probe (`rlwinm`).
+- **setjmp.** The 17 functions that call `setjmp` are recompiled the same way. `longjmp` brings the
+  registers back to their values at the `setjmp`, which the generated code does by restoring a copy of
+  the context; a local register would keep whatever it held at the `longjmp`.
+- **The context keeps every register.** The `PPC_CONFIG_*_AS_LOCAL` macros, which removed the local
+  registers from `PPCContext`, are no longer written to `ppc_config.h`: the functions above still use
+  them, and the modules of one runtime must agree on the layout. The cost is that host code naming one
+  of those registers (`ctx.r31`, `ctx.cr6`) now compiles and reads a value no guest function keeps:
+  hooks take what they need from the argument registers, `r1`, `r13` and `lr`.
+
+Found: 42 funclets with 39 parents in `default.xex` (35 of the funclets in the CRT, `0x822C5000` to
+`0x822D8200`) and 4 funclets with 8 parents in `AI2C.dll`.
+
+How it was checked: `tools/dev/local_registers.py`, a liveness pass over the generated C++ (per function,
+the local registers read on some path before being written, with calls to functions that never return
+ending a path). Run it again after a change to the options, to the recompiler or to the function
+analysis. After the patch it reports three functions that are called directly: the stack probe `0x8253B2D4`, which takes
+its size in `r12` and now probes nothing (guest stacks are committed on touch); `0x824D0830` (D3DX),
+a read on a path its own conditions exclude; and `0x8839913C`, reached only from a duplicate of
+`0x88399020` that starts 8 bytes early, on the exception data, and is never called.
+
 ### Not covered by the patches
 
 These are configuration items, in `config/<module>.toml` and `config/<module>_switch_tables.toml`:

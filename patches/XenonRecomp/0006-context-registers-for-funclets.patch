@@ -1,0 +1,187 @@
+diff --git a/XenonRecomp/recompiler.cpp b/XenonRecomp/recompiler.cpp
+index 26dc61d..709d9d3 100644
+--- a/XenonRecomp/recompiler.cpp
++++ b/XenonRecomp/recompiler.cpp
+@@ -93,6 +93,51 @@ bool Recompiler::LoadConfig(const std::string_view& configFilePath)
+     return true;
+ }
+ 
++// The register save/restore helpers (__savegprlr_14, __restfpr_14...), whatever the module suffix.
++static bool IsRegisterHelper(const std::string& name)
++{
++    return name.find("__rest") == 0 || name.find("__save") == 0;
++}
++
++// While alive, the *_as_local options are off when asked, so that a function is recompiled with every
++// register in the context.
++struct ContextRegistersScope
++{
++    RecompilerConfig& config;
++    const bool ctr;
++    const bool xer;
++    const bool reserved;
++    const bool cr;
++    const bool nonArgument;
++    const bool nonVolatile;
++
++    ContextRegistersScope(RecompilerConfig& config, bool contextRegisters)
++        : config(config), ctr(config.ctrAsLocalVariable), xer(config.xerAsLocalVariable),
++        reserved(config.reservedRegisterAsLocalVariable), cr(config.crRegistersAsLocalVariables),
++        nonArgument(config.nonArgumentRegistersAsLocalVariables), nonVolatile(config.nonVolatileRegistersAsLocalVariables)
++    {
++        if (contextRegisters)
++        {
++            config.ctrAsLocalVariable = false;
++            config.xerAsLocalVariable = false;
++            config.reservedRegisterAsLocalVariable = false;
++            config.crRegistersAsLocalVariables = false;
++            config.nonArgumentRegistersAsLocalVariables = false;
++            config.nonVolatileRegistersAsLocalVariables = false;
++        }
++    }
++
++    ~ContextRegistersScope()
++    {
++        config.ctrAsLocalVariable = ctr;
++        config.xerAsLocalVariable = xer;
++        config.reservedRegisterAsLocalVariable = reserved;
++        config.crRegistersAsLocalVariables = cr;
++        config.nonArgumentRegistersAsLocalVariables = nonArgument;
++        config.nonVolatileRegistersAsLocalVariables = nonVolatile;
++    }
++};
++
+ void Recompiler::Analyse()
+ {
+     for (size_t i = 14; i < 128; i++)
+@@ -296,6 +341,62 @@ void Recompiler::Analyse()
+     }
+ 
+     std::sort(functions.begin(), functions.end(), [](auto& lhs, auto& rhs) { return lhs.base < rhs.base; });
++
++    FindContextRegisterFunctions();
++}
++
++// The *_as_local options assume that a register kept as a local variable never carries a value
++// between functions. Three kinds of code break that:
++// - A funclet (the body of a __finally block or of an __except filter) that its parent calls
++//   directly. It is part of the parent's body: it receives the parent's frame in r12 and reads and
++//   writes the parent's non-volatile registers. The call is `addi r12, rN, frame` followed by `bl`.
++// - The register save/restore helpers, which read or write the caller's non-volatile registers.
++//   Functions with local registers do not call them, the ones found here still do.
++// - A function that calls setjmp: longjmp brings the registers back to their values at the setjmp,
++//   which the recompiled code does by restoring a copy of the context.
++// Those functions keep every register in the context, as without the options. Everything else
++// follows the calling convention and can be called from either kind.
++void Recompiler::FindContextRegisterFunctions()
++{
++    for (auto& fn : functions)
++    {
++        auto fnSymbol = image.symbols.find(fn.base);
++        if (fnSymbol != image.symbols.end() && fnSymbol->address == fn.base && IsRegisterHelper(fnSymbol->name))
++        {
++            contextRegisterFunctions.emplace(uint32_t(fn.base));
++            continue;
++        }
++
++        auto* data = (uint32_t*)image.Find(fn.base);
++        for (size_t i = 0; i < fn.size / 4; i++)
++        {
++            uint32_t insn = ByteSwap(data[i]);
++            if (PPC_OP(insn) != PPC_OP_B || !PPC_BL(insn) || PPC_BA(insn))
++                continue;
++
++            uint32_t target = uint32_t(fn.base + i * 4 + PPC_BI(insn));
++            if (config.setJmpAddress != 0 && target == config.setJmpAddress)
++            {
++                contextRegisterFunctions.emplace(uint32_t(fn.base));
++                continue;
++            }
++
++            // addi r12, rN, simm with N != 0 (N == 0 is li) right before the call.
++            uint32_t previous = i != 0 ? ByteSwap(data[i - 1]) : 0;
++            if (PPC_OP(previous) != PPC_OP_ADDI || ((previous >> 21) & 0x1F) != 12 || ((previous >> 16) & 0x1F) == 0)
++                continue;
++
++            auto symbol = image.symbols.find(target);
++            if (symbol == image.symbols.end() || symbol->address != target || symbol->type != Symbol_Function ||
++                IsRegisterHelper(symbol->name))
++            {
++                continue;
++            }
++
++            contextRegisterFunctions.emplace(target);
++            contextRegisterFunctions.emplace(uint32_t(fn.base));
++        }
++    }
+ }
+ 
+ bool Recompiler::Recompile(
+@@ -432,7 +533,7 @@ bool Recompiler::Recompile(
+ 
+                 if (targetSymbol != image.symbols.end() && targetSymbol->address == address && targetSymbol->type == Symbol_Function)
+                 {
+-                    if (config.nonVolatileRegistersAsLocalVariables && (targetSymbol->name.find("__rest") == 0 || targetSymbol->name.find("__save") == 0))
++                    if (config.nonVolatileRegistersAsLocalVariables && IsRegisterHelper(targetSymbol->name))
+                     {
+                         // print nothing
+                     }
+@@ -2406,6 +2507,8 @@ bool Recompiler::Recompile(
+ 
+ bool Recompiler::Recompile(const Function& fn)
+ {
++    ContextRegistersScope contextRegisters(config, contextRegisterFunctions.count(uint32_t(fn.base)) != 0);
++
+     auto base = fn.base;
+     auto end = base + fn.size;
+     auto* data = (uint32_t*)image.Find(base);
+@@ -2632,22 +2735,13 @@ void Recompiler::Recompile(const std::filesystem::path& headerFilePath)
+         println("#ifndef PPC_CONFIG_H_INCLUDED");
+         println("#define PPC_CONFIG_H_INCLUDED\n");
+ 
++        // The *_AS_LOCAL macros, which drop registers from the context, are not defined: the functions
++        // of contextRegisterFunctions still use those registers, and every module of a runtime must
++        // agree on the layout of the context.
+         if (config.skipLr)
+             println("#define PPC_CONFIG_SKIP_LR");      
+-        if (config.ctrAsLocalVariable)
+-            println("#define PPC_CONFIG_CTR_AS_LOCAL");      
+-        if (config.xerAsLocalVariable)
+-            println("#define PPC_CONFIG_XER_AS_LOCAL");      
+-        if (config.reservedRegisterAsLocalVariable)
+-            println("#define PPC_CONFIG_RESERVED_AS_LOCAL");      
+         if (config.skipMsr)
+             println("#define PPC_CONFIG_SKIP_MSR");      
+-        if (config.crRegistersAsLocalVariables)
+-            println("#define PPC_CONFIG_CR_AS_LOCAL");      
+-        if (config.nonArgumentRegistersAsLocalVariables)
+-            println("#define PPC_CONFIG_NON_ARGUMENT_AS_LOCAL");   
+-        if (config.nonVolatileRegistersAsLocalVariables)
+-            println("#define PPC_CONFIG_NON_VOLATILE_AS_LOCAL");
+ 
+         println("");
+ 
+diff --git a/XenonRecomp/recompiler.h b/XenonRecomp/recompiler.h
+index 8242db5..3901dad 100644
+--- a/XenonRecomp/recompiler.h
++++ b/XenonRecomp/recompiler.h
+@@ -35,6 +35,10 @@ struct Recompiler
+     size_t cppFileIndex = 0;
+     RecompilerConfig config;
+ 
++    // Functions recompiled with every register in the context even when the *_as_local options are
++    // set, because they share registers with another function outside the calling convention.
++    std::unordered_set<uint32_t> contextRegisterFunctions;
++
+     bool LoadConfig(const std::string_view& configFilePath);
+ 
+     template<class... Args>
+@@ -52,6 +56,8 @@ struct Recompiler
+ 
+     void Analyse();
+ 
++    void FindContextRegisterFunctions();
++
+     // TODO: make a RecompileArgs struct instead this is getting messy
+     bool Recompile(
+         const Function& fn,

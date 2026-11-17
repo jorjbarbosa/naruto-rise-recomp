@@ -7,6 +7,21 @@ file_path = "../game/default.xex"
 out_directory_path = "../build/ppc"
 switch_table_file_path = "default_switch_tables.toml"
 
+# Registers kept as local variables of each recompiled function instead of fields of the guest context,
+# so the host compiler can keep them in host registers: the count and carry registers, the reservation,
+# the condition fields, the scratch registers that carry no argument (r0, r2, r11, r12, f0, v32-v63) and
+# the callee-saved ones (r14-r31, f14-f31, v14-v31, v64-v127; such a function does not call the
+# save/restore helpers). The functions that share registers outside the calling convention keep them in
+# the context (patches/README.md, XenonRecomp 0006); after a change here, run
+# tools/dev/local_registers.py on the output. The link register stays in the context: the runtime logs
+# it. Host code must not read these registers from the context: they hold no guest value there.
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+cr_as_local = true
+non_argument_as_local = true
+non_volatile_as_local = true
+
 # Register save/restore helpers. Found by byte pattern and confirmed against the XDK 6274 libraries.
 restgprlr_14_address = 0x822C5480
 savegprlr_14_address = 0x822C5430

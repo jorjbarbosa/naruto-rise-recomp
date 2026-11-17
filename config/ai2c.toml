@@ -12,6 +12,14 @@ switch_table_file_path = "ai2c_switch_tables.toml"
 # links next to default.xex.
 module_name = "ai2c"
 
+# Registers kept as local variables: the same options as config/default.toml, which explains them.
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+cr_as_local = true
+non_argument_as_local = true
+non_volatile_as_local = true
+
 # Register save/restore helpers, found by byte pattern (same code as in default.xex). The DLL has no
 # vector code and no VMX helpers. It has no setjmp/longjmp either.
 restgprlr_14_address = 0x88398DA0
