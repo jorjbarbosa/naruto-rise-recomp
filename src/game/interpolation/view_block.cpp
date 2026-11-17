@@ -64,8 +64,11 @@ namespace game::interpolation
     }
 
     ExtraViewBlockState::ExtraViewBlockState(ExtraDt dt)
-        : time_(dt == ExtraDt::kZero ? TimeStructure() : 0), cutCounter_(mem::Load32(jade::kCutCounter))
+        : time_(dt == ExtraDt::kZero ? TimeStructure() : 0), cutCounter_(mem::Load32(jade::kCutCounter)),
+          cutFadeRate_(mem::Load32(jade::kCutFadeRate)), cutFlag_(mem::Load32(jade::kCutFlag))
     {
+        for (uint32_t i = 0; i < cutDetector_.size(); i++)
+            cutDetector_[i] = mem::Load32(jade::kCutDetector + jade::kCutDetectorState + 4 * i);
         if (time_ == 0)
             return;
         dt_ = mem::Load64(time_ + jade::tim::kDt);
@@ -87,6 +90,10 @@ namespace game::interpolation
             return;
         restored_ = true;
         mem::Store32(jade::kCutCounter, cutCounter_);
+        mem::Store32(jade::kCutFadeRate, cutFadeRate_);
+        mem::Store32(jade::kCutFlag, cutFlag_);
+        for (uint32_t i = 0; i < cutDetector_.size(); i++)
+            mem::Store32(jade::kCutDetector + jade::kCutDetectorState + 4 * i, cutDetector_[i]);
         if (time_ == 0)
             return;
         mem::Store64(time_ + jade::tim::kDt, dt_);

@@ -100,11 +100,14 @@ namespace game::interpolation::view_clock
         bool excludes_; // off the main thread
     };
 
-    // The current view block's image and tick game times (+48, µs), for the motion record.
+    // The current view block's image and tick game times (+48, µs), for the motion record, and its image
+    // position past the last tick (0 to 1 periods; monotonic within a timeline, unlike the clock's
+    // alpha), which the transforms blend at so the objects and the phases show the same time.
     struct Times
     {
-        bool active = false;
+        bool active = false; // a view block under the gate (or a ReplayScope) is running
         uint64_t image = 0, tick = 0;
+        double alpha = 0;
     };
     Times CurrentTimes();
 

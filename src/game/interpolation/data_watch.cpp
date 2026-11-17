@@ -1,23 +1,25 @@
-// The data watch (data_watch.h): a hardware data breakpoint on the view's display counter.
+// The data watch (data_watch.h): hardware data breakpoints on up to four guest words.
 
 #include "game/interpolation/data_watch.h"
 
 #include "game/addresses.h"
 #include "game/interpolation/diagnostics.h"
+#include "game/interpolation/world.h"
 #include "host/window.h"
 #include "kernel/kernel.h"
 #include "log.h"
 #include "memory.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
-#include <unordered_map>
 #include <vector>
 #include <windows.h>
 #include <dbghelp.h>
@@ -28,10 +30,11 @@ namespace game::interpolation::watch
     namespace
     {
         constexpr uint32_t kSteps = 8;          // main steps watched per F8 press
+        constexpr uint32_t kSlots = 4;          // the debug registers 0 to 3
         constexpr uint32_t kCounterOffset = jade::view::kRenderingCounter;
         constexpr int kStackDepth = 10;
 
-        // One host instruction that touched the word (the breakpoint traps after it).
+        // One host instruction that touched a watched word (the breakpoint traps after it).
         struct Site
         {
             std::string thread;
@@ -47,17 +50,23 @@ namespace game::interpolation::watch
         uint32_t g_report = 0;
         uint32_t g_stepsLeft = 0; // main thread
         bool g_armed = false;     // main thread: install at the next delivery
-        uint32_t g_watched = 0;   // guest address of the watched word, 0 when none (main thread)
-        uint32_t g_fixedAddress = 0; // ROAN_DATA_WATCH_ADDRESS (hex), else the view's counter
+        bool g_watching = false;  // main thread
+        // ROAN_DATA_WATCH_ADDRESS (up to kSlots hex addresses, comma-separated), else the view's counter.
+        std::vector<uint32_t> g_fixedAddresses;
+        // ROAN_DATA_WATCH_OBJECT (hex offsets): words of the first object with dynamics the display
+        // rendered in the view block the watch starts after.
+        std::vector<uint32_t> g_objectOffsets;
+        uint32_t g_actor = 0; // main thread: that object in the current view block
+        std::array<uint32_t, kSlots> g_watched{}; // guest addresses of the watched words, 0 when unused
 
-        // Shared with the exception handler, which runs on whichever thread touched the word.
-        std::atomic<uint8_t*> g_host{ nullptr };
+        // Shared with the exception handler, which runs on whichever thread touched a word.
+        std::array<std::atomic<uint8_t*>, kSlots> g_host{};
         std::atomic<bool> g_inBlock{ false };
         std::atomic<uint32_t> g_step{ 0 };
         std::mutex g_mutex; // g_sites, g_last and dbghelp
-        std::unordered_map<uint64_t, Site> g_sites;
-        uint32_t g_last = 0;
-        // Set while the handler runs on this thread: its own read of the word traps again.
+        std::map<std::pair<uint32_t, uint64_t>, Site> g_sites; // by slot and instruction
+        std::array<uint32_t, kSlots> g_last{};
+        // Set while the handler runs on this thread: its own read of a word traps again.
         thread_local bool t_inHandler = false;
 
         uint32_t LoadWord(const uint8_t* host)
@@ -86,14 +95,14 @@ namespace game::interpolation::watch
             }
         }
 
-        // Counts one access at the instruction before context.Rip. A value different from the last one
-        // seen is a write.
-        void Record(const CONTEXT& context, uint32_t value, bool inBlock)
+        // Counts one access of slot's word at the instruction before context.Rip. A value different
+        // from the last one seen is a write.
+        void Record(uint32_t slot, const CONTEXT& context, uint32_t value, bool inBlock)
         {
             std::lock_guard lock(g_mutex);
-            bool write = value != g_last;
-            g_last = value;
-            auto [it, added] = g_sites.try_emplace(context.Rip);
+            bool write = value != g_last[slot];
+            g_last[slot] = value;
+            auto [it, added] = g_sites.try_emplace({ slot, context.Rip });
             Site& site = it->second;
             if (added)
             {
@@ -108,33 +117,37 @@ namespace game::interpolation::watch
             count++;
         }
 
-        // The data breakpoint's single-step trap. Counts the access and continues; any other exception
+        // The data breakpoints' single-step trap. Counts the access and continues; any other exception
         // goes on to the next handler.
         LONG CALLBACK OnTrap(EXCEPTION_POINTERS* info)
         {
             if (info->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP)
                 return EXCEPTION_CONTINUE_SEARCH;
             CONTEXT* context = info->ContextRecord;
-            if ((context->Dr6 & 1) == 0)
+            DWORD64 hits = context->Dr6 & 0xF;
+            if (hits == 0)
                 return EXCEPTION_CONTINUE_SEARCH;
             context->Dr6 = 0;
-            uint8_t* host = g_host.load();
             // A trap that was pending when the watch ended, or the handler's own read below.
-            if (host == nullptr || t_inHandler)
+            if (t_inHandler)
                 return EXCEPTION_CONTINUE_EXECUTION;
-
             t_inHandler = true;
-            Record(*context, LoadWord(host), g_inBlock.load());
+            for (uint32_t slot = 0; slot < kSlots; slot++)
+            {
+                uint8_t* host = g_host[slot].load();
+                if ((hits & (1ull << slot)) != 0 && host != nullptr)
+                    Record(slot, *context, LoadWord(host), g_inBlock.load());
+            }
             t_inHandler = false;
             return EXCEPTION_CONTINUE_EXECUTION;
         }
 
-        // Sets (address != nullptr) or clears debug register 0 on every thread of the process. Runs on a
-        // helper thread, since a thread cannot change its own debug registers; each thread is suspended
-        // only while its context is set, and nothing is allocated meanwhile.
-        void SetBreakpoint(void* address)
+        // Sets (an address not null) or clears debug registers 0 to 3 on every thread of the process. Runs
+        // on a helper thread, since a thread cannot change its own debug registers; each thread is
+        // suspended only while its context is set, and nothing is allocated meanwhile.
+        void SetBreakpoints(const std::array<void*, kSlots>& addresses)
         {
-            std::thread helper([address] {
+            std::thread helper([addresses] {
                 DWORD self = GetCurrentThreadId();
                 DWORD process = GetCurrentProcessId();
                 std::vector<DWORD> threads;
@@ -149,6 +162,15 @@ namespace game::interpolation::watch
                 }
                 CloseHandle(snapshot);
 
+                // Per slot i: Li (bit 2i), R/Wi = 11 (reads and writes, bits 16+4i..17+4i), LENi = 11 (4
+                // bytes, bits 18+4i..19+4i).
+                DWORD64 mask = 0, bits = 0;
+                for (uint32_t i = 0; i < kSlots; i++)
+                {
+                    mask |= (DWORD64(3) << (2 * i)) | (DWORD64(0xF) << (16 + 4 * i));
+                    if (addresses[i] != nullptr)
+                        bits |= (DWORD64(1) << (2 * i)) | (DWORD64(0xF) << (16 + 4 * i));
+                }
                 uint32_t done = 0;
                 for (DWORD id : threads)
                 {
@@ -161,10 +183,11 @@ namespace game::interpolation::watch
                         context.ContextFlags = CONTEXT_DEBUG_REGISTERS;
                         if (GetThreadContext(thread, &context))
                         {
-                            context.Dr0 = reinterpret_cast<DWORD64>(address);
-                            // L0 (bit 0), R/W0 = 11 (reads and writes, bits 16-17), LEN0 = 11 (4 bytes, bits 18-19).
-                            context.Dr7 = address != nullptr ? (context.Dr7 & ~DWORD64(0xF0003)) | 0xF0001
-                                                             : context.Dr7 & ~DWORD64(0xF0003);
+                            context.Dr0 = reinterpret_cast<DWORD64>(addresses[0]);
+                            context.Dr1 = reinterpret_cast<DWORD64>(addresses[1]);
+                            context.Dr2 = reinterpret_cast<DWORD64>(addresses[2]);
+                            context.Dr3 = reinterpret_cast<DWORD64>(addresses[3]);
+                            context.Dr7 = (context.Dr7 & ~mask) | bits;
                             context.Dr6 = 0;
                             if (SetThreadContext(thread, &context))
                                 done++;
@@ -173,7 +196,7 @@ namespace game::interpolation::watch
                     }
                     CloseHandle(thread);
                 }
-                Log("watch: %s the breakpoint on %u of %zu threads", address != nullptr ? "set" : "cleared", done,
+                Log("watch: %s the breakpoints on %u of %zu threads", bits != 0 ? "set" : "cleared", done,
                     threads.size());
             });
             helper.join();
@@ -197,29 +220,37 @@ namespace game::interpolation::watch
         void WriteReport()
         {
             std::lock_guard lock(g_mutex);
-            std::vector<std::pair<uint64_t, const Site*>> sites;
-            for (auto& [rip, site] : g_sites)
-                sites.emplace_back(rip, &site);
-            auto total = [](const Site* s) { return s->readsInBlock + s->writesInBlock + s->readsOutside + s->writesOutside; };
-            std::sort(sites.begin(), sites.end(), [&](auto& a, auto& b) { return total(a.second) > total(b.second); });
-
+            auto total = [](const Site& s) { return s.readsInBlock + s.writesInBlock + s.readsOutside + s.writesOutside; };
             char name[64];
             std::snprintf(name, sizeof(name), "data-watch-%u.txt", g_report);
             std::FILE* file = OpenDiagnosticsFile(name);
-            Log("watch %u: guest %08X, %zu instructions touched it", g_report, g_watched, sites.size());
-            for (auto& [rip, site] : sites)
+            for (uint32_t slot = 0; slot < kSlots; slot++)
             {
-                std::string where = Symbol(rip);
-                Log("watch %u:   %-40s %-16s block r%llu w%llu, outside r%llu w%llu", g_report, where.c_str(),
-                    site->thread.c_str(), site->readsInBlock, site->writesInBlock, site->readsOutside, site->writesOutside);
-                if (file == nullptr)
+                if (g_watched[slot] == 0)
                     continue;
-                std::fprintf(file, "%s  thread %s  view block: reads %llu writes %llu  outside: reads %llu writes %llu"
-                                   "  first: step %u value %08X\n",
-                    where.c_str(), site->thread.c_str(), site->readsInBlock, site->writesInBlock, site->readsOutside,
-                    site->writesOutside, site->firstStep, site->firstValue);
-                for (int i = 0; i < kStackDepth && site->stack[i] != 0; i++)
-                    std::fprintf(file, "    #%d %s\n", i, Symbol(site->stack[i]).c_str());
+                std::vector<std::pair<uint64_t, const Site*>> sites;
+                for (auto& [key, site] : g_sites)
+                    if (key.first == slot)
+                        sites.emplace_back(key.second, &site);
+                std::sort(sites.begin(), sites.end(), [&](auto& a, auto& b) { return total(*a.second) > total(*b.second); });
+                Log("watch %u: guest %08X, %zu instructions touched it", g_report, g_watched[slot], sites.size());
+                if (file != nullptr)
+                    std::fprintf(file, "== guest %08X\n", g_watched[slot]);
+                for (auto& [rip, site] : sites)
+                {
+                    std::string where = Symbol(rip);
+                    Log("watch %u:   %08X %-40s %-16s block r%llu w%llu, outside r%llu w%llu", g_report, g_watched[slot],
+                        where.c_str(), site->thread.c_str(), site->readsInBlock, site->writesInBlock, site->readsOutside,
+                        site->writesOutside);
+                    if (file == nullptr)
+                        continue;
+                    std::fprintf(file, "%s  thread %s  view block: reads %llu writes %llu  outside: reads %llu writes %llu"
+                                       "  first: step %u value %08X\n",
+                        where.c_str(), site->thread.c_str(), site->readsInBlock, site->writesInBlock, site->readsOutside,
+                        site->writesOutside, site->firstStep, site->firstValue);
+                    for (int i = 0; i < kStackDepth && site->stack[i] != 0; i++)
+                        std::fprintf(file, "    #%d %s\n", i, Symbol(site->stack[i]).c_str());
+                }
             }
             if (file != nullptr)
                 std::fclose(file);
@@ -234,12 +265,28 @@ namespace game::interpolation::watch
             g_enabled = EnvironmentFlag("ROAN_DATA_WATCH") ? 1 : 0;
             if (g_enabled == 1)
             {
-                if (const char* address = std::getenv("ROAN_DATA_WATCH_ADDRESS"))
-                    g_fixedAddress = uint32_t(std::strtoul(address, nullptr, 16)) & ~3u;
+                auto parse = [](const char* name, std::vector<uint32_t>& out, bool zero) {
+                    const char* list = std::getenv(name);
+                    for (const char* p = list; p != nullptr && *p != 0 && out.size() < kSlots;)
+                    {
+                        char* end = nullptr;
+                        uint32_t value = uint32_t(std::strtoul(p, &end, 16)) & ~3u;
+                        if (end == p)
+                            break;
+                        if (value != 0 || zero)
+                            out.push_back(value);
+                        p = *end == ',' ? end + 1 : end;
+                    }
+                };
+                parse("ROAN_DATA_WATCH_ADDRESS", g_fixedAddresses, false);
+                parse("ROAN_DATA_WATCH_OBJECT", g_objectOffsets, true);
+                if (g_objectOffsets.size() > kSlots - std::min<size_t>(g_fixedAddresses.size(), kSlots))
+                    g_objectOffsets.resize(kSlots - std::min<size_t>(g_fixedAddresses.size(), kSlots));
                 AddVectoredExceptionHandler(1, OnTrap);
                 g_presses = host::DiagnosticKeyPresses();
-                if (g_fixedAddress != 0)
-                    Log("watch: armed, press F8 in the game window to watch %08X for %u main steps", g_fixedAddress, kSteps);
+                if (!g_fixedAddresses.empty() || !g_objectOffsets.empty())
+                    Log("watch: armed, press F8 in the game window to watch %zu words for %u main steps",
+                        g_fixedAddresses.size() + g_objectOffsets.size(), kSteps);
                 else
                     Log("watch: armed, press F8 in the game window to watch view+0x%X for %u main steps", kCounterOffset, kSteps);
             }
@@ -252,7 +299,7 @@ namespace game::interpolation::watch
         uint32_t presses = host::DiagnosticKeyPresses();
         bool pressed = presses != g_presses;
         g_presses = presses;
-        if (pressed && !g_armed && g_watched == 0)
+        if (pressed && !g_armed && !g_watching)
         {
             g_armed = true;
             g_report++;
@@ -264,32 +311,58 @@ namespace game::interpolation::watch
     void ViewBlockStart()
     {
         g_inBlock.store(true);
+        g_actor = 0;
     }
 
-    void ViewBlockEnd(uint32_t view)
+    void NoteRendered(uint32_t object)
+    {
+        if (g_actor == 0 && HasDynamics(object))
+            g_actor = object;
+    }
+
+    void ViewBlockEnd(uint32_t view, bool sectorSwitch)
     {
         g_inBlock.store(false);
         if (!g_armed)
             return;
+        // No actor in this view block, or the delivery's sector switch may have destroyed it: the next.
+        if (!g_objectOffsets.empty() && (g_actor == 0 || sectorSwitch))
+            return;
         g_armed = false;
-        g_watched = g_fixedAddress != 0 ? g_fixedAddress : view + kCounterOffset;
-        uint8_t* host = mem::Ptr(g_watched);
+        g_watched = {};
+        if (g_fixedAddresses.empty() && g_objectOffsets.empty())
+            g_watched[0] = view + kCounterOffset;
+        std::copy(g_fixedAddresses.begin(), g_fixedAddresses.end(), g_watched.begin());
+        for (size_t i = 0; i < g_objectOffsets.size(); i++)
+            g_watched[g_fixedAddresses.size() + i] = g_actor + g_objectOffsets[i];
+        if (g_actor != 0)
+            Log("watch %u: object %08X", g_report, g_actor);
+        std::array<void*, kSlots> hosts{};
         {
             std::lock_guard lock(g_mutex);
-            g_last = LoadWord(host);
+            for (uint32_t slot = 0; slot < kSlots; slot++)
+            {
+                if (g_watched[slot] == 0)
+                    continue;
+                hosts[slot] = mem::Ptr(g_watched[slot]);
+                g_last[slot] = LoadWord(static_cast<uint8_t*>(hosts[slot]));
+            }
         }
-        g_host.store(host);
+        for (uint32_t slot = 0; slot < kSlots; slot++)
+            g_host[slot].store(static_cast<uint8_t*>(hosts[slot]));
         g_stepsLeft = kSteps + 1; // the rest of this main step, then kSteps whole ones
-        SetBreakpoint(host);
+        g_watching = true;
+        SetBreakpoints(hosts);
     }
 
     void MainStepEnd()
     {
-        if (g_watched == 0 || --g_stepsLeft != 0)
+        if (!g_watching || --g_stepsLeft != 0)
             return;
-        SetBreakpoint(nullptr);
-        g_host.store(nullptr);
+        SetBreakpoints({});
+        for (auto& host : g_host)
+            host.store(nullptr);
         WriteReport();
-        g_watched = 0;
+        g_watching = false;
     }
 }

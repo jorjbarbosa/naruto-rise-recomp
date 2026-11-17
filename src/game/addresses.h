@@ -19,8 +19,10 @@
 #define JADE_DISPLAY sub_8265A058       // the display: camera, mount, renders (r3 world, r4 view)
 #define JADE_EFFECTS_DRAW sub_826AC2E8  // waits for the effects' update and draws them (r3 effects, r4 view)
 #define JADE_DELIVER sub_8259FF40       // hands the frame to the render thread (r3 view, r4 sector switch)
+#define JADE_DISPLAY_CAMERA sub_82659B88 // the display's camera from a view entry (r3 entry): first per entry, again at the display's end
 #define JADE_RENDER_OBJECT sub_825E28D0 // WOR_Render_One_GO: apply modifiers, render, unapply (r6 object)
 #define JADE_BONE_COPY sub_820E91E0     // copies a bone matrix into the frame's packet (r3 bone, r4 matrix)
+#define JADE_POSE_COPY sub_82580968     // GEO_SKN_Compute4Display: the skin's bones, relative to the object, to JADE_BONE_COPY (r3 object, r4 geometry)
 #define JADE_HAND_PACKET sub_820EFFB8   // main thread: hands the filled packet to the render thread
 #define JADE_DRAW_PACKET sub_820FC008   // render thread: draws a handed packet (r3 packet)
 #define JADE_DEVICE_LOCK sub_820E73A8   // takes the D3D device lock (recursive, per thread; r3 the lock)
@@ -33,6 +35,12 @@
 #define JADE_DESTROY_OBJECT_CHECKED sub_8266C1F0 // drops the object (r3) from a world change list, then JADE_DESTROY_OBJECT
 #define JADE_FREE sub_820C0018          // the engine's free: through the memory manager's vtable +20
 #define JADE_HEAP_FREE sub_82188C88     // the heap's free (r3 heap, r4 block): every free and realloc ends here
+
+// Hierarchy and skeleton matrices (step 6 document, section 1). The display calls them from the Apply
+// of modifiers 5, 14, 22, 26 and 45 and from the skeleton walk of an animated object's render.
+#define JADE_GLOBAL_FROM_HIERARCHY sub_826A52E8 // r4 = the locals of r3 and its fathers up to one without a father, times that one's global (r5 1)
+#define JADE_LOCAL_FROM_GLOBAL sub_826A5998     // a hierarchy object's local from its global and its father's (r3 object)
+#define JADE_SKELETON_CHILD sub_826B96D8        // a skeleton object (r3) of an animated object (r4): its bone (r5) and global, or its local first
 
 // Readers of the game time (step 3 document, section 4). On the display's path, main thread:
 #define JADE_MODIFIER_1_APPLY sub_8260B188   // OnduleTonCorps: amplitudes and a fade from the game time
@@ -51,6 +59,14 @@
 #define JADE_SCREEN_EFFECT_SCROLL sub_8211C278
 #define JADE_SCREEN_EFFECT_PROGRESS sub_8211EA08
 
+// The save thumbnail (save_thumbnail.h). The request (820ECD38, from the save's start 82651F88) sets
+// the capture task's +60 to the thumbnail and its +8 (pending); at every packet hand-off 820F01D8 sets
+// each task's +4 (enabled) from +8, then calls its vtable +44, for the capture task 8211D7B0
+// (+56 = +60); the render thread (820F2470) runs vtable +20, the capture 8211D878, when +4 is set.
+#define JADE_CAPTURE_TASK_COPY sub_8211D7B0 // the capture task's per-hand-off copy (r3 the task): +56 = +60
+#define JADE_THUMBNAIL_CAPTURE sub_8211D878 // render thread: draws, resolves, saves and compresses into [task+56]; clears +8 and +60; 1 on success
+#define JADE_THUMBNAIL_RELEASE sub_82583D28 // frees a thumbnail's two buffers (r3 the thumbnail); every free of one follows it
+
 namespace game::jade
 {
     // Globals.
@@ -60,6 +76,14 @@ namespace game::jade
     constexpr uint32_t kViewsOff = 0x82C0EBB4;    // nonzero: the main step skips the view block
     constexpr uint32_t kEffects = 0x82C0EB04;     // the world's effects (first argument of JADE_EFFECTS_DRAW)
     constexpr uint32_t kCutCounter = 0x82C0EB34;  // camera cut counter: 4 on a cut, minus one per display
+    // The camera cut detector (8267A2A0, called by the display) also keeps the last camera it saw in
+    // the scene manager's block (words 1 to 52: the view matrix, a view-projection cache, the first view
+    // entry's position, the view direction), and sets the fade rate and a flag from the sector manager.
+    constexpr uint32_t kCutDetector = 0x82C0F1F8;
+    constexpr uint32_t kCutDetectorState = 4;      // offset of its state in the block
+    constexpr uint32_t kCutDetectorStateSize = 208;
+    constexpr uint32_t kCutFadeRate = 0x826F6368;  // float: what the fade helper 82679C68 moves by, times the dt
+    constexpr uint32_t kCutFlag = 0x82C0EB30;
     constexpr uint32_t kDisplayData = 0x82C0EFA4; // the view being displayed
     constexpr uint32_t kPacketPending = 0x82C0F038; // set by JADE_HAND_PACKET: 1 when the handed packet is to be drawn
     constexpr uint32_t kDeviceLock = 0x82C0F008;    // pointer to the D3D device lock (device_lock::)
@@ -100,6 +124,7 @@ namespace game::jade
     namespace view
     {
         constexpr uint32_t kCurrentObject = 228;   // the object being rendered or applied
+        constexpr uint32_t kFieldOfView = 300;     // float, from the view entry (JADE_DISPLAY_CAMERA)
         constexpr uint32_t kCameraDirection = 460; // 3 floats
         constexpr uint32_t kCameraPosition = 476;  // 3 floats
         constexpr uint32_t kWorld = 2248;          // the world the view block displays
@@ -108,6 +133,16 @@ namespace game::jade
         constexpr uint32_t kRenderingCounter = 0x964;
         // The extent the probes label: up to the last field the delivery writes (+2572, 8259FF40).
         constexpr uint32_t kProbeSize = 2576;
+    }
+
+    // A view entry (WOR_tdst_View, 172 bytes; the world's +48 holds them): what the display builds its
+    // camera from (JADE_DISPLAY_CAMERA).
+    namespace view_entry
+    {
+        constexpr uint32_t kMatrix = 0;         // st_ViewPoint: 16 floats and a type word
+        constexpr uint32_t kFather = 136;       // pst_Father, the object the view follows (native 12500)
+        constexpr uint32_t kFieldOfView = 148;  // float (native 12505)
+        constexpr uint32_t kViewport = 152;     // 4 floats: left, top, width, height
     }
 
     // World: [+48] is its display data, whose +144 the main step points at the view.
@@ -128,17 +163,50 @@ namespace game::jade
         // The extent the probes label (the structure ends before it).
         constexpr uint32_t kProbeSize = 96;
 
+        constexpr uint32_t kIdentityAdditionalMatrices = 0x00200000; // has additional matrices (the pose copy reads them)
+        constexpr uint32_t kIdentityHierarchy = 0x00400000;          // has a hierarchy block (base::kHierarchy)
         constexpr uint32_t kIdentityAdditionalPointers = 0x01000000; // additional matrices are GizmoPtr entries
         constexpr uint32_t kStatusMounted = 0x00040000;              // the mount renders it...
         constexpr uint32_t kStatusNotMounted = 0x00200004;           // ...unless ForceInvisible or Culled
+        // In a skeleton (JADE_SKELETON_CHILD): the walk computes the object's local from its global,
+        // and its bone from that, instead of its global from the bone.
+        constexpr uint32_t kStatusGlobalToBone = 0x80000000;
     }
 
     // OBJ_tdst_Base.
     namespace base
     {
         constexpr uint32_t kDynamics = 4;           // DYN_tdst_Dyna: first word bit 31 set when active
-        constexpr uint32_t kAdditionalMatrices = 12; // OBJ_tdst_AdditionalMatrix: +0 count, +4 array
+        constexpr uint32_t kHierarchy = 8;          // the hierarchy block (hierarchy::), with kIdentityHierarchy
+        constexpr uint32_t kAdditionalMatrices = 12; // OBJ_tdst_AdditionalMatrix (additional::)
         constexpr uint32_t kSize = 20;
+    }
+
+    // The hierarchy block of an object ([[object+28]+8]).
+    namespace hierarchy
+    {
+        constexpr uint32_t kFather = 4; // the father object, or 0
+        constexpr uint32_t kLocal = 8;  // the local matrix: global = local x the father's global
+    }
+
+    // OBJ_tdst_AdditionalMatrix: the bones of a skinned object.
+    namespace additional
+    {
+        constexpr uint32_t kCount = 0; // signed: the pose copy reads entry i only when i < count
+        constexpr uint32_t kArray = 4; // 68-byte matrices, or gizmo:: entries with kIdentityAdditionalPointers
+    }
+
+    // OBJ_tdst_GizmoPtr, 12 bytes. The pose copy (JADE_POSE_COPY) takes the global matrix of kObject
+    // ([kObject+20], made relative to the skinned object) when kId is kIdGlobal or kObject has
+    // kIdentityAdditionalPointers, then the identity when kObject is null; otherwise kMatrix, already
+    // relative to the skinned object.
+    namespace gizmo
+    {
+        constexpr uint32_t kMatrix = 0;
+        constexpr uint32_t kObject = 4;
+        constexpr uint32_t kId = 8;
+        constexpr uint32_t kIdGlobal = 0xFFFFFFFF;
+        constexpr uint32_t kSize = 12;
     }
 
     // OBJ_tdst_Extended.
@@ -165,6 +233,21 @@ namespace game::jade
         // Type bit 8 (MATH_Ci_Scale in the source): unit rows, the scale of each row in its fourth float.
         constexpr uint32_t kTypeScale = 8;
         constexpr uint32_t kSize = 68;
-        constexpr uint32_t kGizmoPtrSize = 12; // OBJ_tdst_GizmoPtr: +0 the matrix
+    }
+
+    // The renderer's thumbnail capture task (one object, renderer +168).
+    namespace capture
+    {
+        constexpr uint32_t kVtable = 0x82087C28;
+        constexpr uint32_t kEnabled = 4;    // read by the render thread's dispatch (vtable +40)
+        constexpr uint32_t kPending = 8;    // set by the request, cleared by the capture
+        constexpr uint32_t kThumbnail = 56; // the capture's thumbnail
+        constexpr uint32_t kRequest = 60;   // the requested thumbnail, cleared by the capture
+    }
+
+    // A save thumbnail (20 bytes, allocated by the save's start 82651F88).
+    namespace thumbnail
+    {
+        constexpr uint32_t kReady = 16; // 1 once captured (the capture's last store)
     }
 }

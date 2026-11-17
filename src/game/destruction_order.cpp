@@ -4,6 +4,7 @@
 #include "game/destruction_order.h"
 
 #include "game/addresses.h"
+#include "game/interpolation/lifetime.h"
 #include "game/render_packets.h"
 #include "kernel/kernel.h"
 #include "log.h"
@@ -36,7 +37,10 @@ namespace game::destruction
     {
         using Clock = std::chrono::steady_clock;
 
-        constexpr std::chrono::milliseconds kWaitLimit{ 100 };
+        // Above the slowest packets measured with the render thread saturated (about 1 s, many draws
+        // under the interpolation's gate, step 7 document); a ceiling still, so a packet that never
+        // finishes cannot hang the game. Timeouts are counted, the first kLoggedTimeouts per site logged.
+        constexpr std::chrono::milliseconds kWaitLimit{ 2000 };
         constexpr uint32_t kReportTicks = 900; // end-of-frame calls between two reports (30 s at 30 ticks/s)
         constexpr uint32_t kLoggedTimeouts = 10;
         constexpr size_t kLoggedCallers = 16;
@@ -320,10 +324,11 @@ PPC_FUNC(JADE_SECTOR_SWITCH)
         [&] { ORIGINAL(JADE_SECTOR_SWITCH)(ctx, base); });
 }
 
-// Destroy of a game object (8266BA98, r3 the object). Hooked to count it for its site, and outside the
-// sites to wait for a world packet before it.
+// Destroy of a game object (8266BA98, r3 the object). Hooked to count it for its site, outside the
+// sites to wait for a world packet before it, and to report it to the state interpolation's tracking.
 PPC_FUNC(JADE_DESTROY_OBJECT)
 {
+    game::interpolation::lifetime::NoteDestroy(ctx.r3.u32);
     destruction::Scope* scope = destruction::t_scope;
     if (scope != nullptr)
     {
@@ -367,10 +372,12 @@ PPC_FUNC(JADE_FREE)
 }
 
 // The heap's free (82188C88, r3 heap, r4 block): where the engine's free, realloc and the heaps'
-// virtual free end, under the heap's lock. Hooked to count the frees inside a site; never waits here,
-// so a free that reaches it before a deferred wait (not through the engine's free) is only checked.
+// virtual free end, under the heap's lock. Hooked to count the frees inside a site, and to report the
+// block to the state interpolation's tracking (its header still holds the size); never waits here, so
+// a free that reaches it before a deferred wait (not through the engine's free) is only checked.
 PPC_FUNC(JADE_HEAP_FREE)
 {
+    game::interpolation::lifetime::NoteFree(ctx.r4.u32);
     destruction::Scope* scope = destruction::t_scope;
     if (scope != nullptr && ctx.r4.u32 != 0)
     {

@@ -3,9 +3,12 @@
 // The view block of the main step (82684518): view setup, display, effects draw and the delivery to
 // the render thread, which the game runs once per main step after the logic.
 
+#include "game/addresses.h"
+
 #include <ppc_config.h>
 #include <ppc_context.h>
 
+#include <array>
 #include <cstdint>
 
 namespace game::interpolation
@@ -39,9 +42,12 @@ namespace game::interpolation
     };
 
     // The state a view block outside the tick's own (between ticks, the purity probe's replay) must
-    // leave as the tick left it. On construction it saves the camera cut counter, which the display
-    // decrements per call and the console decrements once per tick, and handles the dt as dt says.
-    // Restore, or the end of the scope when Restore was not called, puts both back. Main thread.
+    // leave as the tick left it. On construction it saves the camera cut detector's state (8267A2A0,
+    // run by the display: the counter, which the console decrements once per tick, the last camera it
+    // compared, the fade rate and the flag it sets), so the detector sees one camera per tick, the
+    // tick's view block's, while the transforms move the camera between ticks; and it handles the dt
+    // as dt says. Restore, or the end of the scope when Restore was not called, puts them back. Main
+    // thread.
     class ExtraViewBlockState
     {
     public:
@@ -57,6 +63,7 @@ namespace game::interpolation
         uint32_t time_; // the time structure whose dt was set to 0, or 0
         uint64_t dt_ = 0;
         uint32_t dtScaled_ = 0, dtRaw_ = 0;
-        uint32_t cutCounter_;
+        uint32_t cutCounter_, cutFadeRate_, cutFlag_;
+        std::array<uint32_t, jade::kCutDetectorStateSize / 4> cutDetector_;
     };
 }

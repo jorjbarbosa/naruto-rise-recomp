@@ -4,6 +4,10 @@
 
 #include "game/addresses.h"
 #include "game/destruction_order.h"
+#include "game/interpolation/display_writes.h"
+#include "game/interpolation/lifetime.h"
+#include "game/interpolation/pose.h"
+#include "game/interpolation/transforms.h"
 #include "game/interpolation/view_block.h"
 #include "game/interpolation/view_clock.h"
 #include "game/interpolation/world.h"
@@ -55,6 +59,10 @@ namespace game::interpolation::clock
             uint64_t gameTime = 0;      // +48 at the start, µs
             uint64_t sectorSwitches = 0; // destruction::SectorSwitches() at the start
             view_clock::Totals view;     // view_clock::Current() at the start
+            transforms::Totals transforms; // transforms::Current() at the start
+            pose::Totals pose;             // pose::Current() at the start
+            display_writes::Totals display; // display_writes::Current() at the start
+            lifetime::Totals lifetime;     // lifetime::Current() at the start
         };
         Window g_window;
 
@@ -102,6 +110,64 @@ namespace game::interpolation::clock
             g_window.gameTime = time != 0 ? mem::Load64(time + jade::tim::kGameTime) : 0;
             g_window.sectorSwitches = destruction::SectorSwitches();
             g_window.view = view_clock::Current();
+            g_window.transforms = transforms::Current();
+            g_window.pose = pose::Current();
+            g_window.display = display_writes::Current();
+            g_window.lifetime = lifetime::Current();
+        }
+
+        void ReportTransforms(double seconds)
+        {
+            const transforms::Totals t = transforms::Current() - g_window.transforms;
+            lifetime::Totals now = lifetime::Current();
+            auto count = [](uint64_t value) { return (unsigned long long)value; };
+
+            if (display_writes::Enabled())
+            {
+                const display_writes::Totals d = display_writes::Current() - g_window.display;
+                Log("display writes: %.1f s: %llu view blocks settled, hierarchy globals %llu (%llu changed), locals "
+                    "%llu (%llu changed), skeleton objects %llu (%llu changed), %llu floats changed, max shift since "
+                    "the start %.4f, %llu left freed, %llu unclassified (callers %08X %08X %08X %08X)",
+                    seconds, count(d.blocks), count(d.globals), count(d.globalsChanged), count(d.locals),
+                    count(d.localsChanged), count(d.children), count(d.childrenChanged), count(d.floatsChanged),
+                    d.maxShift, count(d.freed), count(d.unknown), d.unknownCallers[0], d.unknownCallers[1],
+                    d.unknownCallers[2], d.unknownCallers[3]);
+            }
+            Log("transforms: %.1f s: %llu view blocks, objects %.1f written per block (%llu held at a cut, %llu with "
+                "display floats left, %llu changed by the display, %llu in translation), %llu tracks started, %llu "
+                "captures, cuts %llu jump, %llu turn, %llu matrix, %llu invalid, %llu scale bit changes blended, %llu fast steps kept (max "
+                "step since the start %.2f), %llu dropped (freed), %llu floats not restored (freed); camera %llu written (%llu held, "
+                "%llu changed), cuts %llu move, %llu father, %llu viewport, %llu invalid, %llu fast steps kept; heap "
+                "headers %llu bad, reports lost %llu",
+                seconds, count(t.blocks), t.blocks != 0 ? double(t.written) / double(t.blocks) : 0.0, count(t.held),
+                count(t.partial), count(t.changed), count(t.changedTranslation), count(t.starts), count(t.captures),
+                count(t.cutJump), count(t.cutTurn), count(t.cutMatrix), count(t.cutInvalid), count(t.scaleChanges),
+                count(t.fastKept), t.maxStep, count(t.dropped), count(t.unrestored), count(t.cameraWritten),
+                count(t.cameraHeld), count(t.cameraChanged), count(t.cameraCutMove), count(t.cameraCutFather),
+                count(t.cameraCutViewport), count(t.cameraCutInvalid), count(t.cameraFastKept),
+                count(now.badHeaders - g_window.lifetime.badHeaders),
+                count(now.overflows - g_window.lifetime.overflows));
+
+            if (!pose::Enabled())
+                return;
+            const pose::Totals p = pose::Current() - g_window.pose;
+            Log("pose: %.1f s: %llu copies blended, %llu held, %.1f bones per copy, %llu with another object's bones, "
+                "%llu untracked; %llu "
+                "skeletons started, %llu captures, cuts %llu jump, %llu turn (%llu holding only the pose), %llu "
+                "bones from the display's walk, at the tick %llu layout, %llu "
+                "invalid; bones left %llu display, %llu moved, %llu shared, %llu floats not restored; largest step "
+                "per skeleton and tick (<0.05/0.1/0.25/0.5/1/2/more) %llu/%llu/%llu/%llu/%llu/%llu/%llu, turn "
+                "(<10/20/30/45/60/90/more degrees) %llu/%llu/%llu/%llu/%llu/%llu/%llu, max since the start %.2f, %.0f "
+                "degrees",
+                seconds, count(p.blended), count(p.held),
+                p.blended + p.held != 0 ? double(p.bones) / double(p.blended + p.held) : 0.0, count(p.borrowed),
+                count(p.untracked),
+                count(p.starts), count(p.captures), count(p.cutJump), count(p.cutTurn), count(p.poseHeld),
+                count(p.walked), count(p.tickLayout),
+                count(p.tickInvalid), count(p.display), count(p.moved), count(p.shared), count(p.unrestored),
+                count(p.steps[0]), count(p.steps[1]), count(p.steps[2]), count(p.steps[3]), count(p.steps[4]),
+                count(p.steps[5]), count(p.steps[6]), count(p.turns[0]), count(p.turns[1]), count(p.turns[2]),
+                count(p.turns[3]), count(p.turns[4]), count(p.turns[5]), count(p.turns[6]), p.maxStep, p.maxTurn);
         }
 
         void Report(double now)
@@ -128,6 +194,8 @@ namespace game::interpolation::clock
                 w.ticks != 0 ? double(switches) / double(w.ticks) : 0.0, (unsigned long long)w.resyncs,
                 (unsigned long long)w.drops, w.dropped * 1e3, (unsigned long long)w.noViewBlock,
                 g_frame.gate ? "on" : "off", g_frame.period, g_pace);
+            if (view.viewBlocks != 0)
+                ReportTransforms(seconds);
             StartWindow(now);
         }
 

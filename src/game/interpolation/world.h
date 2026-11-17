@@ -26,4 +26,7 @@ namespace game::interpolation
 
     // An object's additional matrices (its bones or gizmos): the guest address of each 68-byte matrix.
     std::vector<uint32_t> AdditionalMatrices(uint32_t object);
+
+    // Whether an object has a modifier of the given type (the first word of its interface).
+    bool HasModifier(uint32_t object, uint32_t type);
 }

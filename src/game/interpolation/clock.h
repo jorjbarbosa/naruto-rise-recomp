@@ -9,9 +9,10 @@
 // 1/60 s in fights) the clock runs on the timeline of the presented frames: each iteration is one
 // frame of 1 / rate s, and it is a tick (the three calls run as the original) when a period of image
 // time is due since the last tick. An iteration without a tick runs only the view block, with the
-// delivery's flag 0 (the sector switch stays with the tick) and the camera cut counter put back after
-// it (it counts ticks as on the console; view_block.h, ExtraViewBlockState). The dt of every view
-// block, the tick's and the others, is the image's advance since the previous one (view_clock.h).
+// delivery's flag 0 (the sector switch stays with the tick) and the camera cut detector's state put
+// back after it (its counter counts ticks as on the console; view_block.h, ExtraViewBlockState). The dt
+// of every view block, the tick's and the others, is the image's advance since the previous one
+// (view_clock.h); the objects and the camera are drawn between the last two ticks (transforms.h).
 //
 // The gate decides only under the fixed step, with a period of at least 1.25 frames. Otherwise every
 // iteration is a tick: under the fixed step the limiter then paces at the tick rate (1 / period), so

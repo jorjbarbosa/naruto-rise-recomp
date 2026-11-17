@@ -1,7 +1,9 @@
 #pragma once
 
-// The motion record (state interpolation plan, section 10): per display of the main step, the camera,
-// the rendered objects with dynamics and some bones of the skinned objects near them, written to
+// The motion record (state interpolation plan, section 10): per display of the main step, the camera
+// (with its field of view), the rendered objects with dynamics, some bones of the skinned objects near
+// them, the objects with modifier 5 (the look-at icons: position and scale), the view clock's times and
+// what the transforms and the pose wrote, written to
 // <exe>/diagnostics/motion.csv; every 120 main steps the rates go to the log. tools/motion_stats.py
 // of the plan's folder measures from it how evenly the image moves.
 //

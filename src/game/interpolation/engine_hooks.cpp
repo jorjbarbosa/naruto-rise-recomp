@@ -7,8 +7,10 @@
 #include "game/addresses.h"
 #include "game/interpolation/clock.h"
 #include "game/interpolation/data_watch.h"
+#include "game/interpolation/display_writes.h"
 #include "game/interpolation/motion_record.h"
 #include "game/interpolation/purity_probe.h"
+#include "game/interpolation/transforms.h"
 #include "game/interpolation/view_clock.h"
 #include "kernel/kernel.h"
 
@@ -17,9 +19,14 @@ DECLARE_ORIGINAL(JADE_WORLD_CHANGE);
 DECLARE_ORIGINAL(JADE_MAIN_STEP);
 DECLARE_ORIGINAL(JADE_VIEW_SETUP);
 DECLARE_ORIGINAL(JADE_DISPLAY);
+DECLARE_ORIGINAL(JADE_DISPLAY_CAMERA);
 DECLARE_ORIGINAL(JADE_DELIVER);
 DECLARE_ORIGINAL(JADE_RENDER_OBJECT);
+DECLARE_ORIGINAL(JADE_POSE_COPY);
 DECLARE_ORIGINAL(JADE_BONE_COPY);
+DECLARE_ORIGINAL(JADE_LOCAL_FROM_GLOBAL);
+DECLARE_ORIGINAL(JADE_GLOBAL_FROM_HIERARCHY);
+DECLARE_ORIGINAL(JADE_SKELETON_CHILD);
 
 namespace
 {
@@ -30,13 +37,20 @@ namespace
     // step's. The engine also displays and delivers outside the main step (world loading, the loading
     // screen's thread); the view clock and the probes only act inside it.
     thread_local bool t_inMainStep = false;
+    // Set during the display of a view block of the main step (hooked JADE_DISPLAY), not during the
+    // purity probe's replay, which calls the original.
+    thread_local bool t_inDisplay = false;
     uint64_t g_iteration = 0; // main thread
 }
 
-// The HUD map (82677D20), the main loop's first call. Hooked so an iteration without a tick skips it.
+// The HUD map (82677D20), the main loop's first call. Hooked so an iteration without a tick skips it,
+// and so the carry probe compares before anything of a tick's iteration runs.
 PPC_FUNC(JADE_HUD_MAP)
 {
-    if (interpolation::clock::Enabled() && !interpolation::clock::LogicRuns())
+    bool logic = !interpolation::clock::Enabled() || interpolation::clock::LogicRuns();
+    if (interpolation::purity::Enabled())
+        interpolation::purity::IterationStart(logic);
+    if (!logic)
         return;
     ORIGINAL(JADE_HUD_MAP)(ctx, base);
 }
@@ -79,7 +93,11 @@ PPC_FUNC(JADE_MAIN_STEP)
         interpolation::clock::RunBetweenTicks(ctx, base);
     t_inMainStep = false;
     if (gated)
+    {
+        interpolation::transforms::ViewBlockEnd();
+        interpolation::display_writes::Settle(ctx, base);
         interpolation::view_clock::ViewBlockEnd();
+    }
     if (motion)
         interpolation::motion::MainStepEnd();
     if (purity)
@@ -91,12 +109,16 @@ PPC_FUNC(JADE_MAIN_STEP)
 }
 
 // View setup (82684050), the first call of the view block. Hooked so the view clock gives the block the
-// image's dt, and to mark the block's start for the probes (after the view clock's stores, which stay
-// out of the purity probe's window).
+// image's dt and the transforms write the objects between the ticks, and to mark the block's start for
+// the probes (after those stores, which stay out of the purity probe's window).
 PPC_FUNC(JADE_VIEW_SETUP)
 {
     if (t_inMainStep && interpolation::clock::Enabled())
+    {
         interpolation::view_clock::ViewBlockStart();
+        interpolation::transforms::ViewBlockStart();
+        interpolation::display_writes::BlockStart(interpolation::transforms::LastBlock().active);
+    }
     if (t_inMainStep && interpolation::purity::Enabled())
         interpolation::purity::ViewBlockStart();
     if (t_inMainStep && interpolation::watch::Enabled())
@@ -104,15 +126,18 @@ PPC_FUNC(JADE_VIEW_SETUP)
     ORIGINAL(JADE_VIEW_SETUP)(ctx, base);
 }
 
-// The display (8265A058, r3 world, r4 view). Hooked so the motion record reads the frame around it,
-// and so the purity probe names the rendered objects while they are alive: the delivery that follows
-// can switch sectors and destroy objects.
+// The display (8265A058, r3 world, r4 view). Hooked to mark it for the transforms' camera and objects,
+// so the motion record reads the frame around it, and so the purity probe names the rendered objects
+// while they are alive: the delivery that follows can switch sectors and destroy objects.
 PPC_FUNC(JADE_DISPLAY)
 {
     bool record = t_inMainStep && interpolation::motion::Enabled();
     if (record)
         interpolation::motion::DisplayStart(ctx.r4.u32);
+    bool outer = t_inDisplay;
+    t_inDisplay = t_inMainStep;
     ORIGINAL(JADE_DISPLAY)(ctx, base);
+    t_inDisplay = outer;
     if (record)
         interpolation::motion::DisplayEnd();
     if (t_inMainStep && interpolation::purity::Enabled())
@@ -120,23 +145,44 @@ PPC_FUNC(JADE_DISPLAY)
 }
 
 // The delivery (8259FF40, r3 view, r4 sector switch), the last call of the view block. Hooked to mark
-// the block's end for the probes, then to put the tick's dt back.
+// the block's end for the probes, then to put the tick's matrices back, the state the display computed
+// from them at the tick's, and the tick's dt back.
 PPC_FUNC(JADE_DELIVER)
 {
     uint32_t view = ctx.r3.u32;
+    bool sectorSwitch = ctx.r4.u32 != 0;
     ORIGINAL(JADE_DELIVER)(ctx, base);
     if (t_inMainStep && interpolation::purity::Enabled())
         interpolation::purity::ViewBlockEnd();
     if (t_inMainStep && interpolation::watch::Enabled())
-        interpolation::watch::ViewBlockEnd(view);
+        interpolation::watch::ViewBlockEnd(view, sectorSwitch);
     if (t_inMainStep && interpolation::clock::Enabled())
+    {
+        interpolation::transforms::ViewBlockEnd();
+        interpolation::display_writes::Settle(ctx, base);
         interpolation::view_clock::ViewBlockEnd();
+    }
+}
+
+// The display's camera from a view entry (82659B88, r3 the entry): the display calls it for each
+// active entry, then again for the first at its end. Hooked so the transforms write the entry's camera
+// between the ticks before the display builds its camera from it.
+PPC_FUNC(JADE_DISPLAY_CAMERA)
+{
+    if (t_inDisplay && interpolation::clock::Enabled())
+        interpolation::transforms::Camera(ctx.r3.u32);
+    ORIGINAL(JADE_DISPLAY_CAMERA)(ctx, base);
 }
 
 // Render of one object by the display (825E28D0, WOR_Render_One_GO, r6 the object). Hooked so the
-// probes know the objects of the frame.
+// transforms and the probes know the objects of the frame.
 PPC_FUNC(JADE_RENDER_OBJECT)
 {
+    if (t_inDisplay && interpolation::clock::Enabled())
+    {
+        interpolation::transforms::NoteRendered(ctx.r6.u32);
+        interpolation::display_writes::NoteRendered(ctx.r6.u32);
+    }
     if (t_inMainStep)
     {
         uint32_t object = ctx.r6.u32;
@@ -144,8 +190,63 @@ PPC_FUNC(JADE_RENDER_OBJECT)
             interpolation::motion::NoteRendered(object);
         if (interpolation::purity::Enabled())
             interpolation::purity::NoteRendered(object);
+        if (interpolation::watch::Enabled())
+            interpolation::watch::NoteRendered(object);
     }
     ORIGINAL(JADE_RENDER_OBJECT)(ctx, base);
+}
+
+// The pose copy of a skinned object (82580968, GEO_SKN_Compute4Display, r3 the object, r4 its
+// geometry): each bone's matrix relative to the object, handed to JADE_BONE_COPY. Hooked so the
+// transforms write the skeleton between the ticks right before it and put the tick's back right after
+// (pose.h).
+PPC_FUNC(JADE_POSE_COPY)
+{
+    bool pose = t_inDisplay && interpolation::clock::Enabled();
+    if (pose)
+        interpolation::transforms::PoseCopyStart(ctx.r3.u32);
+    ORIGINAL(JADE_POSE_COPY)(ctx, base);
+    if (pose)
+        interpolation::transforms::PoseCopyEnd();
+}
+
+// A hierarchy object's local matrix from its global and its father's (826A5998, r3 the object): the
+// engine's setters call it, and in the display the Apply of modifiers 5, 22, 26 and 45 and the
+// skeleton walk. Hooked so what the display computes there is settled after the view block
+// (display_writes.h).
+PPC_FUNC(JADE_LOCAL_FROM_GLOBAL)
+{
+    if (t_inDisplay && interpolation::clock::Enabled())
+        interpolation::display_writes::LocalFromGlobal(ctx.r3.u32, uint32_t(ctx.lr));
+    ORIGINAL(JADE_LOCAL_FROM_GLOBAL)(ctx, base);
+}
+
+// An object's global matrix through its hierarchy (826A52E8, r3 the object, r4 the output): in the
+// display, from the Apply of modifiers 5 and 14 into the object's global. Hooked for the same reason.
+PPC_FUNC(JADE_GLOBAL_FROM_HIERARCHY)
+{
+    if (t_inDisplay && interpolation::clock::Enabled())
+        interpolation::display_writes::GlobalFromHierarchy(ctx.r3.u32, ctx.r4.u32);
+    ORIGINAL(JADE_GLOBAL_FROM_HIERARCHY)(ctx, base);
+}
+
+// One object of an animated object's skeleton (826B96D8, r3 the object, r4 the animated object, r5 its
+// bone), from the animated object's render (826B9860): the bone from the object's local, then the
+// object's global from the bone and the animated object's matrix, which the transforms interpolate.
+// Hooked so that global is settled after the view block, and so the pose takes the bone the walk
+// computed at the tick (an object attached under another bone: only the walk writes its bone).
+PPC_FUNC(JADE_SKELETON_CHILD)
+{
+    bool note = t_inDisplay && interpolation::clock::Enabled();
+    uint32_t child = ctx.r3.u32, object = ctx.r4.u32, bone = ctx.r5.u32;
+    if (note)
+        interpolation::display_writes::SkeletonChildStart(child, object, bone);
+    ORIGINAL(JADE_SKELETON_CHILD)(ctx, base);
+    if (note)
+    {
+        interpolation::display_writes::SkeletonChildEnd();
+        interpolation::transforms::SkeletonChildWalked(child, object, bone);
+    }
 }
 
 // Copy of a bone matrix into the frame's packet (820E91E0, r3 the bone, r4 its matrix relative to the

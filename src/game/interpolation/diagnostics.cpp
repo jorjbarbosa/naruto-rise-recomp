@@ -30,4 +30,10 @@ namespace game::interpolation
         const char* value = std::getenv(name);
         return value != nullptr && std::strcmp(value, "1") == 0;
     }
+
+    bool EnvironmentOff(const char* name)
+    {
+        const char* value = std::getenv(name);
+        return value != nullptr && std::strcmp(value, "0") == 0;
+    }
 }

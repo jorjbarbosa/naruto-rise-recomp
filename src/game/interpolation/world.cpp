@@ -10,6 +10,7 @@ namespace game::interpolation
     {
         // A bound that keeps a damaged structure from turning into a huge walk.
         constexpr uint32_t kMaxAdditionalMatrices = 1024;
+        constexpr uint32_t kMaxModifiers = 64;
         constexpr uint32_t kDynamicsActive = 0x80000000;
     }
 
@@ -35,18 +36,32 @@ namespace game::interpolation
         uint32_t additional = base != 0 ? mem::Load32(base + jade::base::kAdditionalMatrices) : 0;
         if (additional == 0)
             return matrices;
-        uint32_t count = mem::Load32(additional);
-        uint32_t array = mem::Load32(additional + 4);
+        uint32_t count = mem::Load32(additional + jade::additional::kCount);
+        uint32_t array = mem::Load32(additional + jade::additional::kArray);
         if (array == 0 || count > kMaxAdditionalMatrices)
             return matrices;
         bool pointers = (mem::Load32(object + jade::object::kIdentity) & jade::object::kIdentityAdditionalPointers) != 0;
         for (uint32_t i = 0; i < count; i++)
         {
-            uint32_t matrix = pointers ? mem::Load32(array + i * jade::matrix::kGizmoPtrSize)
+            uint32_t matrix = pointers ? mem::Load32(array + i * jade::gizmo::kSize + jade::gizmo::kMatrix)
                                        : array + i * jade::matrix::kSize;
             if (matrix != 0)
                 matrices.push_back(matrix);
         }
         return matrices;
+    }
+
+    bool HasModifier(uint32_t object, uint32_t type)
+    {
+        uint32_t extended = mem::Load32(object + jade::object::kExtended);
+        uint32_t modifier = extended != 0 ? mem::Load32(extended + jade::extended::kModifiers) : 0;
+        for (uint32_t n = 0; modifier != 0 && n < kMaxModifiers; n++)
+        {
+            uint32_t face = mem::Load32(modifier + jade::modifier::kInterface);
+            if (face != 0 && mem::Load32(face) == type)
+                return true;
+            modifier = mem::Load32(modifier + jade::modifier::kNext);
+        }
+        return false;
     }
 }

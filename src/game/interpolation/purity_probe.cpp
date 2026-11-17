@@ -4,6 +4,7 @@
 
 #include "game/addresses.h"
 #include "game/interpolation/diagnostics.h"
+#include "game/interpolation/transforms.h"
 #include "game/interpolation/view_block.h"
 #include "game/interpolation/view_clock.h"
 #include "game/interpolation/world.h"
@@ -16,6 +17,7 @@
 #include <chrono>
 #include <cinttypes>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <set>
@@ -29,8 +31,9 @@ namespace game::interpolation::purity
     {
         using Clock = std::chrono::steady_clock;
 
-        constexpr uint32_t kRuns = 8; // main steps probed per F8 press
+        constexpr uint32_t kRuns = 8; // main steps (replay) or ticks (carry) probed per F8 press
         constexpr std::chrono::milliseconds kPacketTimeout{ 500 };
+        constexpr std::chrono::milliseconds kMaxNoiseWindow{ 100 };
         constexpr uint32_t kPage = mem::kPageSize;
         constexpr uint32_t kSteadyLogLines = 40;
 
@@ -62,9 +65,10 @@ namespace game::interpolation::purity
 
         struct WordStats
         {
-            uint32_t replays = 0; // replays that changed the word
+            uint32_t replays = 0; // replays (carry: intervals with the transforms) that changed the word
             uint32_t noise = 0;   // noise windows that changed it
-            uint32_t before = 0, after = 0; // the first replay change
+            uint32_t off = 0;     // carry: intervals with the transforms suspended that changed it
+            uint32_t before = 0, after = 0; // the first change counted in replays
             std::string label;
         };
 
@@ -74,21 +78,42 @@ namespace game::interpolation::purity
             std::string labels;
         };
 
+        enum class Mode
+        {
+            kUnread,
+            kOff,
+            kReplay,
+            kCarry,
+        };
+
+        // The replay's main step, and the carry's tick and interval.
         enum class Phase
         {
-            Idle,    // nothing to do in this main step
-            Armed,   // waiting for the main step's view block
-            InBlock, // inside it
-            Taken,   // its pages are taken; the end of the main step compares and replays
+            Idle,     // nothing to do in this main step
+            Armed,    // replay: waiting for the main step's view block; carry: for a tick
+            Tick,     // carry: this iteration runs the logic, waiting for its view block
+            InBlock,  // inside the view block
+            Taken,    // its pages are taken; the end of the main step compares and replays (replay) or
+                      // takes the tick's state (carry)
+            Interval, // carry: between the tick and the next one
         };
 
         // Main thread state.
-        int g_enabled = -1;
+        Mode g_mode = Mode::kUnread;
         uint32_t g_presses = 0;
         uint32_t g_report = 0;
         uint32_t g_runsLeft = 0;
         uint32_t g_runsDone = 0;
+        uint32_t g_offRunsDone = 0; // carry: intervals with the transforms suspended
         Phase g_phase = Phase::Idle;
+        std::vector<uint8_t> g_tickState; // carry: the tick's pages when its main step ended
+        Clock::time_point g_tickEnd;
+        std::vector<uint32_t> g_scratchPages;
+        std::set<uint32_t> g_intervalPages; // carry: written between the ticks outside the tick's pages
+        uint32_t g_intervalBlocks = 0;      // carry: view blocks between the ticks
+        bool g_intervalOff = false;         // carry: the interval runs with the transforms suspended
+        // carry: what the second half suspends (ROAN_CARRY_PROBE=1: everything, =objects: the objects).
+        transforms::Suspended g_carryHolds = transforms::Suspended::kAll;
         bool g_failed = false; // the write watch failed in this main step
         Clock::time_point g_blockStart;
         Clock::duration g_blockTime{};
@@ -248,6 +273,52 @@ namespace game::interpolation::purity
             return changes;
         }
 
+        // The view block's pages, sorted, into the per-page counts.
+        void CountViewPages(std::vector<uint32_t>& pages)
+        {
+            std::sort(pages.begin(), pages.end());
+            g_viewPageTotal += pages.size();
+            for (uint32_t page : pages)
+            {
+                PageStats& stats = g_viewPageStats[page];
+                if (stats.count++ == 0)
+                    stats.labels = LabelsOfPage(page);
+            }
+        }
+
+        // The words of pages other threads change in a window of the given length.
+        void NoiseWindow(const std::vector<uint32_t>& pages, Clock::duration length)
+        {
+            std::vector<uint8_t> snapshot = Snapshot(pages);
+            std::this_thread::sleep_for(length);
+            for (const Change& change : Changed(pages, snapshot))
+            {
+                WordStats& stats = g_words[change.address];
+                stats.noise++;
+                if (stats.label.empty())
+                    stats.label = LabelOf(change.address);
+            }
+        }
+
+        // A run's changes into the per-word counts: a replay or an interval with the transforms, or
+        // (off) an interval with the transforms suspended.
+        void CountChanges(const std::vector<Change>& changes, bool off = false)
+        {
+            for (const Change& change : changes)
+            {
+                WordStats& stats = g_words[change.address];
+                if (off)
+                    stats.off++;
+                else if (stats.replays++ == 0)
+                {
+                    stats.before = change.before;
+                    stats.after = change.after;
+                }
+                if (stats.label.empty())
+                    stats.label = LabelOf(change.address);
+            }
+        }
+
         // One run, at the end of a main step whose view block was taken. False when the series has
         // to stop.
         bool ProbeRun(PPCContext& ctx, uint8_t* base)
@@ -259,56 +330,33 @@ namespace game::interpolation::purity
                 return false;
             }
             std::vector<uint32_t>& pages = g_viewPages;
-            std::sort(pages.begin(), pages.end());
-            g_viewPageTotal += pages.size();
-            for (uint32_t page : pages)
-            {
-                PageStats& stats = g_viewPageStats[page];
-                if (stats.count++ == 0)
-                    stats.labels = LabelsOfPage(page);
-            }
+            CountViewPages(pages);
 
             // Noise window: other threads, for as long as the view block took.
-            std::vector<uint8_t> snapshot = Snapshot(pages);
-            std::this_thread::sleep_for(g_blockTime);
-            for (const Change& change : Changed(pages, snapshot))
-            {
-                WordStats& stats = g_words[change.address];
-                stats.noise++;
-                if (stats.label.empty())
-                    stats.label = LabelOf(change.address);
-            }
+            NoiseWindow(pages, g_blockTime);
 
             // Replay: the view block again, with the dt at 0 and without the sector switch. The render
             // thread is held before it starts the replayed packet, so what changed is the view block's
             // doing (and other threads'). The probe's own stores to the dt and the cut counter stay
             // outside the window of the write watch, and both are back when the words are compared
             // (the counter, a known per-display writer, is no longer reported).
-            snapshot = Snapshot(pages);
+            std::vector<uint8_t> snapshot = Snapshot(pages);
             std::vector<uint32_t> replayPages;
             ExtraViewBlockState extraState(ExtraDt::kZero);
             view_clock::ReplayScope replayTime; // under the gate: the phases at the image time replayed
+            transforms::ReplayScope replayTransforms; // ... and the objects and camera it drew
             TakePages(replayPages);
             HoldDrawing();
             RunViewBlock(ctx, base, false, ViewBlockCalls::kOriginals);
             TakePages(replayPages);
+            replayTransforms.Restore();
             extraState.Restore();
             std::vector<Change> changes = Changed(pages, snapshot);
             ReleaseDrawing();
             if (!WaitForPacketsDrawn(kPacketTimeout))
                 Log("purity: the render thread did not draw the replayed packet in %lld ms", (long long)kPacketTimeout.count());
 
-            for (const Change& change : changes)
-            {
-                WordStats& stats = g_words[change.address];
-                if (stats.replays++ == 0)
-                {
-                    stats.before = change.before;
-                    stats.after = change.after;
-                }
-                if (stats.label.empty())
-                    stats.label = LabelOf(change.address);
-            }
+            CountChanges(changes);
             for (uint32_t page : replayPages)
             {
                 if (std::binary_search(pages.begin(), pages.end(), page))
@@ -319,6 +367,23 @@ namespace game::interpolation::purity
             }
             g_runsDone++;
             return true;
+        }
+
+        // The carry's run, when the iteration after the tick's interval starts (before its logic): the
+        // tick's pages against their state when the tick's main step ended, then a noise window as long
+        // as the interval (capped). off: the interval ran with the transforms suspended.
+        void CarryRun(bool off)
+        {
+            Clock::duration interval = Clock::now() - g_tickEnd;
+            CountChanges(Changed(g_viewPages, g_tickState), off);
+            for (uint32_t page : g_intervalPages)
+            {
+                PageStats& stats = g_replayPageStats[page];
+                if (stats.count++ == 0)
+                    stats.labels = LabelsOfPage(page);
+            }
+            NoiseWindow(g_viewPages, std::min<Clock::duration>(interval, kMaxNoiseWindow));
+            (off ? g_offRunsDone : g_runsDone)++;
         }
 
         // The label's class: its name up to the first space or offset.
@@ -337,97 +402,178 @@ namespace game::interpolation::purity
 
         void Finish()
         {
+            // The words of the replay and the carry: a run is a replay or an interval.
+            const char* probe = g_mode == Mode::kCarry ? "carry" : "purity";
+            const char* run = g_mode == Mode::kCarry ? "interval" : "replay";
             char name[32];
-            std::snprintf(name, sizeof(name), "purity-%u.csv", g_report);
+            std::snprintf(name, sizeof(name), "%s-%u.csv", probe, g_report);
             std::FILE* file = OpenDiagnosticsFile(name);
-            uint32_t steady = 0;
+            // Steady: changed by every replay (carry: every interval with the transforms, and by no
+            // interval without them), by no noise window.
+            auto steadyWord = [](const WordStats& stats) {
+                return stats.replays == g_runsDone && stats.noise == 0 && stats.off == 0;
+            };
+            uint32_t steady = 0, perFrame = 0;
             std::map<std::string, uint32_t> classes;
             for (const auto& [address, stats] : g_words)
             {
                 if (stats.replays == 0)
                     continue;
-                classes[ClassOf(stats.label)]++;
-                if (stats.replays == g_runsDone && stats.noise == 0)
+                if (steadyWord(stats))
+                {
                     steady++;
+                    classes[ClassOf(stats.label)]++;
+                }
+                else if (g_offRunsDone != 0 && stats.replays == g_runsDone && stats.off == g_offRunsDone && stats.noise == 0)
+                    perFrame++;
             }
             if (file != nullptr)
             {
-                std::fputs("kind,address,label,replays,noise,before,after,before_float,after_float\n", file);
+                std::fputs("kind,address,label,replays,noise,before,after,before_float,after_float,off\n", file);
                 for (const auto& [address, stats] : g_words)
-                    std::fprintf(file, "word,%08X,%s,%u,%u,%08X,%08X,%g,%g\n", address, stats.label.c_str(), stats.replays,
-                        stats.noise, stats.before, stats.after, AsFloat(stats.before), AsFloat(stats.after));
+                    std::fprintf(file, "word,%08X,%s,%u,%u,%08X,%08X,%g,%g,%u\n", address, stats.label.c_str(),
+                        stats.replays, stats.noise, stats.before, stats.after, AsFloat(stats.before), AsFloat(stats.after),
+                        stats.off);
                 for (const auto& [page, stats] : g_replayPageStats)
-                    std::fprintf(file, "replay_page,%08X,%s,%u,0,,,,\n", page, stats.labels.c_str(), stats.count);
+                    std::fprintf(file, "replay_page,%08X,%s,%u,0,,,,,\n", page, stats.labels.c_str(), stats.count);
                 for (const auto& [page, stats] : g_viewPageStats)
-                    std::fprintf(file, "view_page,%08X,%s,%u,0,,,,\n", page, stats.labels.c_str(), stats.count);
+                    std::fprintf(file, "view_page,%08X,%s,%u,0,,,,,\n", page, stats.labels.c_str(), stats.count);
                 std::fclose(file);
             }
 
-            Log("purity %u: %u runs, %.0f pages written per view block, %zu replay-only pages, %u words changed by "
-                "every replay and by no noise window",
-                g_report, g_runsDone, g_runsDone != 0 ? double(g_viewPageTotal) / g_runsDone : 0.0,
-                g_replayPageStats.size(), steady);
+            uint32_t runs = g_runsDone + g_offRunsDone;
+            Log("%s %u: %u runs (%u with the transforms suspended), %.0f pages written per view block, %zu %s-only "
+                "pages, %u words changed by every %s%s and by no noise window, %u by every interval of both",
+                probe, g_report, runs, g_offRunsDone, runs != 0 ? double(g_viewPageTotal) / runs : 0.0,
+                g_replayPageStats.size(), run, steady, run,
+                g_offRunsDone != 0 ? " with the transforms, by none without them," : "", perFrame);
             for (const auto& [label, count] : classes)
-                Log("purity %u:   %-14s %u words changed by a replay", g_report, label.c_str(), count);
+                Log("%s %u:   %-14s %u of them", probe, g_report, label.c_str(), count);
             uint32_t lines = 0;
             for (const auto& [address, stats] : g_words)
             {
-                if (stats.replays != g_runsDone || stats.noise != 0)
+                if (!steadyWord(stats))
                     continue;
                 if (lines++ == kSteadyLogLines)
                 {
-                    Log("purity %u:   ... (the rest in %s)", g_report, name);
+                    Log("%s %u:   ... (the rest in %s)", probe, g_report, name);
                     break;
                 }
-                Log("purity %u:   %08X %-36s %08X -> %08X (%g -> %g)", g_report, address, stats.label.c_str(),
+                Log("%s %u:   %08X %-36s %08X -> %08X (%g -> %g)", probe, g_report, address, stats.label.c_str(),
                     stats.before, stats.after, AsFloat(stats.before), AsFloat(stats.after));
             }
         }
-    }
 
-    bool Enabled()
-    {
-        if (g_enabled < 0)
+        // An F8 press starts a series; a press while one runs is consumed without starting another.
+        bool StartSeries(const char* what)
         {
-            g_enabled = EnvironmentFlag("ROAN_PURITY_PROBE") ? 1 : 0;
-            if (g_enabled == 1)
-            {
-                g_presses = host::DiagnosticKeyPresses();
-                Log("purity: armed, press F8 in the game window to probe the next %u main steps", kRuns);
-            }
-        }
-        return g_enabled == 1;
-    }
-
-    void MainStepStart()
-    {
-        // A press while a series runs is consumed without starting another one.
-        uint32_t presses = host::DiagnosticKeyPresses();
-        bool pressed = presses != g_presses;
-        g_presses = presses;
-        if (pressed && g_runsLeft == 0)
-        {
-            g_runsLeft = kRuns;
+            uint32_t presses = host::DiagnosticKeyPresses();
+            bool pressed = presses != g_presses;
+            g_presses = presses;
+            if (!pressed || g_runsLeft != 0)
+                return false;
+            // The carry: kRuns intervals with the transforms, then kRuns with them suspended.
+            g_runsLeft = g_mode == Mode::kCarry ? 2 * kRuns : kRuns;
             g_runsDone = 0;
+            g_offRunsDone = 0;
             g_report++;
             g_words.clear();
             g_viewPageStats.clear();
             g_replayPageStats.clear();
             g_viewPageTotal = 0;
-            Log("purity %u: probing the next %u main steps", g_report, kRuns);
+            Log("%s %u: probing the next %u %s", g_mode == Mode::kCarry ? "carry" : "purity", g_report, kRuns, what);
+            return true;
         }
+
+        void BlockStarts()
+        {
+            TakePages(g_viewPages);
+            g_rendered.clear();
+            g_labels.clear();
+            g_blockStart = Clock::now();
+            g_phase = Phase::InBlock;
+        }
+    }
+
+    bool Enabled()
+    {
+        if (g_mode == Mode::kUnread)
+        {
+            bool replay = EnvironmentFlag("ROAN_PURITY_PROBE");
+            const char* carryValue = std::getenv("ROAN_CARRY_PROBE");
+            bool carryObjects = carryValue != nullptr && std::strcmp(carryValue, "objects") == 0;
+            bool carry = EnvironmentFlag("ROAN_CARRY_PROBE") || carryObjects;
+            if (carryObjects)
+                g_carryHolds = transforms::Suspended::kObjects;
+            g_mode = replay ? Mode::kReplay : carry ? Mode::kCarry : Mode::kOff;
+            if (replay && carry)
+                Log("purity: ROAN_PURITY_PROBE and ROAN_CARRY_PROBE both set; the replay runs");
+            if (g_mode != Mode::kOff)
+            {
+                g_presses = host::DiagnosticKeyPresses();
+                if (g_mode == Mode::kReplay)
+                    Log("purity: armed, press F8 in the game window to probe the next %u main steps", kRuns);
+                else
+                    Log("carry: armed, press F8 in the game window to probe the next %u ticks, then %u with %s "
+                        "suspended", kRuns, kRuns, carryObjects ? "the objects" : "the transforms");
+            }
+        }
+        return g_mode == Mode::kReplay || g_mode == Mode::kCarry;
+    }
+
+    void IterationStart(bool logic)
+    {
+        if (g_mode != Mode::kCarry)
+            return;
+        if (StartSeries("ticks"))
+            g_phase = Phase::Armed;
+        if (!logic)
+        {
+            // A tick whose main step had no view block (views off): its state was not taken, and a view
+            // block between the ticks is not the tick's. The next tick.
+            if (g_phase == Phase::Tick)
+                g_phase = Phase::Armed;
+            return;
+        }
+        // An interval without a view block (a late frame after the noise window, the gate off) leaves
+        // the tick's state as the console would: not a run.
+        if (g_phase == Phase::Interval && g_intervalBlocks == 0)
+            g_phase = Phase::Armed;
+        if (g_phase == Phase::Interval)
+        {
+            CarryRun(g_intervalOff);
+            if (--g_runsLeft == 0)
+            {
+                transforms::Suspend(transforms::Suspended::kNone);
+                Finish();
+                g_phase = Phase::Idle;
+                return;
+            }
+            g_phase = Phase::Armed;
+        }
+        // The second half of the series runs from here with the transforms suspended (the gate alone).
+        if (g_phase == Phase::Armed || g_phase == Phase::Tick)
+        {
+            g_phase = Phase::Tick;
+            if (g_runsDone == kRuns)
+                transforms::Suspend(g_carryHolds);
+        }
+    }
+
+    void MainStepStart()
+    {
+        if (g_mode != Mode::kReplay)
+            return;
+        StartSeries("main steps");
         g_phase = g_runsLeft != 0 ? Phase::Armed : Phase::Idle;
     }
 
     void ViewBlockStart()
     {
-        if (g_phase != Phase::Armed)
-            return;
-        TakePages(g_viewPages);
-        g_rendered.clear();
-        g_labels.clear();
-        g_blockStart = Clock::now();
-        g_phase = Phase::InBlock;
+        if (g_mode == Mode::kReplay ? g_phase == Phase::Armed : g_phase == Phase::Tick)
+            BlockStarts();
+        else if (g_mode == Mode::kCarry && g_phase == Phase::Interval)
+            TakePages(g_scratchPages); // from here, the pages of a view block between the ticks
     }
 
     void DisplayEnd()
@@ -438,6 +584,20 @@ namespace game::interpolation::purity
 
     void ViewBlockEnd()
     {
+        if (g_mode == Mode::kCarry && g_phase == Phase::Interval)
+        {
+            g_intervalBlocks++;
+            if (!TakePages(g_scratchPages))
+            {
+                Log("carry: the OS refused the write watch; probe stopped");
+                g_failed = true;
+                return;
+            }
+            for (uint32_t page : g_scratchPages)
+                if (!std::binary_search(g_viewPages.begin(), g_viewPages.end(), page))
+                    g_intervalPages.insert(page);
+            return;
+        }
         if (g_phase != Phase::InBlock)
             return;
         if (!TakePages(g_viewPages))
@@ -459,6 +619,30 @@ namespace game::interpolation::purity
 
     void MainStepEnd(PPCContext& ctx, uint8_t* base)
     {
+        if (g_mode == Mode::kCarry)
+        {
+            if (g_failed)
+            {
+                g_runsLeft = 0;
+                transforms::Suspend(transforms::Suspended::kNone);
+                Finish();
+                g_failed = false;
+                g_phase = Phase::Idle;
+            }
+            else if (g_phase == Phase::Taken)
+            {
+                // The tick's state as its logic, view block and end of frame left it.
+                CountViewPages(g_viewPages);
+                g_tickState = Snapshot(g_viewPages);
+                g_intervalPages.clear();
+                g_intervalBlocks = 0;
+                g_intervalOff = g_runsDone == kRuns;
+                g_tickEnd = Clock::now();
+                g_phase = Phase::Interval;
+            }
+            return;
+        }
+
         // A main step without a view block (views off) does not count as a run.
         bool counted = g_phase == Phase::Taken;
         bool stop = g_failed || (counted && !ProbeRun(ctx, base));

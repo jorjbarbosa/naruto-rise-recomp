@@ -12,4 +12,7 @@ namespace game::interpolation
 
     // Whether an environment variable is set to "1".
     bool EnvironmentFlag(const char* name);
+
+    // Whether an environment variable is set to "0": a part on by default turned off.
+    bool EnvironmentOff(const char* name);
 }

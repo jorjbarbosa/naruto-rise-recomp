@@ -4,6 +4,8 @@
 
 #include "game/addresses.h"
 #include "game/interpolation/diagnostics.h"
+#include "game/interpolation/pose.h"
+#include "game/interpolation/transforms.h"
 #include "game/interpolation/view_clock.h"
 #include "game/interpolation/world.h"
 #include "log.h"
@@ -41,6 +43,16 @@ namespace game::interpolation::motion
             float distance;
         };
 
+        // An object with modifier 5 (the look-at icons), with the scale of its first row as the view
+        // block gave it, before the modifier turned it.
+        struct LookAt
+        {
+            uint32_t object, matrix;
+            float scale;
+        };
+        constexpr uint32_t kLookAtModifier = 5;
+        constexpr uint32_t kMaxLookAts = 32;
+
         // Main thread state.
         int g_enabled = -1;
         std::FILE* g_file = nullptr;
@@ -62,6 +74,17 @@ namespace game::interpolation::motion
         std::vector<Actor> g_actors;         // the actors this display rendered, as it rendered them
         std::vector<Actor> g_previousActors; // the previous display's, for owners rendered after their bones
         std::vector<BoneRow> g_bones;
+        std::vector<LookAt> g_lookAts;
+
+        // The scale of a matrix's row r: its length, times its fourth float with the scale bit.
+        float RowScale(uint32_t matrix, uint32_t r)
+        {
+            float x = LoadFloat(matrix + 16 * r), y = LoadFloat(matrix + 16 * r + 4), z = LoadFloat(matrix + 16 * r + 8);
+            float length = std::sqrt(x * x + y * y + z * z);
+            if ((mem::Load32(matrix + jade::matrix::kType) & jade::matrix::kTypeScale) != 0)
+                length *= LoadFloat(matrix + 16 * r + 12);
+            return std::isfinite(length) ? length : 0.0f;
+        }
 
         int64_t Microseconds()
         {
@@ -170,6 +193,7 @@ namespace game::interpolation::motion
         g_previousActors.swap(g_actors);
         g_actors.clear();
         g_bones.clear();
+        g_lookAts.clear();
         g_inDisplay = true;
     }
 
@@ -193,13 +217,28 @@ namespace game::interpolation::motion
             WritePrefix(us, cut);
             std::fprintf(g_file, "T,,%llu,%llu,,,,,\n", (unsigned long long)times.image, (unsigned long long)times.tick);
         }
+        const transforms::Block& block = transforms::LastBlock();
+        if (block.active)
+        {
+            // The transforms: the image position written at, object matrices written and held at a
+            // cut, object cuts at this tick, the camera (0 not written, 1 blended, 2 held) and its cut.
+            WritePrefix(us, cut);
+            std::fprintf(g_file, "I,,%.4f,%u,%u,%u,%u,%u,\n", block.alpha, block.written, block.held, block.cuts,
+                block.camera, block.cameraCut);
+            // The pose: copies written at alpha and held at a cut, bones written, copies with bones
+            // left, skeleton cuts at this tick, copies of untracked objects.
+            const pose::Block& poses = pose::LastBlock();
+            WritePrefix(us, cut);
+            std::fprintf(g_file, "P,,%u,%u,%u,%u,%u,%u,\n", poses.blended, poses.held, poses.bones, poses.partial,
+                poses.cuts, poses.untracked);
+        }
         if (g_view != 0)
         {
             Vector position = LoadVector(g_view + jade::view::kCameraPosition);
             Vector direction = LoadVector(g_view + jade::view::kCameraDirection);
             WritePrefix(us, cut);
-            std::fprintf(g_file, "C,%08X,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,\n", g_view, position.x, position.y, position.z,
-                direction.x, direction.y, direction.z);
+            std::fprintf(g_file, "C,%08X,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f\n", g_view, position.x, position.y,
+                position.z, direction.x, direction.y, direction.z, Finite(LoadFloat(g_view + jade::view::kFieldOfView)));
         }
         for (const Actor& actor : g_actors)
         {
@@ -214,6 +253,15 @@ namespace game::interpolation::motion
                 bone.bone, bone.world.x, bone.world.y, bone.world.z, bone.local.x, bone.local.y, bone.local.z,
                 bone.distance);
         }
+        for (const LookAt& look : g_lookAts)
+        {
+            // The icon as drawn: its position and the scale of its rows after the display; d the first
+            // row's scale as the view block gave it.
+            Vector position = LoadVector(look.matrix + jade::matrix::kTranslation);
+            WritePrefix(us, cut);
+            std::fprintf(g_file, "L,%08X,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f\n", look.object, position.x, position.y,
+                position.z, RowScale(look.matrix, 0), RowScale(look.matrix, 1), RowScale(look.matrix, 2), look.scale);
+        }
         if (g_displays % 60 == 0)
             std::fflush(g_file);
     }
@@ -223,6 +271,12 @@ namespace game::interpolation::motion
         if (!g_inDisplay)
             return;
         g_rendered++;
+        if (g_lookAts.size() < kMaxLookAts && HasModifier(object, kLookAtModifier))
+        {
+            uint32_t matrix = mem::Load32(object + jade::object::kMatrix);
+            if (matrix != 0)
+                g_lookAts.push_back({ object, matrix, RowScale(matrix, 0) });
+        }
         if (g_actors.size() >= kMaxActors || !HasDynamics(object))
             return;
         for (const Actor& actor : g_actors)

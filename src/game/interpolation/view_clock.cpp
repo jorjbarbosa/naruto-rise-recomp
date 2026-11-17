@@ -88,6 +88,7 @@ namespace game::interpolation::view_clock
         uint32_t g_lastTickTimeline = 0;
         uint64_t g_lastTickIndex = 0;
         GameTime g_imageTime;    // the current view block's image time
+        double g_alpha = 0;      // its image position past the last tick, periods
 
         // The exclusion of the TimeScopes and the render thread's readers (RenderReadScope): each side
         // raises its counter, then looks at the other's (sequentially consistent, so at least one of
@@ -164,9 +165,9 @@ namespace game::interpolation::view_clock
                 g_lastTickIndex = frame.ticks;
             }
             // The view clock's image (monotonic), past the last tick.
-            double alpha = std::clamp(g_image - double(frame.ticks), 0.0, 1.0);
-            g_imageTime = { Lerp(g_previousTick.time, g_lastTick.time, alpha),
-                Lerp(g_previousTick.locked, g_lastTick.locked, alpha) };
+            g_alpha = std::clamp(g_image - double(frame.ticks), 0.0, 1.0);
+            g_imageTime = { Lerp(g_previousTick.time, g_lastTick.time, g_alpha),
+                Lerp(g_previousTick.locked, g_lastTick.locked, g_alpha) };
         }
     }
 
@@ -285,7 +286,7 @@ namespace game::interpolation::view_clock
 
     Times CurrentTimes()
     {
-        return { g_time != 0, g_imageTime.time, g_lastTick.time };
+        return { g_time != 0, g_imageTime.time, g_lastTick.time, g_alpha };
     }
 
     Totals Totals::operator-(const Totals& start) const
