@@ -122,6 +122,7 @@ def main():
         shutil.copy2(root / 'packaging/appimage' / name, appdir / name)
     (appdir / 'AppRun').chmod(0o755)
     shutil.copy2(root / 'packaging/appimage/README.txt', payload / 'README.txt')
+    shutil.copy2(root / 'recomplauncher.json', appdir / 'recomplauncher.json')
     shutil.copy2(root / 'app/ui/images/spiral.png', appdir / 'narutorise.png')
     (appdir / '.DirIcon').symlink_to('narutorise.png')
     build_material = {'binaries': hashes, 'dependencies': dependencies,

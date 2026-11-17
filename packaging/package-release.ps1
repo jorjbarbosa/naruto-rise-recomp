@@ -184,6 +184,7 @@ try {
         Copy-Item -LiteralPath (Join-Path $RootDir $name) -Destination $destination
     }
     Set-Content (Join-Path $Portable 'narutorise.version') -Encoding ASCII -Value $Version
+    Copy-Item -LiteralPath (Join-Path $RootDir 'recomplauncher.json') -Destination (Join-Path $Portable 'recomplauncher.json')
     $shaderFiles | Copy-Item -Destination (Join-Path $Portable 'shader_cache')
     $LicenseDir = Join-Path $Portable 'licenses'
     Copy-Item -LiteralPath (Join-Path $RootDir 'LICENSE') -Destination (Join-Path $LicenseDir 'naruto-rise-recomp.txt')
