@@ -214,6 +214,14 @@ What the renderer's presents on Vulkan ran into, or would have, in `VulkanSwapCh
 - **Refresh rate.** `getRefreshRate()` called `vkGetRefreshCycleDurationGOOGLE` whether or not the
   device had `VK_GOOGLE_display_timing`; it now returns 0 without it.
 
+### 0004: Vulkan two-component integer formats
+
+`toVk(RenderFormat)` in `plume_vulkan.cpp` has no case for `R32G32_UINT` and `R32G32_SINT` (the D3D12
+backend maps both; still missing upstream at `b619e50`), so they fell to the `default` and became
+`VK_FORMAT_UNDEFINED`. The draw pipelines describe every two-dword vertex element as `R32G32_UINT`, so their
+vertex input was invalid. With the validation layer on, checking those pipelines made the layer's memory
+grow without bound (about 1.2 GB/s, until the system ran out of commit).
+
 ## XenosRecomp
 
 Findings from the shaders of Naruto: Rise of a Ninja (`game/xeshader.sdb`: 4,467 containers, 3,322 unique,
