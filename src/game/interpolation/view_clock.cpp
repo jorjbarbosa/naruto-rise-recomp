@@ -183,11 +183,14 @@ namespace game::interpolation::view_clock
         // The first view block of a timeline has no previous image: it gets the tick's dt, as at the
         // game's own rate. Within a timeline the image never goes back: a frame the clock resyncs to a
         // slightly earlier time (presented early) keeps the previous image, with an advance of 0.
+        // A gap above kMaxAdvance (ticks without a view block) gets the capped advance and drops the
+        // rest: the image moves to the frame's, so the next view blocks do not pay it back.
         double image = double(frame.ticks) + double(frame.alpha);
         bool sameTimeline = frame.timeline == g_timeline;
-        double advance = sameTimeline ? std::clamp(image - g_image, 0.0, kMaxAdvance) : 1.0;
+        double gap = image - g_image;
+        double advance = sameTimeline ? std::clamp(gap, 0.0, kMaxAdvance) : 1.0;
         g_timeline = frame.timeline;
-        g_image = sameTimeline ? g_image + advance : image;
+        g_image = !sameTimeline || gap > kMaxAdvance ? image : g_image + advance;
         g_used.store(true);
         g_lastBlockGated = true;
 
