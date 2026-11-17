@@ -4,6 +4,7 @@
 #include "game/destruction_order.h"
 
 #include "game/addresses.h"
+#include "game/interpolation/diagnostics.h"
 #include "game/interpolation/lifetime.h"
 #include "game/render_packets.h"
 #include "kernel/kernel.h"
@@ -84,10 +85,7 @@ namespace game::destruction
         // a destroy's own caller is then that function.
         thread_local uint32_t t_checkedCaller = 0;
 
-        const bool g_waits = [] {
-            const char* value = std::getenv("ROAN_DESTRUCTION_WAITS");
-            return value == nullptr || std::string(value) != "0";
-        }();
+        const bool g_waits = !interpolation::EnvironmentOff("ROAN_DESTRUCTION_WAITS");
 
         std::mutex g_mutex; // everything below
         Counters g_counters[kSites]; // kOther's calls and destroys are g_otherDestroys

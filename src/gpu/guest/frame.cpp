@@ -15,6 +15,7 @@
 #include "gpu/renderer/renderer.h"
 #include "gpu/settings.h"
 #include "host/paths.h"
+#include "host/timing.h"
 #include "host/window.h"
 #include "kernel/kernel.h"
 
@@ -76,32 +77,15 @@ namespace gpu
                 }
                 if (rate == 0 && vblanks == 0)
                     return;
-                if (frequency_ == 0)
-                {
-                    LARGE_INTEGER frequency;
-                    QueryPerformanceFrequency(&frequency);
-                    frequency_ = frequency.QuadPart;
-                    timer_ = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-                }
-
                 // The period is ticks / frames clock ticks.
-                int64_t ticks = rate != 0 ? frequency_ : int64_t(vblanks) * frequency_;
+                int64_t frequency = host::CounterFrequency();
+                int64_t ticks = rate != 0 ? frequency : int64_t(vblanks) * frequency;
                 int64_t frames = rate != 0 ? int64_t(rate) : int64_t(kVblankRate);
-                int64_t now = Now();
+                int64_t now = host::Counter();
                 int64_t next = start_ + (frame_ + 1) * ticks / frames;
                 if (start_ != 0 && now < next)
                 {
-                    // Sleep to about 1 ms before the deadline, then spin.
-                    int64_t margin = frequency_ / 1000;
-                    if (timer_ != nullptr && next - now > margin)
-                    {
-                        LARGE_INTEGER due;
-                        due.QuadPart = -((next - now - margin) * 10'000'000 / frequency_);
-                        if (SetWaitableTimer(timer_, &due, 0, nullptr, nullptr, FALSE))
-                            WaitForSingleObject(timer_, INFINITE);
-                    }
-                    while (Now() < next)
-                        YieldProcessor();
+                    host::SleepUntil(next);
                     frame_++;
                 }
                 else
@@ -112,19 +96,10 @@ namespace gpu
             }
 
         private:
-            static int64_t Now()
-            {
-                LARGE_INTEGER counter;
-                QueryPerformanceCounter(&counter);
-                return counter.QuadPart;
-            }
-
-            int64_t frequency_ = 0;
             int64_t start_ = 0; // the start of the phase, 0 before the first frame
             int64_t frame_ = 0; // frames paced since the start of the phase
             uint32_t vblanks_ = ~0u;
             uint32_t rate_ = 0;
-            HANDLE timer_ = nullptr;
         };
 
         FrameLimiter g_limiter;

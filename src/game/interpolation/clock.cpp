@@ -12,13 +12,13 @@
 #include "game/interpolation/view_clock.h"
 #include "game/interpolation/world.h"
 #include "gpu/gpu.h"
+#include "host/timing.h"
 #include "log.h"
 #include "memory.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
-#include <windows.h>
 
 namespace game::interpolation::clock
 {
@@ -67,39 +67,23 @@ namespace game::interpolation::clock
         Window g_window;
 
         int64_t g_rate = -1;     // ROAN_FRAME_RATE, read once; 0: off
-        HANDLE g_timer = nullptr; // high-resolution waitable timer for SleepUntil
 
         double Seconds()
         {
-            LARGE_INTEGER now;
-            QueryPerformanceCounter(&now);
+            int64_t now = host::Counter();
             if (g_frequency == 0)
             {
-                LARGE_INTEGER frequency;
-                QueryPerformanceFrequency(&frequency);
-                g_frequency = frequency.QuadPart;
-                g_origin = now.QuadPart;
+                g_frequency = host::CounterFrequency();
+                g_origin = now;
             }
-            return double(now.QuadPart - g_origin) / double(g_frequency);
+            return double(now - g_origin) / double(g_frequency);
         }
 
-        // Waits until Seconds() reaches target: a high-resolution timer to about 1 ms before it, then
-        // a spin (a plain sleep has the system's 15.6 ms granularity).
+        // Waits until Seconds() reaches target.
         void SleepUntil(double target)
         {
-            constexpr double kSpin = 1e-3;
-            if (g_timer == nullptr)
-                g_timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-            double wait = target - Seconds() - kSpin;
-            if (g_timer != nullptr && wait > 0)
-            {
-                LARGE_INTEGER due;
-                due.QuadPart = -int64_t(wait * 1e7);
-                if (SetWaitableTimer(g_timer, &due, 0, nullptr, nullptr, FALSE))
-                    WaitForSingleObject(g_timer, INFINITE);
-            }
-            while (Seconds() < target)
-                YieldProcessor();
+            Seconds(); // sets the origin
+            host::SleepUntil(g_origin + int64_t(std::ceil(target * double(g_frequency))));
         }
 
         void StartWindow(double now)

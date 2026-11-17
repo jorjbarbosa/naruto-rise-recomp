@@ -4,6 +4,7 @@
 
 #include "game/addresses.h"
 #include "game/interpolation/diagnostics.h"
+#include "game/interpolation/matrices.h"
 #include "game/interpolation/transforms.h"
 #include "game/interpolation/view_block.h"
 #include "game/interpolation/view_clock.h"
@@ -393,13 +394,6 @@ namespace game::interpolation::purity
             return label.substr(0, end);
         }
 
-        float AsFloat(uint32_t bits)
-        {
-            float value;
-            std::memcpy(&value, &bits, 4);
-            return value;
-        }
-
         void Finish()
         {
             // The words of the replay and the carry: a run is a replay or an interval.
@@ -432,7 +426,7 @@ namespace game::interpolation::purity
                 std::fputs("kind,address,label,replays,noise,before,after,before_float,after_float,off\n", file);
                 for (const auto& [address, stats] : g_words)
                     std::fprintf(file, "word,%08X,%s,%u,%u,%08X,%08X,%g,%g,%u\n", address, stats.label.c_str(),
-                        stats.replays, stats.noise, stats.before, stats.after, AsFloat(stats.before), AsFloat(stats.after),
+                        stats.replays, stats.noise, stats.before, stats.after, matrices::Float(stats.before), matrices::Float(stats.after),
                         stats.off);
                 for (const auto& [page, stats] : g_replayPageStats)
                     std::fprintf(file, "replay_page,%08X,%s,%u,0,,,,,\n", page, stats.labels.c_str(), stats.count);
@@ -460,7 +454,7 @@ namespace game::interpolation::purity
                     break;
                 }
                 Log("%s %u:   %08X %-36s %08X -> %08X (%g -> %g)", probe, g_report, address, stats.label.c_str(),
-                    stats.before, stats.after, AsFloat(stats.before), AsFloat(stats.after));
+                    stats.before, stats.after, matrices::Float(stats.before), matrices::Float(stats.after));
             }
         }
 

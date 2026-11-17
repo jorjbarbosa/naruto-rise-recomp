@@ -19,6 +19,7 @@ namespace game::interpolation::pose
     namespace
     {
         using matrices::Bits;
+        using matrices::Float;
         using matrices::Vector;
 
         // Cuts by a bone, per tick, in the owner's space. A position step is a jump when it is above
@@ -194,13 +195,6 @@ namespace game::interpolation::pose
         constexpr size_t kLoggedLeftBones = 32;
         std::vector<uint64_t> g_loggedLeft;
 
-        float FloatOf(uint32_t bits)
-        {
-            float value;
-            std::memcpy(&value, &bits, sizeof(value));
-            return value;
-        }
-
         void LogLeftBone(uint32_t object, size_t entry, uint32_t named, const Owner& owner, const Bone& bone, const Bits& live)
         {
             uint32_t array = owner.skeleton != nullptr ? owner.skeleton->array : 0;
@@ -211,7 +205,7 @@ namespace game::interpolation::pose
             g_loggedLeft.push_back(key);
             float largest = 0.0f;
             for (uint32_t f = 0; f < matrices::kFloats; f++)
-                largest = std::max(largest, std::fabs(FloatOf(live[f]) - FloatOf(bone.current[f])));
+                largest = std::max(largest, std::fabs(Float(live[f]) - Float(bone.current[f])));
             bool pointers = owner.skeleton != nullptr && owner.skeleton->pointers;
             int32_t index = array != 0 && bone.matrix >= array && !pointers
                 ? int32_t((bone.matrix - array) / jade::matrix::kSize)
@@ -221,8 +215,8 @@ namespace game::interpolation::pose
                 bone.matrix, object, entry, named, array,
                 owner.skeleton != nullptr ? uint32_t(owner.skeleton->bones.size()) : 0u,
                 pointers ? "pointer entries" : "68-byte bones", index, int(bone.global), int(owner.show), largest,
-                FloatOf(live[12]), FloatOf(live[13]), FloatOf(live[14]), FloatOf(bone.current[12]),
-                FloatOf(bone.current[13]), FloatOf(bone.current[14]));
+                Float(live[12]), Float(live[13]), Float(live[14]), Float(bone.current[12]),
+                Float(bone.current[13]), Float(bone.current[14]));
         }
     }
 
