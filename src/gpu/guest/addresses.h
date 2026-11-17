@@ -71,6 +71,12 @@ namespace gpu::guest
         constexpr uint32_t kVertexConstantsDirty = 0;
         constexpr uint32_t kPixelConstantsDirty = 8;
         constexpr uint32_t kConstantGroupBytes = 64;
+        // Dirty mask of the fetch constants (32 bits): bit 31 - i marks slot i. It is the low half of
+        // the 64-bit mask at +24, whose high half marks other state. Every writer sets its bit
+        // (D3DDevice_SetTexture, the sampler states, the vertex streams); the commit inside the three
+        // draws (D3D::SetPending_FetchConstants, no other caller) sends the marked slots and clears
+        // the mask.
+        constexpr uint32_t kFetchConstantsDirty = 28;
 
         // Boolean shader constants: vertex shader b0..b31, pixel shader b0..b31.
         constexpr uint32_t kVertexBooleans = 10112;

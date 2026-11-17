@@ -209,7 +209,8 @@ namespace gpu::guest
         ConstantShadow g_vertexConstants(dev::kVertexConstants, dev::kVertexConstantsDirty);
         ConstantShadow g_pixelConstants(dev::kPixelConstants, dev::kPixelConstantsDirty);
 
-        // Before a draw's commit: the constant shadows take what the commit is about to send.
+        // Before a draw's commit: the constant shadows take what the commit is about to send, and the
+        // fetch constants it marks as changed are noted for the capture.
         void RefreshConstants()
         {
             uint32_t device = GetDevice().Address();
@@ -217,6 +218,7 @@ namespace gpu::guest
                 return;
             g_vertexConstants.Refresh(device);
             g_pixelConstants.Refresh(device);
+            NoteChangedFetchConstants(device);
         }
 
         bool ReadStreamSource(uint32_t device, uint32_t fetch, StreamSource& source)

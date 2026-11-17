@@ -1,5 +1,4 @@
-// Textures of the guest draws: how each fetch constant is sampled, and the uploads of the texture
-// memory that changed since its last upload.
+// Textures of the guest draws: the decoded fetch constants and the uploads of changed texture memory.
 
 #include "gpu/guest/textures.h"
 
@@ -17,7 +16,10 @@
 #include <xxhash.h>
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <cstring>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <set>
@@ -60,6 +62,30 @@ namespace gpu::guest
         std::unordered_map<uint32_t, Resolve> g_resolved;            // by GPU address
         uint64_t g_resolves = 0;
         uint64_t g_frame = 1;
+
+        // Counts the changes to what a fetch constant can sample: a content erased (EraseContents), an
+        // address that starts or stops being resolved (NoteResolved, EraseResolved). Nothing else
+        // erases a content or changes which addresses are resolved.
+        uint64_t g_epoch = 1;
+
+        // The texture of a fetch constant as its last decode left it. A decode stays good until the
+        // title changes the fetch constant (the device's dirty mask) or g_epoch moves.
+        struct Slot
+        {
+            DrawTexture texture;        // kind None: not covered
+            Content* content = nullptr; // an uploaded texture: its content, checked once a frame
+        };
+
+        // The dirty mask and the slot masks below hold one bit per fetch constant.
+        static_assert(SharedConstants::kFetchSlots == 32);
+        std::array<Slot, SharedConstants::kFetchSlots> g_slots;
+        uint32_t g_textureSlots = 0; // bit i: fetch constant i is a texture
+        uint32_t g_slotsDevice = 0;  // the device the slots were decoded from
+        uint64_t g_slotsEpoch = 0;   // g_epoch when the texture slots were last decoded
+        // Bit i: the title changed fetch constant i since its last decode. Set before a draw's commit
+        // and taken by the capture of that draw. Drawing thread only: the title draws from one thread
+        // at a time, as the device itself requires.
+        uint32_t g_changedSlots = ~0u;
 
         // A fetch constant with its base and mip addresses as GPU addresses (headers hold guest
         // addresses, the device the GPU ones).
@@ -138,7 +164,17 @@ namespace gpu::guest
             auto last = first;
             while (last != g_contents.end() && last->first.first < end)
                 ++last;
+            if (first == last)
+                return;
             g_contents.erase(first, last);
+            g_epoch++;
+        }
+
+        // An address stops sampling its resolved texture. Under g_mutex.
+        void EraseResolved(std::unordered_map<uint32_t, Resolve>::iterator resolved)
+        {
+            g_resolved.erase(resolved);
+            g_epoch++;
         }
 
         // Marks the textures of an address to be checked at their next use. Under g_mutex.
@@ -221,22 +257,32 @@ namespace gpu::guest
             // A resolve noted since the readback is newer than what was written: it stays.
             auto it = g_resolved.find(address);
             if (it != g_resolved.end() && it->second.number == number)
-                g_resolved.erase(it);
+                EraseResolved(it);
             Invalidate(address);
         }
-    }
 
-    void ReadDrawTextures(uint32_t device, DrawOp& op)
-    {
-        Renderer* renderer = ActiveRenderer();
-        // The uploads are posted under the lock, so a texture found checked is already posted.
-        std::lock_guard lock(g_mutex);
-        for (uint32_t slot = 0; slot < SharedConstants::kFetchSlots; slot++)
+        // Decodes a fetch constant of the device into its slot. Under g_mutex.
+        void DecodeSlot(uint32_t device, uint32_t slot)
         {
-            textures::Fetch fetch = ReadFetch(device + dev::kFetchConstants + kFetchBytes * slot);
-            if (fetch.Type() != textures::kFetchTypeTexture)
-                continue;
-            DrawTexture& texture = op.textures[slot];
+            Slot& entry = g_slots[slot];
+            uint32_t address = device + dev::kFetchConstants + kFetchBytes * slot;
+            // The slots of the vertex streams change on most draws: the type is in the first dword.
+            textures::Fetch type;
+            type.d[0] = mem::Load32(address);
+            if (type.Type() != textures::kFetchTypeTexture)
+            {
+                if ((g_textureSlots & (1u << slot)) != 0)
+                {
+                    g_textureSlots &= ~(1u << slot);
+                    entry = {};
+                }
+                return;
+            }
+            g_textureSlots |= 1u << slot;
+            entry = {};
+            textures::Fetch fetch = ReadFetch(address);
+
+            DrawTexture texture;
             texture.address = KeyAddress(fetch);
             texture.format = fetch.Format();
             texture.swizzle = fetch.Swizzle();
@@ -248,7 +294,8 @@ namespace gpu::guest
             {
                 texture.kind = fetch.DimensionField() == kDimensionCube ? DrawTexture::Kind::Cube : DrawTexture::Kind::Planar;
                 texture.resolved = true;
-                continue;
+                entry.texture = texture;
+                return;
             }
 
             // A content is described once; its layout follows from its key.
@@ -260,9 +307,8 @@ namespace gpu::guest
                 const char* reason = nullptr;
                 if (!textures::DescribeTexture(fetch, layout, reason))
                 {
-                    texture = {};
                     LogUncovered(reason, fetch.Format());
-                    continue;
+                    return;
                 }
                 CheckUnapplied(fetch);
                 it = g_contents.emplace(std::pair(texture.address, texture.layout), Content()).first;
@@ -276,9 +322,47 @@ namespace gpu::guest
             texture.kind = content.kind;
             texture.mipMin = content.layout.mipMin;
             texture.mipMax = content.layout.mipMax;
-            if (content.checkedFrame == g_frame)
+            entry.texture = texture;
+            entry.content = &content;
+        }
+    }
+
+    void NoteChangedFetchConstants(uint32_t device)
+    {
+        // Slot i is bit 31 - i of the mask.
+        g_changedSlots |= __builtin_bitreverse32(mem::Load32(device + dev::kFetchConstantsDirty));
+    }
+
+    void ReadDrawTextures(uint32_t device, DrawOp& op)
+    {
+        Renderer* renderer = ActiveRenderer();
+        // The uploads are posted under the lock, so a texture found checked is already posted.
+        std::lock_guard lock(g_mutex);
+        uint32_t changed = g_changedSlots;
+        g_changedSlots = 0;
+        if (device != g_slotsDevice)
+        {
+            g_slotsDevice = device;
+            changed = ~0u;
+        }
+        if (g_slotsEpoch != g_epoch)
+        {
+            g_slotsEpoch = g_epoch;
+            changed |= g_textureSlots;
+        }
+        for (; changed != 0; changed &= changed - 1)
+            DecodeSlot(device, uint32_t(std::countr_zero(changed)));
+
+        for (uint32_t slots = g_textureSlots; slots != 0; slots &= slots - 1)
+        {
+            uint32_t slot = uint32_t(std::countr_zero(slots));
+            Slot& entry = g_slots[slot];
+            const DrawTexture& texture = entry.texture;
+            op.textures[slot] = texture;
+            if (entry.content == nullptr || entry.content->checkedFrame == g_frame)
                 continue;
 
+            Content& content = *entry.content;
             content.checkedFrame = g_frame;
             uint64_t check = 0;
             if (!CheckWrites(content.ranges, content.uploadCheck, check) && content.uploadCheck != 0)
@@ -298,10 +382,14 @@ namespace gpu::guest
             renderer->UploadTexture(std::move(upload));
         }
     }
+
     void NoteResolved(uint32_t address, uint32_t header)
     {
         std::lock_guard lock(g_mutex);
-        g_resolved[address] = { header, ++g_resolves };
+        auto [resolved, added] = g_resolved.try_emplace(address);
+        resolved->second = { header, ++g_resolves };
+        if (added)
+            g_epoch++;
     }
 
     void ForgetTexture(uint32_t header)
@@ -312,7 +400,7 @@ namespace gpu::guest
             std::lock_guard lock(g_mutex);
             auto resolved = g_resolved.find(base);
             if (resolved != g_resolved.end() && resolved->second.header == header)
-                g_resolved.erase(resolved);
+                EraseResolved(resolved);
             for (uint32_t address : { base, fetch.MipAddress() })
                 EraseContents(address, address + 1);
         }
@@ -341,7 +429,13 @@ namespace gpu::guest
             EraseContents(begin, end);
             for (uint32_t key : outside)
                 EraseContents(key, key + 1);
-            std::erase_if(g_resolved, [&](const auto& entry) { return entry.first >= begin && entry.first < end; });
+            for (auto resolved = g_resolved.begin(); resolved != g_resolved.end();)
+            {
+                auto next = std::next(resolved);
+                if (resolved->first >= begin && resolved->first < end)
+                    EraseResolved(resolved);
+                resolved = next;
+            }
         }
         Renderer* renderer = ActiveRenderer();
         if (renderer == nullptr)
@@ -394,7 +488,7 @@ PPC_FUNC(D3D_UNLOCK_RESOURCE)
     // The CPU wrote the memory through another header: it no longer holds the resolved image.
     auto resolved = g_resolved.find(fetch.BaseAddress());
     if (resolved != g_resolved.end() && resolved->second.header != resource)
-        g_resolved.erase(resolved);
+        EraseResolved(resolved);
     Invalidate(fetch.BaseAddress());
     if (fetch.MipAddress() != 0)
         Invalidate(fetch.MipAddress());
