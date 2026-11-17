@@ -133,7 +133,9 @@ namespace gpu::guest
             std::thread::id thread;
         };
 
-        std::mutex g_pendingMutex;
+        // Held while the quad is posted, so that a draw on another thread waits for it (PostInlineDraw).
+        // Recursive: the post calls FlushInlineDraw again (Renderer::BeforePost).
+        std::recursive_mutex g_pendingMutex;
         PendingInline g_pending;
 
         void LogUnregistered(uint32_t object, bool pixel)
@@ -160,12 +162,13 @@ namespace gpu::guest
 
         // The float constants of one shader stage as the host shaders read them: the device's block in
         // host order, kept current from the dirty mask, which is read before the draw's commit clears
-        // it, and the snapshot the draws share until the block changes. Used by the drawing thread; the
-        // title draws from one thread at a time, as the device itself requires.
+        // it, and the range of the stage's constant ring the draws share until the block changes. Used
+        // by the drawing thread; the title draws from one thread at a time, as the device itself
+        // requires.
         class ConstantShadow
         {
         public:
-            ConstantShadow(uint32_t block, uint32_t dirty) : block_(block), dirty_(dirty) {}
+            ConstantShadow(ShaderStage stage, uint32_t block, uint32_t dirty) : stage_(stage), block_(block), dirty_(dirty) {}
 
             // Copies the groups the dirty mask marks (everything the first time).
             void Refresh(uint32_t device)
@@ -179,33 +182,43 @@ namespace gpu::guest
                     if (memcmp(bytes_.data() + at, group, sizeof(group)) == 0)
                         continue;
                     memcpy(bytes_.data() + at, group, sizeof(group));
-                    snapshot_.reset();
+                    changed_ = true;
                 }
                 valid_ = true;
             }
 
-            // The block as of the last refresh.
-            std::shared_ptr<const ConstantBlock> Snapshot()
+            // A range holding registers 0 to registers - 1 as of the last refresh: the last range
+            // stored when the block has not changed since and the range holds them, otherwise a new
+            // copy. At least one register, so that the stage always has a constant buffer to bind.
+            // None when the renderer is stopping.
+            std::optional<ConstantRange> Store(Renderer& renderer, uint32_t registers)
             {
-                if (!snapshot_)
+                uint32_t bytes = std::max(registers, 1u) * kConstantRegisterBytes;
+                if (changed_ || range_.bytes < bytes)
                 {
-                    auto block = std::make_shared_for_overwrite<ConstantBlock>();
-                    *block = bytes_;
-                    snapshot_ = std::move(block);
+                    std::optional<ConstantSpace> space = renderer.ReserveConstants(stage_, bytes);
+                    if (!space)
+                        return std::nullopt;
+                    memcpy(space->data, bytes_.data(), bytes);
+                    range_ = space->range;
+                    changed_ = false;
                 }
-                return snapshot_;
+                return range_;
             }
 
         private:
+            ShaderStage stage_;
             uint32_t block_; // offsets in the device
             uint32_t dirty_;
-            ConstantBlock bytes_{};
+            std::array<uint8_t, kConstantRegisters * kConstantRegisterBytes> bytes_{};
+            static_assert(sizeof(bytes_) == dev::kConstantBytes);
             bool valid_ = false;
-            std::shared_ptr<const ConstantBlock> snapshot_; // null: the block changed since the last one
+            bool changed_ = true; // the block changed since range_ was stored
+            ConstantRange range_;
         };
 
-        ConstantShadow g_vertexConstants(dev::kVertexConstants, dev::kVertexConstantsDirty);
-        ConstantShadow g_pixelConstants(dev::kPixelConstants, dev::kPixelConstantsDirty);
+        ConstantShadow g_vertexConstants(ShaderStage::Vertex, dev::kVertexConstants, dev::kVertexConstantsDirty);
+        ConstantShadow g_pixelConstants(ShaderStage::Pixel, dev::kPixelConstants, dev::kPixelConstantsDirty);
 
         // Before a draw's commit: the constant shadows take what the commit is about to send, and the
         // fetch constants it marks as changed are noted for the capture.
@@ -748,8 +761,13 @@ namespace gpu::guest
             }
 
             // Constants, as the host shaders read them.
-            op->vertexConstants = g_vertexConstants.Snapshot();
-            op->pixelConstants = g_pixelConstants.Snapshot();
+            std::optional<ConstantRange> vertexConstants = g_vertexConstants.Store(*renderer, vertexShader->constantRegisters);
+            std::optional<ConstantRange> pixelConstants =
+                g_pixelConstants.Store(*renderer, pixelShader ? pixelShader->constantRegisters : 0);
+            if (!vertexConstants || !pixelConstants)
+                return nullptr;
+            op->vertexConstants = *vertexConstants;
+            op->pixelConstants = *pixelConstants;
             op->shared.booleans = (mem::Load32(devAddress + dev::kVertexBooleans) & 0xFFFF) |
                 (mem::Load32(devAddress + dev::kPixelBooleans) & 0xFFFF) << 16;
             // Last: the uploads it posts are only needed by a draw that is posted.
@@ -764,21 +782,27 @@ namespace gpu::guest
             if (Renderer* renderer = ActiveRenderer())
                 renderer->Draw(std::move(op));
         }
+
+        // Posts the quad of the last BeginVertices, if there is one: before anything else its own
+        // thread posts (anyThread false), or before any draw (true). A draw means the drawing thread
+        // holds the device, so a quad another thread began has its vertices by then; and the draws
+        // then reach the owner in the order they were captured, which their constant ranges require
+        // (Renderer::ReserveConstants).
+        void PostInlineDraw(bool anyThread)
+        {
+            std::lock_guard lock(g_pendingMutex);
+            if (!g_pending.op || (!anyThread && g_pending.thread != std::this_thread::get_id()))
+                return;
+            std::unique_ptr<DrawOp> op = std::move(g_pending.op);
+            if (g_pending.stream)
+                memcpy(op->vertices.data() + g_pending.stream->offset, mem::Ptr(g_pending.vertices), g_pending.stream->bytes);
+            Post(std::move(op));
+        }
     }
 
     void FlushInlineDraw()
     {
-        std::unique_ptr<DrawOp> op;
-        {
-            std::lock_guard lock(g_pendingMutex);
-            if (!g_pending.op || g_pending.thread != std::this_thread::get_id())
-                return;
-            op = std::move(g_pending.op);
-            if (g_pending.stream)
-                memcpy(op->vertices.data() + g_pending.stream->offset, mem::Ptr(g_pending.vertices),
-                    g_pending.stream->bytes);
-        }
-        Post(std::move(op));
+        PostInlineDraw(false);
     }
 }
 
@@ -798,6 +822,7 @@ PPC_FUNC(D3D_DRAW_INDEXED_VERTICES)
     call.baseVertex = int32_t(ctx.r5.u32);
     call.startIndex = ctx.r6.u32;
     call.count = ctx.r7.u32;
+    PostInlineDraw(true);
     RefreshConstants();
     Commit(ctx, base, ctx.r3.u32);
     Post(Capture(ctx, base, call));
@@ -811,6 +836,7 @@ PPC_FUNC(D3D_DRAW_VERTICES)
     call.primitive = ctx.r4.u32;
     call.baseVertex = int32_t(ctx.r5.u32);
     call.count = ctx.r6.u32;
+    PostInlineDraw(true);
     RefreshConstants();
     Commit(ctx, base, ctx.r3.u32);
     Post(Capture(ctx, base, call));
@@ -819,11 +845,11 @@ PPC_FUNC(D3D_DRAW_VERTICES)
 // D3DDevice_BeginVertices(device, ...): commits the state and returns the space for the vertices
 // of a quad (null on failure). Replaced to build the host draw of the quad after the original,
 // whose packets nothing executes (constants as in DrawIndexedVertices); the title writes the
-// vertices after the call and ends with an inline EndVertices, so the quad is kept until
-// FlushInlineDraw.
+// vertices after the call and ends with an inline EndVertices, so the quad is kept until the next
+// draw or until its thread posts something else (FlushInlineDraw).
 PPC_FUNC(D3D_BEGIN_VERTICES)
 {
-    FlushInlineDraw();
+    PostInlineDraw(true);
     RefreshConstants();
     ORIGINAL(D3D_BEGIN_VERTICES)(ctx, base);
     uint32_t vertices = ctx.r3.u32;

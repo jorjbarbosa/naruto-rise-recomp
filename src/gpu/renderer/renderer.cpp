@@ -3,6 +3,7 @@
 #include "gpu/renderer/renderer.h"
 
 #include "gpu/renderer/buffers.h"
+#include "gpu/renderer/constant_ring.h"
 #include "gpu/renderer/context.h"
 #include "gpu/renderer/descriptors.h"
 #include "gpu/renderer/draws.h"
@@ -37,6 +38,11 @@ namespace gpu
         // The draws the owner receives together.
         constexpr size_t kDrawBatch = 32;
 
+        // The constant ring of each stage. A frame of the heaviest scene seen (4,000 draws) hands out
+        // about 2 MB of vertex constants and 0.6 MB of pixel constants, and the capture runs at most
+        // about two frames ahead of the owner.
+        constexpr uint64_t kConstantRingBytes = 8 << 20;
+
         // Debug layer: the guest clears to any value, so the hint that a clear does not match the
         // value given at the target's creation is noise.
         void FilterDebugMessages(plume::RenderDevice& device)
@@ -67,6 +73,7 @@ namespace gpu
                     stopping_ = true;
                 }
                 cv_.notify_all();
+                roomCv_.notify_all();
                 owner_.join();
             }
             if (context)
@@ -128,7 +135,30 @@ namespace gpu
             cv_.notify_one();
         }
 
-        // Destroyed in reverse order: the device outlives everything created on it.
+        std::optional<ConstantSpace> ReserveConstants(ShaderStage stage, uint32_t bytes)
+        {
+            ConstantRing& ring = Ring(stage);
+            for (;;)
+            {
+                // Read before the attempt, so that a free after it ends the wait below.
+                uint64_t freed = ring.Freed();
+                if (std::optional<ConstantSpace> space = ring.TryReserve(bytes))
+                    return space;
+                LOG_ONCE("gpu: a constant ring is full; the capture waits for the owner");
+                std::unique_lock lock(mutex_);
+                if (stopping_)
+                    return std::nullopt;
+                // The open batch may hold the draws whose drawing frees the space.
+                CloseDraws();
+                cv_.notify_one();
+                roomCv_.wait(lock, [&] { return stopping_ || ring.Freed() != freed; });
+            }
+        }
+
+        // Destroyed in reverse order: the device outlives everything created on it, and the constant
+        // rings outlive the draws that read them.
+        ConstantRing vertexRing{ kConstantRingBytes };
+        ConstantRing pixelRing{ kConstantRingBytes };
         std::unique_ptr<plume::RenderInterface> api;
         std::unique_ptr<Context> context;
         std::unique_ptr<Descriptors> descriptors;
@@ -158,6 +188,11 @@ namespace gpu
             DrawBatch draws;
         };
 
+        ConstantRing& Ring(ShaderStage stage)
+        {
+            return stage == ShaderStage::Vertex ? vertexRing : pixelRing;
+        }
+
         // Queues the open batch of draws, if there is one. Under mutex_.
         void CloseDraws()
         {
@@ -169,6 +204,8 @@ namespace gpu
         void OwnerMain()
         {
             DrawBatch drawn; // the draws of the last batch, on their way to the free ones
+            // The ranges of the last draw drawn: the space before them is free once the batch is.
+            std::optional<std::pair<uint64_t, uint64_t>> constantsFree;
             for (;;)
             {
                 Task task;
@@ -176,6 +213,14 @@ namespace gpu
                     std::unique_lock lock(mutex_);
                     std::move(drawn.begin(), drawn.end(), std::back_inserter(freeDraws_));
                     drawn.clear();
+                    // Under the lock, so that a capture waiting for room cannot miss it.
+                    if (constantsFree)
+                    {
+                        vertexRing.Free(constantsFree->first);
+                        pixelRing.Free(constantsFree->second);
+                        constantsFree.reset();
+                        roomCv_.notify_all();
+                    }
                     cv_.wait(lock, [&] { return stopping_ || !tasks_.empty(); });
                     if (tasks_.empty())
                         return;
@@ -187,6 +232,8 @@ namespace gpu
                     task.run();
                     continue;
                 }
+                const DrawOp& last = *task.draws.back();
+                constantsFree.emplace(last.vertexConstants.position, last.pixelConstants.position);
                 for (std::unique_ptr<DrawOp>& op : task.draws)
                 {
                     draws->Draw(*op);
@@ -201,6 +248,7 @@ namespace gpu
         std::thread owner_;
         std::mutex mutex_; // the state below
         std::condition_variable cv_;
+        std::condition_variable roomCv_; // a constant ring was freed
         std::deque<Task> tasks_;
         DrawBatch openDraws_; // posted since the last task
         // Drawn DrawOps for NewDraw: as many as were ever queued at once, about two frames of draws
@@ -261,7 +309,7 @@ namespace gpu
         impl->textures = std::make_unique<Textures>(*impl->context, *impl->targets, *impl->descriptors);
         impl->buffers = std::make_unique<Buffers>(*impl->context);
         impl->draws = std::make_unique<Draws>(*impl->context, *impl->targets, *impl->descriptors, *impl->textures,
-            *impl->buffers, settings.pipelineList);
+            *impl->buffers, impl->vertexRing, impl->pixelRing, settings.pipelineList);
         impl->Start();
         return std::unique_ptr<Renderer>(new Renderer(std::move(impl)));
     }
@@ -293,6 +341,11 @@ namespace gpu
     void Renderer::Draw(std::unique_ptr<DrawOp> op)
     {
         impl_->Draw(std::move(op));
+    }
+
+    std::optional<ConstantSpace> Renderer::ReserveConstants(ShaderStage stage, uint32_t bytes)
+    {
+        return impl_->ReserveConstants(stage, bytes);
     }
 
     void Renderer::UploadTexture(std::unique_ptr<TextureUpload> upload)

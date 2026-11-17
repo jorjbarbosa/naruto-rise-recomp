@@ -22,6 +22,11 @@ namespace gpu::guest
     {
         uint64_t key = 0; // the translated shader in the shader cache (XXH3-64 of the container)
         bool pixel = false;
+        // The float constant registers the translated shader reads are below this one: the end of
+        // the last float4 constant of its constant table. A relative index past the end of an array
+        // reads the register file on the console; here it reads no defined value, as only the
+        // registers below this one reach the GPU.
+        uint32_t constantRegisters = 0;
         // Vertex shaders: the microcode (host order) with the fetch instructions of the shader
         // database, which the library patches in place for each vertex declaration, and the
         // vertex elements.

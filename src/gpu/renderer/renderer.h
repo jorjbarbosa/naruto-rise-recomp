@@ -99,9 +99,30 @@ namespace gpu
     };
     static_assert(sizeof(SharedConstants) == 44 * 16);
 
-    // The float constants of one shader stage (256 float4, host order): a root constant buffer of the
+    // The float constants of a shader stage: 256 float4 registers, a root constant buffer of the
     // translated shaders (register b0 or b1, space4).
-    using ConstantBlock = std::array<uint8_t, 4096>;
+    enum class ShaderStage : uint8_t
+    {
+        Vertex,
+        Pixel,
+    };
+    constexpr uint32_t kConstantRegisters = 256;
+    constexpr uint32_t kConstantRegisterBytes = 16;
+
+    // The float constants of a draw for one stage, in the renderer's constant ring of that stage
+    // (Renderer::ReserveConstants): registers 0 to bytes / 16 - 1, host order.
+    struct ConstantRange
+    {
+        uint64_t position = 0; // grows with each range handed out, so a position names one range
+        uint32_t bytes = 0;
+    };
+
+    // A range just handed out, and where to write its constants.
+    struct ConstantSpace
+    {
+        ConstantRange range;
+        uint8_t* data = nullptr;
+    };
 
     // SPEC_CONSTANT_ALPHA_TEST: the pixel shader discards pixels whose alpha is below the threshold.
     constexpr uint32_t kSpecAlphaTest = 2;
@@ -316,8 +337,8 @@ namespace gpu
 
         // Float constants as the host shaders read them, shared by the draws in a row that have the
         // same values.
-        std::shared_ptr<const ConstantBlock> vertexConstants;
-        std::shared_ptr<const ConstantBlock> pixelConstants;
+        ConstantRange vertexConstants;
+        ConstantRange pixelConstants;
         SharedConstants shared; // descriptor indices filled by the renderer from textures
         std::array<DrawTexture, SharedConstants::kFetchSlots> textures{}; // by texture fetch constant
 
@@ -357,6 +378,12 @@ namespace gpu
         // when there is one. Any thread.
         std::unique_ptr<DrawOp> NewDraw();
         void Draw(std::unique_ptr<DrawOp> op);
+        // Space in the constant ring of a stage for the constants of the next draws to post, which
+        // the owner reads when it draws them. Each draw names the range of the draw posted before it
+        // or a newer one, never an older one: drawing a draw frees the space before its ranges.
+        // Waits while the ring is full (the open batch of draws is queued first); none when the
+        // owner is stopping. One thread at a time, the one that captures the draws.
+        std::optional<ConstantSpace> ReserveConstants(ShaderStage stage, uint32_t bytes);
         // Fills the host texture of (address, layout key) with new content; draws posted after it
         // sample it.
         void UploadTexture(std::unique_ptr<TextureUpload> upload);

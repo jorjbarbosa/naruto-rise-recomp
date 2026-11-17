@@ -3,8 +3,10 @@
 #include "gpu/guest/shaders.h"
 
 #include "gpu/guest/addresses.h"
+#include "gpu/renderer/renderer.h"
 #include "kernel/kernel.h"
 
+#include <algorithm>
 #include <mutex>
 #include <unordered_map>
 
@@ -23,6 +25,40 @@ namespace gpu::guest
 
         std::mutex g_mutex;
         std::unordered_map<uint32_t, std::shared_ptr<const ShaderInfo>> g_shaders;
+
+        // The end of the float4 constants of the container's constant table (ShaderInfo::
+        // constantRegisters). A table that does not fit the virtual part counts as reading every
+        // register (logged once).
+        uint32_t ReadConstantRegisters(uint32_t object, uint32_t container, uint32_t virtualSize)
+        {
+            uint32_t end = container + virtualSize;
+            uint32_t offset = mem::Load32(container + shader::kConstantTableOffset);
+            uint32_t table = container + offset + shader::kConstantTable;
+            if (offset == 0 || offset >= virtualSize || uint64_t(table) + shader::kTableConstantInfo + 4 > end)
+            {
+                LOG_ONCE("gpu: shader object %08X has no readable constant table; its draws upload every constant", object);
+                return kConstantRegisters;
+            }
+            uint32_t count = mem::Load32(table + shader::kTableConstants);
+            uint64_t info = uint64_t(table) + mem::Load32(table + shader::kTableConstantInfo);
+            if (info + uint64_t(count) * shader::kConstantInfoBytes > end)
+            {
+                LOG_ONCE("gpu: shader object %08X has a constant table past its container; its draws upload every constant",
+                    object);
+                return kConstantRegisters;
+            }
+            uint32_t registers = 0;
+            for (uint32_t i = 0; i < count; i++)
+            {
+                uint32_t constant = uint32_t(info) + i * shader::kConstantInfoBytes;
+                if (mem::Load16(constant + shader::kInfoRegisterSet) != shader::kRegisterSetFloat4)
+                    continue;
+                uint32_t first = mem::Load16(constant + shader::kInfoRegisterIndex);
+                uint32_t size = mem::Load16(constant + shader::kInfoRegisterCount);
+                registers = std::max(registers, std::min(first + size, kConstantRegisters));
+            }
+            return registers;
+        }
 
         // The shader of an object just created, or null when its container does not read as one
         // (logged once).
@@ -51,6 +87,7 @@ namespace gpu::guest
             auto info = std::make_shared<ShaderInfo>();
             info->key = XXH3_64bits_digest(&state);
             info->pixel = pixel;
+            info->constantRegisters = ReadConstantRegisters(object, container, virtualSize);
             if (pixel)
                 return info;
 

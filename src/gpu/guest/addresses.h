@@ -225,7 +225,20 @@ namespace gpu::guest
         // Shader container fields.
         constexpr uint32_t kVirtualSize = 0x04;
         constexpr uint32_t kPhysicalSize = 0x08;
-        constexpr uint32_t kShaderOffset = 0x18; // the shader header, from the container
+        constexpr uint32_t kConstantTableOffset = 0x10; // a size dword and the table, from the container
+        constexpr uint32_t kShaderOffset = 0x18;        // the shader header, from the container
+
+        // The constant table (D3DXSHADER_CONSTANTTABLE, after its size dword): the number of
+        // constants and the offset of their D3DXSHADER_CONSTANTINFO array, from the table. Each
+        // entry names a register set (2: float4) and the registers it takes.
+        constexpr uint32_t kConstantTable = 0x04;
+        constexpr uint32_t kTableConstants = 0x0C;
+        constexpr uint32_t kTableConstantInfo = 0x10;
+        constexpr uint32_t kConstantInfoBytes = 20;
+        constexpr uint32_t kInfoRegisterSet = 0x04;
+        constexpr uint32_t kInfoRegisterIndex = 0x06;
+        constexpr uint32_t kInfoRegisterCount = 0x08;
+        constexpr uint32_t kRegisterSetFloat4 = 2;
 
         // Shader header: offset and size of the microcode in the physical part.
         constexpr uint32_t kCodeOffset = 0x00;

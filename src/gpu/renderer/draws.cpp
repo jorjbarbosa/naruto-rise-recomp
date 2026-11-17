@@ -3,6 +3,7 @@
 #include "gpu/renderer/draws.h"
 
 #include "gpu/renderer/buffers.h"
+#include "gpu/renderer/constant_ring.h"
 #include "gpu/renderer/context.h"
 #include "gpu/renderer/descriptors.h"
 #include "gpu/renderer/targets.h"
@@ -71,8 +72,9 @@ namespace gpu
     }
 
     Draws::Draws(Context& context, Targets& targets, Descriptors& descriptors, Textures& textures, Buffers& buffers,
-        const std::filesystem::path& pipelineList)
-        : context_(context), targets_(targets), descriptors_(descriptors), textures_(textures), buffers_(buffers)
+        const ConstantRing& vertexRing, const ConstantRing& pixelRing, const std::filesystem::path& pipelineList)
+        : context_(context), targets_(targets), descriptors_(descriptors), textures_(textures), buffers_(buffers),
+          vertexRing_(vertexRing), pixelRing_(pixelRing)
     {
         const plume::RenderRootDescriptorDesc roots[] = {
             { kVertexConstantsRoot, kConstantSpace, plume::RenderRootDescriptorType::CONSTANT_BUFFER },
@@ -102,13 +104,16 @@ namespace gpu
         return shared_.upload.Reference();
     }
 
-    plume::RenderBufferReference Draws::Constants(ConstantUpload& last, const std::shared_ptr<const ConstantBlock>& block)
+    plume::RenderBufferReference Draws::Constants(ConstantUpload& last, const ConstantRing& ring, const ConstantRange& range)
     {
-        if (block != last.block || last.submission != context_.OpenSubmission())
+        // Only the range is copied: the draw's shaders read no register past it, except through a
+        // relative index past the end of an array (ShaderInfo::constantRegisters). The upload still
+        // spans the whole register file, so that such a read stays inside the buffer.
+        if (range.position != last.position || last.submission != context_.OpenSubmission())
         {
-            last.upload = context_.Allocate(block->size(), Context::kConstantAlignment);
-            memcpy(last.upload.data, block->data(), block->size());
-            last.block = block;
+            last.upload = context_.Allocate(kConstantRegisters * kConstantRegisterBytes, Context::kConstantAlignment);
+            memcpy(last.upload.data, ring.Data(range), range.bytes);
+            last.position = range.position;
             last.submission = context_.OpenSubmission();
         }
         return last.upload.Reference();
@@ -228,8 +233,8 @@ namespace gpu
         }
         targets_.BindForDraw(list, op.color, op.depth);
 
-        plume::RenderBufferReference vertexConstants = Constants(vertexConstants_, op.vertexConstants);
-        plume::RenderBufferReference pixelConstants = Constants(pixelConstants_, op.pixelConstants);
+        plume::RenderBufferReference vertexConstants = Constants(vertexConstants_, vertexRing_, op.vertexConstants);
+        plume::RenderBufferReference pixelConstants = Constants(pixelConstants_, pixelRing_, op.pixelConstants);
         plume::RenderBufferReference sharedConstants = Shared(shared);
 
         if (!state_.layoutSet)
