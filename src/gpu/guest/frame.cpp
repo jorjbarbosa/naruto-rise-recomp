@@ -11,6 +11,7 @@
 #include "gpu/guest/draw.h"
 #include "gpu/guest/resources.h"
 #include "gpu/guest/textures.h"
+#include "gpu/guest/watch.h"
 #include "gpu/renderer/renderer.h"
 #include "gpu/settings.h"
 #include "host/window.h"
@@ -172,6 +173,7 @@ namespace gpu
         uint64_t present = g_renderer ? g_renderer->Present(front.address, vblanks, host::DisplayRefreshMillihertz()) : 0;
         guest::EndTextureFrame();
         guest::EndBufferFrame();
+        guest::EndWatchFrame();
         bool paced = g_renderer && g_renderer->DisplayPaces() && g_renderer->WaitPresented(present);
         g_limiter.Pace(paced ? 0 : vblanks);
     }

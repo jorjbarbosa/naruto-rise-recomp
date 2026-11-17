@@ -23,7 +23,8 @@ namespace gpu::guest
         struct Buffer
         {
             uint64_t lastCheck = 0;      // the previous write check; 0: none
-            uint64_t lastCheckFrame = 0; // the frame it was made in
+            uint64_t lastCheckFrame = 0; // the frame it was made in, or the frame's sweep answered in
+            uint64_t writtenFrame = 0;   // the frame of the last check that found a write; 0: none
             bool recheck = false;        // a buffer over it was unlocked since
             bool hosted = false;         // the host's copy holds the memory as of that check
         };
@@ -118,6 +119,14 @@ namespace gpu::guest
         // (dynamic vertices).
         if (buffer.lastCheckFrame == g_frame && !buffer.recheck)
             return buffer.hosted;
+        // The copy of memory that was neither unlocked nor written lately stands while the frame's
+        // sweep finds no write; the rest is checked now, which finds a write of this frame.
+        if (buffer.hosted && !buffer.recheck && !WrittenLately(buffer.writtenFrame, g_frame) &&
+            !WrittenBySweep(address, bytes, buffer.lastCheck))
+        {
+            buffer.lastCheckFrame = g_frame;
+            return true;
+        }
         bool sinceEarlierFrame = buffer.lastCheck != 0 && buffer.lastCheckFrame < g_frame;
         uint64_t check = 0;
         bool changed = CheckWrites({ { address, bytes } }, buffer.lastCheck, check);
@@ -126,6 +135,7 @@ namespace gpu::guest
         buffer.recheck = false;
         if (changed)
         {
+            buffer.writtenFrame = g_frame;
             // The stale copy goes; the buffer is hosted again once it is stable.
             if (buffer.hosted)
                 renderer->ReleaseBuffer(key);

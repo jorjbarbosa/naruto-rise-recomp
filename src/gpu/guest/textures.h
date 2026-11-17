@@ -18,9 +18,12 @@ namespace gpu::guest
     // Fills the textures of a draw from the device's fetch constants. A fetch constant is decoded
     // again only after NoteChangedFetchConstants saw it change, or when what it can sample changed
     // (a resolve, a destroyed texture, freed memory). A texture whose memory was written since its
-    // last upload (mem::TakeWrittenPages) is uploaded first (posted before the draw). Memory is
-    // checked at the first use in a frame, and again after the last UnlockResource of its header.
-    // Drawing thread, after the draw's commit.
+    // last upload is uploaded first (posted before the draw). Memory is checked at the first use in
+    // a frame, and again after the last UnlockResource of its header: by a check of its own
+    // (CheckWrites) when it is new, was unlocked or was uploaded in the last kWrittenLatelyFrames
+    // frames, by the frame's sweep (WrittenBySweep) otherwise. A write without an unlock that the
+    // sweep answers for, made after the sweep, is uploaded in the next frame. Drawing thread, after
+    // the draw's commit.
     void ReadDrawTextures(uint32_t device, DrawOp& op);
 
     // A resolve wrote the texture memory at a GPU address; draws sample the resolved texture there

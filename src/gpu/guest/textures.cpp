@@ -48,6 +48,7 @@ namespace gpu::guest
             std::vector<std::pair<uint32_t, uint32_t>> ranges; // GPU address, bytes
             DrawTexture::Kind kind = DrawTexture::Kind::None;
             uint64_t uploadCheck = 0;  // 0: never uploaded
+            uint64_t uploadFrame = 0;  // the frame of that upload
             uint64_t checkedFrame = 0; // 0: check at the next use
         };
 
@@ -363,11 +364,17 @@ namespace gpu::guest
                 continue;
 
             Content& content = *entry.content;
+            // New or unlocked memory and memory written lately are checked now, which finds a write
+            // of this frame; the frame's sweep answers for the rest.
+            bool own = content.checkedFrame == 0 || WrittenLately(content.uploadFrame, g_frame);
             content.checkedFrame = g_frame;
+            if (!own && !WrittenBySweep(content.ranges, content.uploadCheck))
+                continue;
             uint64_t check = 0;
             if (!CheckWrites(content.ranges, content.uploadCheck, check) && content.uploadCheck != 0)
                 continue;
             content.uploadCheck = check;
+            content.uploadFrame = g_frame;
 
             auto upload = std::make_unique<TextureUpload>();
             upload->address = texture.address;

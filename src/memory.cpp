@@ -51,10 +51,12 @@ namespace mem
             return true;
         uint64_t begin = address & ~uint64_t(kPageSize - 1);
         uint64_t end = std::min<uint64_t>((uint64_t(address) + size + kPageSize - 1) & ~uint64_t(kPageSize - 1), kSize);
-        // One entry per page of the range is always enough.
+        // One entry per page of the range is always enough. The buffer only grows: a resize back up
+        // would zero it again on every large query.
         thread_local std::vector<void*> written;
         ULONG_PTR count = ULONG_PTR((end - begin) / kPageSize);
-        written.resize(count);
+        if (written.size() < count)
+            written.resize(count);
         ULONG granularity = 0;
         if (GetWriteWatch(WRITE_WATCH_FLAG_RESET, g_base + begin, SIZE_T(end - begin), written.data(), &count,
                 &granularity) != 0)
