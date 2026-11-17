@@ -1,8 +1,4 @@
-// Draws. D3DDevice_DrawIndexedVertices, DrawVertices and BeginVertices run as the original: the
-// commit keeps its CPU effects (the dirty masks, the vertex fetch patches of the bound shader) and
-// its packets land in the discard segment. The hook then builds the host draw from the state the
-// commit left in the device: shaders, targets, registers, constants, and copies of the indices and
-// of the vertices the draw reads.
+// Draws: the hooks of the three D3D draw functions, which commit the device state and post the host draw built from it.
 
 #include "gpu/guest/draw.h"
 
@@ -26,6 +22,8 @@
 #include <optional>
 #include <thread>
 #include <unordered_set>
+
+PPC_EXTERN_FUNC(D3D_SET_PENDING_SHADERS);
 
 namespace gpu::guest
 {
@@ -219,6 +217,28 @@ namespace gpu::guest
             g_vertexConstants.Refresh(device);
             g_pixelConstants.Refresh(device);
             NoteChangedFetchConstants(device);
+        }
+
+        // The commit of D3DDevice_DrawIndexedVertices and DrawVertices without the packets of the
+        // state and of the draw, which nothing executes. It leaves the device and the shader objects
+        // as the library's commit does: D3D::SetPending_Shaders runs as it is, on the same condition
+        // (it sets RB_MODECONTROL and the program control registers, patches the vertex fetches and
+        // stamps the shaders with the open fence; it still writes its own packets and may kick), and
+        // the five dirty masks are cleared. Everything else the library's commit calls (the other
+        // SetPending functions, the draw packet) writes to the segment and, in a predicated pass, adds
+        // the packet to the device's draw list, which only the GPU would walk. SetPending_Shaders
+        // reads no mask but the one it is given.
+        void Commit(PPCContext& ctx, uint8_t* base, uint32_t device)
+        {
+            uint64_t state = mem::Load64(device + dev::kStateDirty);
+            if ((state & dev::kStateDirtyShaders) != 0)
+            {
+                ctx.r3.u64 = device;
+                ctx.r4.u64 = state;
+                D3D_SET_PENDING_SHADERS(ctx, base);
+            }
+            for (uint32_t i = 0; i < dev::kDirtyMaskCount; i++)
+                mem::Store64(device + dev::kDirtyMasks + 8 * i, 0);
         }
 
         bool ReadStreamSource(uint32_t device, uint32_t fetch, StreamSource& source)
@@ -614,7 +634,7 @@ namespace gpu::guest
             return true;
         }
 
-        // Builds the host draw from the state the original's commit left. inlineStream receives the
+        // Builds the host draw from the state the commit left. inlineStream receives the
         // space of the BeginVertices stream in the vertex data. Null when the draw is skipped.
         std::unique_ptr<DrawOp> Capture(PPCContext& ctx, uint8_t* base, const DrawCall& call,
             std::optional<InlineStream>* inlineStream = nullptr)
@@ -764,13 +784,12 @@ namespace gpu::guest
 
 using namespace gpu::guest;
 
-DECLARE_ORIGINAL(D3D_DRAW_INDEXED_VERTICES);
-DECLARE_ORIGINAL(D3D_DRAW_VERTICES);
 DECLARE_ORIGINAL(D3D_BEGIN_VERTICES);
 
-// D3DDevice_DrawIndexedVertices(device, primitive, base vertex, start index, index count). Replaced
-// to post the host draw after the original, whose packets nothing executes; the constant shadows
-// follow the dirty masks before the original's commit clears them.
+// D3DDevice_DrawIndexedVertices(device, primitive, base vertex, start index, index count): commits
+// the state and writes the draw packet. Replaced to commit without the packets, which nothing
+// executes, and to post the host draw; the constant shadows follow the dirty masks before the
+// commit clears them.
 PPC_FUNC(D3D_DRAW_INDEXED_VERTICES)
 {
     DrawCall call;
@@ -780,12 +799,12 @@ PPC_FUNC(D3D_DRAW_INDEXED_VERTICES)
     call.startIndex = ctx.r6.u32;
     call.count = ctx.r7.u32;
     RefreshConstants();
-    ORIGINAL(D3D_DRAW_INDEXED_VERTICES)(ctx, base);
+    Commit(ctx, base, ctx.r3.u32);
     Post(Capture(ctx, base, call));
 }
 
-// D3DDevice_DrawVertices(device, primitive, start vertex, vertex count). Replaced to post the host
-// draw after the original, whose packets nothing executes (constants as in DrawIndexedVertices).
+// D3DDevice_DrawVertices(device, primitive, start vertex, vertex count): commits the state and
+// writes the draw packet. Replaced as DrawIndexedVertices is.
 PPC_FUNC(D3D_DRAW_VERTICES)
 {
     DrawCall call;
@@ -793,13 +812,13 @@ PPC_FUNC(D3D_DRAW_VERTICES)
     call.baseVertex = int32_t(ctx.r5.u32);
     call.count = ctx.r6.u32;
     RefreshConstants();
-    ORIGINAL(D3D_DRAW_VERTICES)(ctx, base);
+    Commit(ctx, base, ctx.r3.u32);
     Post(Capture(ctx, base, call));
 }
 
 // D3DDevice_BeginVertices(device, ...): commits the state and returns the space for the vertices
-// of a quad (null on failure). Replaced to build the host draw of the quad (constants as in
-// DrawIndexedVertices); the title writes the
+// of a quad (null on failure). Replaced to build the host draw of the quad after the original,
+// whose packets nothing executes (constants as in DrawIndexedVertices); the title writes the
 // vertices after the call and ends with an inline EndVertices, so the quad is kept until
 // FlushInlineDraw.
 PPC_FUNC(D3D_BEGIN_VERTICES)

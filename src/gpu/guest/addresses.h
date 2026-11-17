@@ -31,6 +31,9 @@
 #define JADE_CREATE_VERTEX_SHADER sub_820F5150    // Jade shader database: builds a D3D vertex shader object
 #define JADE_CREATE_PIXEL_SHADER sub_820F5348     // Jade shader database: builds a D3D pixel shader object
 
+// Functions of the library that host code calls as they are.
+#define D3D_SET_PENDING_SHADERS sub_82141178      // D3D::SetPending_Shaders(device, state mask), returns the mask
+
 // The recompiled implementation of a hooked function, to run the original from its hook:
 // DECLARE_ORIGINAL(D3D_RESOLVE); ... ORIGINAL(D3D_RESOLVE)(ctx, base);
 #define ORIGINAL(name) ORIGINAL_EXPANDED(name)
@@ -65,18 +68,25 @@ namespace gpu::guest
         constexpr uint32_t kVertexConstants = 0x780;
         constexpr uint32_t kPixelConstants = 0x1780;
         constexpr uint32_t kConstantBytes = 0x1000;
-        // Dirty masks of those float constants (64 bits each): bit 63 - i marks the 64 bytes of
-        // constants 4i..4i+3. Every writer sets its bits; the commit inside the three draws
-        // (D3D::SetPending_AluConstants, no other caller) sends the marked groups and clears the mask.
-        constexpr uint32_t kVertexConstantsDirty = 0;
-        constexpr uint32_t kPixelConstantsDirty = 8;
+        // The five dirty masks of the state a draw commits (64 bits each). Every writer of the state
+        // sets its bits. In the library only the commit inside the three draws reads them: it sends
+        // what they mark through the D3D::SetPending functions and clears them. The draw hooks read
+        // them before that commit, and clear them themselves where they replace it.
+        constexpr uint32_t kDirtyMasks = 0;
+        constexpr uint32_t kDirtyMaskCount = 5;
+        // Masks 0 and 1, the float constants (D3D::SetPending_AluConstants): bit 63 - i marks the 64
+        // bytes of constants 4i..4i+3.
+        constexpr uint32_t kVertexConstantsDirty = kDirtyMasks;
+        constexpr uint32_t kPixelConstantsDirty = kDirtyMasks + 8;
         constexpr uint32_t kConstantGroupBytes = 64;
-        // Dirty mask of the fetch constants (32 bits): bit 31 - i marks slot i. It is the low half of
-        // the 64-bit mask at +24, whose high half marks other state. Every writer sets its bit
-        // (D3DDevice_SetTexture, the sampler states, the vertex streams); the commit inside the three
-        // draws (D3D::SetPending_FetchConstants, no other caller) sends the marked slots and clears
-        // the mask.
-        constexpr uint32_t kFetchConstantsDirty = 28;
+        // Mask 2, the render state registers and the shaders. With one of these bits set (the bound
+        // shaders, the vertex declaration, the HiZ state), the commit calls D3D::SetPending_Shaders.
+        constexpr uint32_t kStateDirty = kDirtyMasks + 16;
+        constexpr uint64_t kStateDirtyShaders = 0x1E0000;
+        // The low half of mask 3, the fetch constants (D3D::SetPending_FetchConstants, 32 bits): bit
+        // 31 - i marks slot i. The high half marks other state. The writers are D3DDevice_SetTexture,
+        // the sampler states and the vertex streams.
+        constexpr uint32_t kFetchConstantsDirty = kDirtyMasks + 28;
 
         // Boolean shader constants: vertex shader b0..b31, pixel shader b0..b31.
         constexpr uint32_t kVertexBooleans = 10112;
