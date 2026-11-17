@@ -47,26 +47,42 @@ namespace gpu
     std::unique_ptr<Presenter> Presenter::Create(Context& context, void* window, const Settings& settings)
     {
         std::unique_ptr<Presenter> presenter(new Presenter(context, settings.vsync));
-        presenter->swapChain_ = context.Queue().createSwapChain(plume::RenderSwapChainDesc(
-            static_cast<plume::RenderWindow>(window), kFormat, kSwapBuffers, false, kFrameLatency));
-        if (!IsCreated(presenter->swapChain_.get()))
+        plume::RenderSwapChain* swapChain = (presenter->swapChain_ = CreateSwapChain(context.Queue(),
+            static_cast<plume::RenderWindow>(window), kFormat, kSwapBuffers, kFrameLatency)).get();
+        if (!IsCreated(swapChain))
         {
             Log("gpu: error: cannot create the swap chain");
             return nullptr;
         }
+        // Vulkan picks the present mode from it at the resize that makes the images (D3D12 has them
+        // already and ignores it: its presents pass their own interval).
+        swapChain->setVsyncEnabled(settings.vsync);
+        if (swapChain->needsResize() && !swapChain->resize())
+            Log("gpu: the swap chain has no images yet (window %ux%u)", swapChain->getWidth(), swapChain->getHeight());
         presenter->CreateFramebuffers();
-        Log("gpu: swap chain %ux%u, vsync %s", presenter->swapChain_->getWidth(), presenter->swapChain_->getHeight(),
-            settings.vsync ? "on" : "off");
+        if (UsesPresentSemaphores(*swapChain))
+        {
+            for (uint32_t i = 0; i < kSwapBuffers; i++)
+                presenter->acquired_.push_back(context.Device().createCommandSemaphore());
+            presenter->acquiredSubmissions_.resize(kSwapBuffers);
+        }
+        Log("gpu: swap chain %ux%u, %u images, vsync %s", swapChain->getWidth(), swapChain->getHeight(),
+            swapChain->getTextureCount(), settings.vsync ? "on" : "off");
         return presenter;
     }
 
     void Presenter::CreateFramebuffers()
     {
         framebuffers_.clear();
+        rendered_.clear();
+        if (swapChain_->isEmpty())
+            return;
         for (uint32_t i = 0; i < swapChain_->getTextureCount(); i++)
         {
             const plume::RenderTexture* attachment = swapChain_->getTexture(i);
             framebuffers_.push_back(context_.Device().createFramebuffer(plume::RenderFramebufferDesc(&attachment, 1)));
+            if (UsesPresentSemaphores(*swapChain_))
+                rendered_.push_back(context_.Device().createCommandSemaphore());
         }
     }
 
@@ -83,12 +99,14 @@ namespace gpu
             double hertz = refreshMillihertz / 1000.0;
             if (!vsync_)
                 Log("gpu: display at %.3f Hz, frames paced by the limiter (vsync off)", hertz);
+            else if (!HasSyncInterval(*swapChain_))
+                Log("gpu: display at %.3f Hz, frames paced by the limiter (the presents have no interval)", hertz);
             else if (multiple != 0)
                 Log("gpu: display at %.3f Hz, frames paced by the display (%u refreshes per 60 Hz vblank)", hertz, multiple);
             else
                 Log("gpu: display at %.3f Hz, not a multiple of 60 Hz: frames paced by the limiter", hertz);
         }
-        return vsync_ ? multiple : 0;
+        return vsync_ && HasSyncInterval(*swapChain_) ? multiple : 0;
     }
 
     void Presenter::WaitForRoom()
@@ -96,12 +114,17 @@ namespace gpu
         // The frame latency object counts the presents that left the queue (shown or replaced). One
         // wait per present keeps the count matched, so with a latency of one this returns once the
         // last present is on screen. A wait that times out stays owed, so the late signal of its
-        // present is taken by the next wait instead of releasing a later one early.
+        // present is taken by the next wait instead of releasing a later one early. Without the
+        // object, the GPU finishing the last present's work stands in for it.
         while (unmatchedPresents_ != 0)
         {
             LatencyWait wait = WaitForFrameLatency(*swapChain_, kLatencyWaitMs);
             if (wait == LatencyWait::Unavailable)
+            {
+                context_.WaitSubmission(presentSubmission_);
+                unmatchedPresents_ = 0;
                 return;
+            }
             if (wait == LatencyWait::TimedOut)
             {
                 if (!roomTimedOut_)
@@ -117,8 +140,31 @@ namespace gpu
 
     void Presenter::Submit(const Passes& passes, ResolvedTexture* image, uint32_t syncInterval)
     {
+        plume::RenderCommandSemaphore* acquired = nullptr;
+        uint32_t slot = 0;
+        if (UsesPresentSemaphores(*swapChain_))
+        {
+            // The frame's work goes first, so that only the present pass waits for the image.
+            context_.Flush();
+            slot = nextAcquired_;
+            nextAcquired_ = (nextAcquired_ + 1) % uint32_t(acquired_.size());
+            context_.WaitSubmission(acquiredSubmissions_[slot]);
+            acquired = acquired_[slot].get();
+        }
         uint32_t index = 0;
-        swapChain_->acquireTexture(nullptr, &index);
+        if (!swapChain_->acquireTexture(acquired, &index))
+        {
+            // Out of date: the next present makes the swap chain again (needsResize).
+            if (!acquireFailed_)
+            {
+                acquireFailed_ = true;
+                Log("gpu: the swap chain gave no image to present");
+            }
+            context_.Flush();
+            return;
+        }
+        if (acquired != nullptr)
+            acquiredSubmissions_[slot] = context_.OpenSubmission();
         plume::RenderTexture* backBuffer = swapChain_->getTexture(index);
         plume::RenderCommandList& list = context_.Commands();
         if (image != nullptr)
@@ -148,11 +194,13 @@ namespace gpu
         }
         list.barriers(plume::RenderBarrierStage::NONE,
             plume::RenderTextureBarrier(backBuffer, plume::RenderTextureLayout::PRESENT));
-        context_.Flush();
+        plume::RenderCommandSemaphore* rendered = acquired != nullptr ? rendered_[index].get() : nullptr;
+        presentSubmission_ = context_.OpenSubmission();
+        context_.Flush(acquired, rendered);
 
         // Tearing is only asked for with vsync off.
         unmatchedPresents_++;
-        if (!PresentSwapChain(*swapChain_, syncInterval, !vsync_) && !presentFailed_)
+        if (!PresentSwapChain(*swapChain_, index, syncInterval, !vsync_, rendered) && !presentFailed_)
         {
             presentFailed_ = true;
             Log("gpu: Present failed");

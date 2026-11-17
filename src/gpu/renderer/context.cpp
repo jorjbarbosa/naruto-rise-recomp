@@ -64,12 +64,14 @@ namespace gpu
         return *oldest;
     }
 
-    void Context::Flush()
+    void Context::Flush(plume::RenderCommandSemaphore* wait, plume::RenderCommandSemaphore* signal)
     {
+        if (open_ == nullptr && (wait != nullptr || signal != nullptr))
+            Commands();
         if (open_ != nullptr)
         {
             open_->list->end();
-            open_->submission = Submit(*open_->list);
+            open_->submission = Submit(*open_->list, wait, signal);
             open_ = nullptr;
         }
         uint64_t completed = Completed();
@@ -120,15 +122,18 @@ namespace gpu
                 return chunk;
         UploadChunk chunk;
         chunk.size = std::max(size, kChunkSize);
+        // Constant buffers are read by device address on Vulkan (backend.h, ConstantReferences).
         chunk.buffer = device_->createBuffer(plume::RenderBufferDesc::UploadBuffer(chunk.size,
-            plume::RenderBufferFlag::VERTEX | plume::RenderBufferFlag::INDEX | plume::RenderBufferFlag::CONSTANT));
+            plume::RenderBufferFlag::VERTEX | plume::RenderBufferFlag::INDEX | plume::RenderBufferFlag::CONSTANT |
+                plume::RenderBufferFlag::DEVICE_ADDRESSABLE));
         chunk.data = static_cast<uint8_t*>(chunk.buffer->map());
         if (chunk.data == nullptr)
             Fatal("gpu: cannot map an upload buffer of %llu bytes", (unsigned long long)chunk.size);
         return chunks_.emplace_back(std::move(chunk));
     }
 
-    uint64_t Context::Submit(plume::RenderCommandList& list)
+    uint64_t Context::Submit(plume::RenderCommandList& list, plume::RenderCommandSemaphore* wait,
+        plume::RenderCommandSemaphore* signal)
     {
         plume::RenderCommandFence* fence;
         {
@@ -142,7 +147,7 @@ namespace gpu
             freeFences_.pop_back();
         }
         const plume::RenderCommandList* lists[] = { &list };
-        queue_->executeCommandLists(lists, 1, nullptr, 0, nullptr, 0, fence);
+        queue_->executeCommandLists(lists, 1, &wait, wait != nullptr ? 1 : 0, &signal, signal != nullptr ? 1 : 0, fence);
         Push({ fence, false, 0 });
         return ++submitted_;
     }

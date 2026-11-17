@@ -257,11 +257,6 @@ namespace gpu
             (unsigned long long)(description.dedicatedVideoMemory >> 20));
         if (!PrepareDevice(*device, settings))
             return nullptr;
-        if (settings.api == GpuApi::Vulkan)
-        {
-            Log("gpu: the renderer does not draw on Vulkan yet");
-            return nullptr;
-        }
 
         impl->context = std::make_unique<Context>(std::move(device), std::move(completion));
         impl->presenter = Presenter::Create(*impl->context, window, settings);

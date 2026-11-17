@@ -13,8 +13,8 @@
 
 namespace gpu
 {
-    // The device and queue, and the recording of GPU work. Owner thread only, except for the
-    // completion thread it runs.
+    // The device and queue of the API under the renderer (backend.h), and the recording of GPU work.
+    // Owner thread only, except for the completion thread it runs.
     //
     // Work is recorded into one open command list and submitted by Flush. The completion thread
     // waits for each submission in order and reports the tokens queued after it, so a token is
@@ -33,8 +33,10 @@ namespace gpu
 
         // The open command list, begun on first use.
         plume::RenderCommandList& Commands();
-        // Submits the open command list, if there is one.
-        void Flush();
+        // Submits the open command list, if there is one. The submission waits for `wait` before its
+        // graphics stages write color attachments and signals `signal` once it completes; with a
+        // semaphore, a list is submitted even when nothing was recorded.
+        void Flush(plume::RenderCommandSemaphore* wait = nullptr, plume::RenderCommandSemaphore* signal = nullptr);
         // Flushes; completion(token) runs once the GPU has finished all the work so far.
         void Report(uint32_t token);
         // Flushes and waits until the queue is idle, including work queued after the last
@@ -42,6 +44,8 @@ namespace gpu
         void WaitIdle();
         // Keeps an object alive until the GPU has finished the work recorded so far.
         void Retire(std::shared_ptr<void> object);
+        // Waits until the GPU has finished a submission (an OpenSubmission() number, once flushed).
+        void WaitSubmission(uint64_t submission);
 
         // Space in a persistently mapped upload buffer for data the open command list reads,
         // valid until the GPU has finished the work recorded so far.
@@ -104,8 +108,8 @@ namespace gpu
 
         List& AcquireList();
         UploadChunk& AcquireChunk(uint64_t size);
-        uint64_t Submit(plume::RenderCommandList& list);
-        void WaitSubmission(uint64_t submission);
+        uint64_t Submit(plume::RenderCommandList& list, plume::RenderCommandSemaphore* wait = nullptr,
+            plume::RenderCommandSemaphore* signal = nullptr);
         uint64_t Completed();
         void Push(const Pending& entry);
         void CompleterMain();

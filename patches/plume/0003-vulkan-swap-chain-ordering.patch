@@ -1,0 +1,82 @@
+diff --git a/plume_vulkan.cpp b/plume_vulkan.cpp
+index f7abe54..f3d253d 100644
+--- a/plume_vulkan.cpp
++++ b/plume_vulkan.cpp
+@@ -2295,6 +2295,7 @@ namespace plume {
+ #else
+         if ((res != VK_SUCCESS) && (res != VK_SUBOPTIMAL_KHR)) {
+ #endif
++            outOfDate = outOfDate || (res == VK_ERROR_OUT_OF_DATE_KHR);
+             return false;
+         }
+ 
+@@ -2359,10 +2360,21 @@ namespace plume {
+         // Reset present counter.
+         presentCount = 1;
+ 
++        // Present ids count the presents of one swap chain: a wait must not ask the new one for an id of the old.
++        currentPresentId = 0;
++
+         if (createInfo.oldSwapchain != VK_NULL_HANDLE) {
++            // Presents of the old swap chain may still be queued: the queue must be idle before it goes.
++            {
++                const std::scoped_lock queueLock(*commandQueue->queue->mutex);
++                vkQueueWaitIdle(commandQueue->queue->vk);
++            }
++
+             vkDestroySwapchainKHR(commandQueue->device->vk, createInfo.oldSwapchain, nullptr);
+         }
+ 
++        outOfDate = false;
++
+         uint32_t retrievedImageCount = 0;
+         vkGetSwapchainImagesKHR(commandQueue->device->vk, vk, &retrievedImageCount, nullptr);
+         if (retrievedImageCount < desc.textureCount) {
+@@ -2404,7 +2416,7 @@ namespace plume {
+     bool VulkanSwapChain::needsResize() const {
+         uint32_t windowWidth, windowHeight;
+         getWindowSize(windowWidth, windowHeight);
+-        return (vk == VK_NULL_HANDLE) || (windowWidth != width) || (windowHeight != height) || (requiredPresentMode != createdPresentMode);
++        return (vk == VK_NULL_HANDLE) || outOfDate || (windowWidth != width) || (windowHeight != height) || (requiredPresentMode != createdPresentMode);
+     }
+ 
+     void VulkanSwapChain::setVsyncEnabled(bool vsyncEnabled) {
+@@ -2448,6 +2460,10 @@ namespace plume {
+     }
+ 
+     uint32_t VulkanSwapChain::getRefreshRate() const {
++        if (!commandQueue->device->capabilities.displayTiming) {
++            return 0;
++        }
++
+         VkRefreshCycleDurationGOOGLE refreshCycle = {};
+         VkResult res = vkGetRefreshCycleDurationGOOGLE(commandQueue->device->vk, vk, &refreshCycle);
+         if (res != VK_SUCCESS) {
+@@ -2489,9 +2505,14 @@ namespace plume {
+         VulkanCommandSemaphore *interfaceSemaphore = static_cast<VulkanCommandSemaphore *>(signalSemaphore);
+         VkResult res = vkAcquireNextImageKHR(commandQueue->device->vk, vk, UINT64_MAX, interfaceSemaphore->vk, VK_NULL_HANDLE, textureIndex);
+         if ((res != VK_SUCCESS) && (res != VK_SUBOPTIMAL_KHR)) {
++            outOfDate = outOfDate || (res == VK_ERROR_OUT_OF_DATE_KHR);
+             return false;
+         }
+ 
++        // The image is available once the semaphore is signaled, and command lists wait for it at the color
++        // attachment output stage (executeCommandLists). Its next barrier must start after that wait, so it
++        // counts as last used by the graphics stages; a barrier from TOP_OF_PIPE would not wait for it.
++        textures[*textureIndex].barrierStages = RenderBarrierStage::GRAPHICS;
+         return true;
+     }
+ 
+diff --git a/plume_vulkan.h b/plume_vulkan.h
+index 4788a03..9921e4e 100644
+--- a/plume_vulkan.h
++++ b/plume_vulkan.h
+@@ -256,6 +256,8 @@ namespace plume {
+         VkCompositeAlphaFlagBitsKHR pickedAlphaFlag = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+         std::vector<VulkanTexture> textures;
+         uint64_t currentPresentId = 0;
++        // An acquire or a present found the swap chain out of date: it needs a resize.
++        bool outOfDate = false;
+         bool immediatePresentModeSupported = false;
+         bool mailboxPresentModeSupported = false;
+ 

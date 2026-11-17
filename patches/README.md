@@ -194,6 +194,26 @@ layer's messages could only go to the layer's own output.
   names compiled in.
 - Without a description, or with `enabled` false, nothing is turned on, in any build type.
 
+### 0003: Vulkan swap chain ordering
+
+What the renderer's presents on Vulkan ran into, or would have, in `VulkanSwapChain`:
+
+- **The first barrier after an acquire.** Command lists wait for the acquire semaphore at the color
+  attachment output stage (`executeCommandLists`), but a barrier starts from the stages of the last
+  barrier on the texture, and the present barrier leaves `NONE`: the layout transition of the next
+  frame started at `TOP_OF_PIPE`, before the wait, and could write the image while the presentation
+  engine still read it. `acquireTexture` now marks the acquired image as last used by the graphics
+  stages, so the transition waits for the semaphore.
+- **Out of date.** An acquire or present that returns `VK_ERROR_OUT_OF_DATE_KHR` now makes
+  `needsResize()` true until the next `resize()`; before, only a change of the window size did, and
+  a swap chain the surface no longer accepted stayed in use.
+- **The old swap chain.** `resize()` destroyed the old swap chain as soon as its replacement existed,
+  while presents of it could still be queued. It now waits for the queue to go idle first. Present
+  ids also start over with the new swap chain, so that a present wait does not ask it for an id it
+  never presented.
+- **Refresh rate.** `getRefreshRate()` called `vkGetRefreshCycleDurationGOOGLE` whether or not the
+  device had `VK_GOOGLE_display_timing`; it now returns 0 without it.
+
 ## XenosRecomp
 
 Findings from the shaders of Naruto: Rise of a Ninja (`game/xeshader.sdb`: 4,467 containers, 3,322 unique,

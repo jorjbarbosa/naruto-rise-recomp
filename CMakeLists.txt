@@ -137,28 +137,40 @@ foreach(name IN LISTS IMPORT_NAMES)
 endforeach()
 file(CONFIGURE OUTPUT "${CMAKE_BINARY_DIR}/generated/imports.inc" CONTENT "${IMPORTS_INC}")
 
-# The renderer's own passes, compiled to DXIL headers with the DXC of the XenosRecomp submodule
-# (its dxil.dll signs them).
+# The renderer's own passes, compiled with the DXC of the XenosRecomp submodule into two headers each:
+# DXIL for D3D12 (its dxil.dll signs them) and SPIR-V for Vulkan (array name with a Spirv suffix).
 set(DXC "${CMAKE_SOURCE_DIR}/tools/XenosRecomp/thirdparty/dxc-bin/bin/x64/dxc.exe")
 set(GPU_SHADER_DIR "${CMAKE_SOURCE_DIR}/src/gpu/renderer/shaders")
 set(GPU_SHADER_OUTPUT "${CMAKE_BINARY_DIR}/generated/shaders")
 file(MAKE_DIRECTORY "${GPU_SHADER_OUTPUT}")
 set(GPU_SHADER_HEADERS "")
-# add_gpu_shader(<header name> <array name> <source> <profile> [dxc options...])
+# add_gpu_shader(<header name> <array name> <source> <profile> [OPTIONS <dxc options>...]
+#     [SPIRV_OPTIONS <dxc options for SPIR-V only>...])
 function(add_gpu_shader name variable source profile)
-    set(output "${GPU_SHADER_OUTPUT}/${name}.h")
-    add_custom_command(OUTPUT "${output}"
-        COMMAND "${DXC}" -nologo -T ${profile} -E main -O3 -Vn ${variable} -Fh "${output}" ${ARGN} "${GPU_SHADER_DIR}/${source}"
+    cmake_parse_arguments(PARSE_ARGV 4 SHADER "" "" "OPTIONS;SPIRV_OPTIONS")
+    set(dxil "${GPU_SHADER_OUTPUT}/${name}.h")
+    set(spirv "${GPU_SHADER_OUTPUT}/${name}_spirv.h")
+    add_custom_command(OUTPUT "${dxil}"
+        COMMAND "${DXC}" -nologo -T ${profile} -E main -O3 -Vn ${variable} -Fh "${dxil}" ${SHADER_OPTIONS}
+            "${GPU_SHADER_DIR}/${source}"
         DEPENDS "${GPU_SHADER_DIR}/${source}"
-        COMMENT "Compiling shader ${name}"
+        COMMENT "Compiling shader ${name} (DXIL)"
         VERBATIM)
-    set(GPU_SHADER_HEADERS ${GPU_SHADER_HEADERS} "${output}" PARENT_SCOPE)
+    add_custom_command(OUTPUT "${spirv}"
+        COMMAND "${DXC}" -nologo -T ${profile} -E main -O3 -spirv -fspv-target-env=vulkan1.2 -Vn ${variable}Spirv
+            -Fh "${spirv}" ${SHADER_OPTIONS} ${SHADER_SPIRV_OPTIONS} "${GPU_SHADER_DIR}/${source}"
+        DEPENDS "${GPU_SHADER_DIR}/${source}"
+        COMMENT "Compiling shader ${name} (SPIR-V)"
+        VERBATIM)
+    set(GPU_SHADER_HEADERS ${GPU_SHADER_HEADERS} "${dxil}" "${spirv}" PARENT_SCOPE)
 endfunction()
-add_gpu_shader(fullscreen_vs kFullscreenVs fullscreen_vs.hlsl vs_6_0)
+# The translated vertex shaders flip Y for Vulkan's clip space (XenosRecomp passes -fvk-invert-y), and
+# so does the passes' one: every viewport keeps a positive height on both APIs.
+add_gpu_shader(fullscreen_vs kFullscreenVs fullscreen_vs.hlsl vs_6_0 SPIRV_OPTIONS -fvk-invert-y)
 add_gpu_shader(present_ps kPresentPs present_ps.hlsl ps_6_0)
-add_gpu_shader(resolve_color_ms_ps kResolveColorMsPs resolve_ps.hlsl ps_6_0 -DMULTISAMPLE=1)
-add_gpu_shader(resolve_depth_ps kResolveDepthPs resolve_ps.hlsl ps_6_0 -DDEPTH=1)
-add_gpu_shader(resolve_depth_ms_ps kResolveDepthMsPs resolve_ps.hlsl ps_6_0 -DDEPTH=1 -DMULTISAMPLE=1)
+add_gpu_shader(resolve_color_ms_ps kResolveColorMsPs resolve_ps.hlsl ps_6_0 OPTIONS -DMULTISAMPLE=1)
+add_gpu_shader(resolve_depth_ps kResolveDepthPs resolve_ps.hlsl ps_6_0 OPTIONS -DDEPTH=1)
+add_gpu_shader(resolve_depth_ms_ps kResolveDepthMsPs resolve_ps.hlsl ps_6_0 OPTIONS -DDEPTH=1 -DMULTISAMPLE=1)
 
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/*.cpp"

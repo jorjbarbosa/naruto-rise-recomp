@@ -27,14 +27,13 @@ namespace gpu
         constexpr uint32_t kInterpolatorComponents = 18 * 4;
         // The user clip planes (PA_CL_UCP), written as SV_ClipDistance.
         constexpr uint32_t kClipDistances = 6;
-        // D3D12: the draw constants are root constant buffers, registers b0 to b2 of space 4.
-        constexpr uint32_t kConstantSpace = 4;
-        constexpr uint32_t kVertexConstantsRoot = 0;
-        constexpr uint32_t kPixelConstantsRoot = 1;
-        constexpr uint32_t kSharedConstantsRoot = 2;
-        // Vulkan: the device addresses of the draw constants, in that order, in one push constant
-        // range of both stages (PushConstants of shader_common.h).
-        constexpr uint32_t kDrawPushConstantBytes = 3 * sizeof(uint64_t);
+        // The draw constants of the translated shaders, read by reference in the order of
+        // DrawConstants: registers b0 to b2 of space 4 on D3D12, the PushConstants of
+        // shader_common.h on Vulkan.
+        const ConstantReferences kDrawConstants{ 3, 4,
+            plume::RenderShaderStageFlag::VERTEX | plume::RenderShaderStageFlag::PIXEL };
+        // The most references a layout has.
+        constexpr uint32_t kMaxReferences = 3;
 
         // A validation message that repeats (every draw, every frame) is logged this many times.
         constexpr uint32_t kValidationRepeats = 3;
@@ -263,24 +262,60 @@ namespace gpu
         return vulkan != nullptr && vulkan->surface != VK_NULL_HANDLE;
     }
 
-    std::unique_ptr<plume::RenderPipelineLayout> CreateDrawLayout(plume::RenderDevice& device,
-        const plume::RenderDescriptorSetDesc* sets, uint32_t setCount)
+    plume::RenderShaderFormat ShaderFormat(plume::RenderDevice& device)
+    {
+        return dynamic_cast<plume::D3D12Device*>(&device) != nullptr ? plume::RenderShaderFormat::DXIL
+                                                                     : plume::RenderShaderFormat::SPIRV;
+    }
+
+    std::unique_ptr<plume::RenderPipelineLayout> CreateLayout(plume::RenderDevice& device,
+        plume::RenderPipelineLayoutDesc desc, const ConstantReferences& references)
     {
         if (dynamic_cast<plume::D3D12Device*>(&device) != nullptr)
         {
-            const plume::RenderRootDescriptorDesc roots[] = {
-                { kVertexConstantsRoot, kConstantSpace, plume::RenderRootDescriptorType::CONSTANT_BUFFER },
-                { kPixelConstantsRoot, kConstantSpace, plume::RenderRootDescriptorType::CONSTANT_BUFFER },
-                { kSharedConstantsRoot, kConstantSpace, plume::RenderRootDescriptorType::CONSTANT_BUFFER },
-            };
-            plume::RenderPipelineLayoutDesc desc(nullptr, 0, sets, setCount, false, true);
+            plume::RenderRootDescriptorDesc roots[kMaxReferences];
+            for (uint32_t i = 0; i < references.count; i++)
+                roots[i] = plume::RenderRootDescriptorDesc(i, references.space, plume::RenderRootDescriptorType::CONSTANT_BUFFER);
             desc.rootDescriptorDescs = roots;
-            desc.rootDescriptorDescsCount = uint32_t(std::size(roots));
+            desc.rootDescriptorDescsCount = references.count;
             return device.createPipelineLayout(desc);
         }
-        const plume::RenderPushConstantRange addresses(0, 0, 0, kDrawPushConstantBytes,
-            plume::RenderShaderStageFlag::VERTEX | plume::RenderShaderStageFlag::PIXEL);
-        return device.createPipelineLayout(plume::RenderPipelineLayoutDesc(&addresses, 1, sets, setCount, false, true));
+        const plume::RenderPushConstantRange addresses(0, 0, 0, references.count * uint32_t(sizeof(uint64_t)),
+            references.stages);
+        desc.pushConstantRanges = &addresses;
+        desc.pushConstantRangesCount = 1;
+        return device.createPipelineLayout(desc);
+    }
+
+    void BindConstantReferences(plume::RenderCommandList& list, const plume::RenderBufferReference* references,
+        uint32_t count, const plume::RenderBufferReference* bound)
+    {
+        bool d3d12 = dynamic_cast<plume::D3D12CommandList*>(&list) != nullptr;
+        for (uint32_t i = 0; i < count; i++)
+        {
+            const plume::RenderBufferReference& reference = references[i];
+            if (bound != nullptr && bound[i] == reference)
+                continue;
+            if (d3d12)
+            {
+                list.setGraphicsRootDescriptor(reference, i);
+                continue;
+            }
+            uint64_t address = reference.ref->getDeviceAddress() + reference.offset;
+            list.setGraphicsPushConstants(0, &address, i * uint32_t(sizeof(address)), uint32_t(sizeof(address)));
+        }
+    }
+
+    void BindImmutableSamplers(plume::RenderCommandList& list, plume::RenderDescriptorSet& set, uint32_t index)
+    {
+        if (dynamic_cast<plume::D3D12CommandList*>(&list) == nullptr)
+            list.setGraphicsDescriptorSet(&set, index);
+    }
+
+    std::unique_ptr<plume::RenderPipelineLayout> CreateDrawLayout(plume::RenderDevice& device,
+        const plume::RenderDescriptorSetDesc* sets, uint32_t setCount)
+    {
+        return CreateLayout(device, plume::RenderPipelineLayoutDesc(nullptr, 0, sets, setCount, false, true), kDrawConstants);
     }
 
     void BindDrawConstants(plume::RenderCommandList& list, const DrawConstants& constants,
@@ -291,15 +326,14 @@ namespace gpu
             LOG_ONCE("gpu: the draw constants are not bound on Vulkan");
             return;
         }
-        // Each root constant buffer is set on its own.
-        auto set = [&](const plume::RenderBufferReference& reference, const plume::RenderBufferReference* current,
-                       uint32_t root) {
-            if (current == nullptr || !(*current == reference))
-                list.setGraphicsRootDescriptor(reference, root);
-        };
-        set(constants.vertex, bound ? &bound->vertex : nullptr, kVertexConstantsRoot);
-        set(constants.pixel, bound ? &bound->pixel : nullptr, kPixelConstantsRoot);
-        set(constants.shared, bound ? &bound->shared : nullptr, kSharedConstantsRoot);
+        const plume::RenderBufferReference references[] = { constants.vertex, constants.pixel, constants.shared };
+        if (!bound)
+        {
+            BindConstantReferences(list, references, kDrawConstants.count, nullptr);
+            return;
+        }
+        const plume::RenderBufferReference last[] = { bound->vertex, bound->pixel, bound->shared };
+        BindConstantReferences(list, references, kDrawConstants.count, last);
     }
 
     void SetBlendConstants(plume::RenderCommandList& list, const std::array<float, 4>& color)
@@ -318,8 +352,40 @@ namespace gpu
             LOG_ONCE("gpu: the stencil reference is not set on Vulkan");
     }
 
+    std::unique_ptr<plume::RenderSwapChain> CreateSwapChain(plume::RenderCommandQueue& queue, plume::RenderWindow window,
+        plume::RenderFormat format, uint32_t textureCount, uint32_t frameLatency)
+    {
+        // D3D12's frame latency object comes with every swap chain, and Plume's present wait there
+        // would change how it presents.
+        auto* vulkan = dynamic_cast<plume::VulkanCommandQueue*>(&queue);
+        bool presentWait = vulkan != nullptr && vulkan->device->capabilities.presentWait;
+        return queue.createSwapChain(plume::RenderSwapChainDesc(window, format, textureCount, presentWait, frameLatency));
+    }
+
+    bool UsesPresentSemaphores(const plume::RenderSwapChain& swapChain)
+    {
+        return dynamic_cast<const plume::VulkanSwapChain*>(&swapChain) != nullptr;
+    }
+
+    bool HasSyncInterval(const plume::RenderSwapChain& swapChain)
+    {
+        return dynamic_cast<const plume::D3D12SwapChain*>(&swapChain) != nullptr;
+    }
+
     LatencyWait WaitForFrameLatency(plume::RenderSwapChain& swapChain, uint32_t timeoutMs)
     {
+        if (auto* vulkan = dynamic_cast<plume::VulkanSwapChain*>(&swapChain))
+        {
+            if (!vulkan->desc.enablePresentWait)
+                return LatencyWait::Unavailable;
+            // Present ids start over with each swap chain (Plume patch 0003); 0: nothing presented yet.
+            if (vulkan->currentPresentId == 0 || vulkan->vk == VK_NULL_HANDLE)
+                return LatencyWait::Ready;
+            VkResult result = vkWaitForPresentKHR(vulkan->commandQueue->device->vk, vulkan->vk, vulkan->currentPresentId,
+                uint64_t(timeoutMs) * 1000000);
+            // Out of date or lost: there is nothing to wait for until the swap chain is made again.
+            return result == VK_TIMEOUT ? LatencyWait::TimedOut : LatencyWait::Ready;
+        }
         auto* d3d12 = dynamic_cast<plume::D3D12SwapChain*>(&swapChain);
         if (d3d12 == nullptr || d3d12->waitableObject == nullptr)
             return LatencyWait::Unavailable;
@@ -327,14 +393,12 @@ namespace gpu
                                                                                     : LatencyWait::Ready;
     }
 
-    bool PresentSwapChain(plume::RenderSwapChain& swapChain, uint32_t syncInterval, bool allowTearing)
+    bool PresentSwapChain(plume::RenderSwapChain& swapChain, uint32_t index, uint32_t syncInterval, bool allowTearing,
+        plume::RenderCommandSemaphore* rendered)
     {
         auto* d3d12 = dynamic_cast<plume::D3D12SwapChain*>(&swapChain);
         if (d3d12 == nullptr)
-        {
-            LOG_ONCE("gpu: presents are not implemented on Vulkan");
-            return false;
-        }
+            return swapChain.present(index, &rendered, rendered != nullptr ? 1 : 0);
         // Tearing needs the swap chain flag, and only an immediate present may tear.
         UINT flags = allowTearing && syncInterval == 0 && (d3d12->swapChainFlags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) != 0
             ? DXGI_PRESENT_ALLOW_TEARING : 0;

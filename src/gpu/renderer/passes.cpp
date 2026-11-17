@@ -6,20 +6,26 @@
 #include "gpu/renderer/context.h"
 #include "log.h"
 
-
 #include "shaders/fullscreen_vs.h"
+#include "shaders/fullscreen_vs_spirv.h"
 #include "shaders/present_ps.h"
+#include "shaders/present_ps_spirv.h"
 #include "shaders/resolve_color_ms_ps.h"
+#include "shaders/resolve_color_ms_ps_spirv.h"
 #include "shaders/resolve_depth_ms_ps.h"
+#include "shaders/resolve_depth_ms_ps_spirv.h"
 #include "shaders/resolve_depth_ps.h"
+#include "shaders/resolve_depth_ps_spirv.h"
+
+#include <cstring>
+#include <vector>
 
 namespace gpu
 {
     namespace
     {
-        // The gamma ramp of the present (present_ps.hlsl): a root constant buffer, b0 in space 2.
-        constexpr uint32_t kRampRoot = 0;
-        constexpr uint32_t kRampSpace = 2;
+        // The gamma ramp of the present (present_ps.hlsl), read by reference: b0 in space 2.
+        const ConstantReferences kRamp{ 1, 2, plume::RenderShaderStageFlag::PIXEL };
 
         // Root constants of the resolve pass (resolve_ps.hlsl).
         struct ResolveConstants
@@ -32,10 +38,17 @@ namespace gpu
         const plume::RenderDescriptorRange kTextureRange(plume::RenderDescriptorRangeType::TEXTURE, 0, 1);
         const plume::RenderDescriptorSetDesc kTextureSet(&kTextureRange, 1);
 
-        template <size_t N>
-        std::unique_ptr<plume::RenderShader> Shader(plume::RenderDevice& device, const unsigned char (&blob)[N])
+        // A pass shader in the device's format, from the DXIL and SPIR-V headers of the build.
+        template <size_t DxilSize, size_t SpirvSize>
+        std::unique_ptr<plume::RenderShader> Shader(plume::RenderDevice& device, const unsigned char (&dxil)[DxilSize],
+            const unsigned char (&spirv)[SpirvSize])
         {
-            return device.createShader(blob, N, "main", plume::RenderShaderFormat::DXIL);
+            if (ShaderFormat(device) == plume::RenderShaderFormat::DXIL)
+                return device.createShader(dxil, DxilSize, "main", plume::RenderShaderFormat::DXIL);
+            // The header's bytes have no alignment, and Vulkan reads SPIR-V as 32-bit words.
+            std::vector<uint32_t> words((SpirvSize + 3) / 4);
+            memcpy(words.data(), spirv, SpirvSize);
+            return device.createShader(words.data(), SpirvSize, "main", plume::RenderShaderFormat::SPIRV);
         }
 
         std::unique_ptr<plume::RenderPipeline> Pipeline(plume::RenderDevice& device, const plume::RenderPipelineLayout& layout,
@@ -70,28 +83,27 @@ namespace gpu
         sampler_ = device.createSampler(sampler);
 
         // Present: the image in set 0, the sampler (immutable; the pass gathers with its clamp) in
-        // set 1, the gamma ramp as a root constant buffer.
+        // set 1, the gamma ramp by reference.
         const plume::RenderSampler* samplers[] = { sampler_.get() };
         const plume::RenderDescriptorRange samplerRange(plume::RenderDescriptorRangeType::SAMPLER, 0, 1, samplers);
         const plume::RenderDescriptorSetDesc presentSets[] = { kTextureSet, plume::RenderDescriptorSetDesc(&samplerRange, 1) };
-        const plume::RenderRootDescriptorDesc ramp(kRampRoot, kRampSpace, plume::RenderRootDescriptorType::CONSTANT_BUFFER);
-        plume::RenderPipelineLayoutDesc presentDesc(nullptr, 0, presentSets, 2);
-        presentDesc.rootDescriptorDescs = &ramp;
-        presentDesc.rootDescriptorDescsCount = 1;
-        presentLayout_ = device.createPipelineLayout(presentDesc);
+        samplerSet_ = device.createDescriptorSet(presentSets[1]);
+        presentLayout_ = CreateLayout(device, plume::RenderPipelineLayoutDesc(nullptr, 0, presentSets, 2), kRamp);
 
         // Resolve: the constants, then the source in set 0.
         const plume::RenderPushConstantRange constants(0, 0, 0, sizeof(ResolveConstants), plume::RenderShaderStageFlag::PIXEL);
         resolveLayout_ = device.createPipelineLayout(plume::RenderPipelineLayoutDesc(&constants, 1, &kTextureSet, 1));
 
-        auto fullscreen = Shader(device, kFullscreenVs);
-        present_ = Pipeline(device, *presentLayout_, *fullscreen, *Shader(device, kPresentPs), presentFormat, "present");
-        colorSample_ = Pipeline(device, *resolveLayout_, *fullscreen, *Shader(device, kResolveColorMsPs),
+        auto fullscreen = Shader(device, kFullscreenVs, kFullscreenVsSpirv);
+        present_ = Pipeline(device, *presentLayout_, *fullscreen, *Shader(device, kPresentPs, kPresentPsSpirv), presentFormat,
+            "present");
+        colorSample_ = Pipeline(device, *resolveLayout_, *fullscreen, *Shader(device, kResolveColorMsPs, kResolveColorMsPsSpirv),
             plume::RenderFormat::R8G8B8A8_UNORM, "color sample resolve");
-        depth_ = Pipeline(device, *resolveLayout_, *fullscreen, *Shader(device, kResolveDepthPs),
+        depth_ = Pipeline(device, *resolveLayout_, *fullscreen, *Shader(device, kResolveDepthPs, kResolveDepthPsSpirv),
             plume::RenderFormat::R32_FLOAT, "depth resolve");
-        depthMultisample_ = Pipeline(device, *resolveLayout_, *fullscreen, *Shader(device, kResolveDepthMsPs),
-            plume::RenderFormat::R32_FLOAT, "multisampled depth resolve");
+        depthMultisample_ = Pipeline(device, *resolveLayout_, *fullscreen,
+            *Shader(device, kResolveDepthMsPs, kResolveDepthMsPsSpirv), plume::RenderFormat::R32_FLOAT,
+            "multisampled depth resolve");
     }
 
     std::unique_ptr<plume::RenderDescriptorSet> Passes::CreateTextureSet(const plume::RenderTexture& texture,
@@ -109,7 +121,8 @@ namespace gpu
         list.setGraphicsPipelineLayout(presentLayout_.get());
         list.setPipeline(present_.get());
         list.setGraphicsDescriptorSet(&image, 0);
-        list.setGraphicsRootDescriptor(ramp, kRampRoot);
+        BindImmutableSamplers(list, *samplerSet_, 1);
+        BindConstantReferences(list, &ramp, kRamp.count, nullptr);
         list.drawInstanced(3, 1, 0, 0);
     }
 

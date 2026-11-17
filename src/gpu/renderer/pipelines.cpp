@@ -340,7 +340,9 @@ namespace gpu
             return it->second.get();
         std::span<const uint8_t> dxil = cache_.Dxil(key);
         std::unique_ptr<plume::RenderShader> shader;
-        if (!dxil.empty())
+        if (ShaderFormat(device_) != plume::RenderShaderFormat::DXIL)
+            LOG_ONCE("gpu: the translated shaders are not loaded on Vulkan yet; their draws are skipped");
+        else if (!dxil.empty())
             shader = device_.createShader(dxil.data(), dxil.size(), "main", plume::RenderShaderFormat::DXIL);
         else
             Log("gpu: shader %016llX is not in the shader cache; its draws are skipped", (unsigned long long)key);

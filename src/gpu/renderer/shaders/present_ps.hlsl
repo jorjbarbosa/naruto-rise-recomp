@@ -5,16 +5,35 @@
 Texture2D<float4> g_image : register(t0, space0);
 SamplerState g_sampler : register(s0, space1);
 
-// D3DGAMMARAMP as 10-bit values: x red, y green, z blue.
+// D3DGAMMARAMP as 10-bit values: x red, y green, z blue. D3D12 binds it as a root constant buffer;
+// Vulkan has none, so its device address comes in a push constant.
+#ifdef __spirv__
+struct RampAddress
+{
+    uint64_t address;
+};
+[[vk::push_constant]] RampAddress g_ramp;
+
+uint4 RampEntry(uint index)
+{
+    return vk::RawBufferLoad<uint4>(g_ramp.address + index * 16, 16);
+}
+#else
 cbuffer Ramp : register(b0, space2)
 {
     uint4 g_ramp[256];
 };
 
+uint4 RampEntry(uint index)
+{
+    return g_ramp[index];
+}
+#endif
+
 float3 Ramp(float r, float g, float b)
 {
     uint3 index = uint3(round(saturate(float3(r, g, b)) * 255.0));
-    return float3(g_ramp[index.r].x, g_ramp[index.g].y, g_ramp[index.b].z) / 1023.0;
+    return float3(RampEntry(index.r).x, RampEntry(index.g).y, RampEntry(index.b).z) / 1023.0;
 }
 
 float4 main(float4 position : SV_Position, float2 uv : TEXCOORD0) : SV_Target
