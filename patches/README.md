@@ -176,6 +176,24 @@ Bugs in `plume_d3d12.cpp`, all still present upstream at `b619e50`:
   again through null pointers. Null textures are now skipped.
 - **Frame latency handle.** The waitable object from `GetFrameLatencyWaitableObject` was never closed.
 
+### 0002: Vulkan validation on request
+
+Upstream turns on the validation layer and object names only in builds without `NDEBUG`, and creates no
+debug messenger: the runtime is always built in Release, so a Vulkan run had no validation at all, and the
+layer's messages could only go to the layer's own output.
+
+- `CreateVulkanInterface` takes a `VulkanValidationDesc`: when `enabled`, the interface turns on
+  `VK_LAYER_KHRONOS_validation` if it is installed, with `VK_EXT_debug_utils` from the loader or the
+  layer. Its warnings and errors go to the given callback, through a messenger that is also chained to
+  the instance creation, so the creation and destruction of the instance report too.
+- `synchronization` adds synchronization validation through `VK_EXT_validation_features` when the layer
+  offers it.
+- `VulkanInterface` reports what it turned on (`validationEnabled`, `debugUtilsEnabled`,
+  `synchronizationValidationEnabled`). Object names (`setName`) work whenever debug utils is enabled and
+  are skipped otherwise. Before, they called `vkSetDebugUtilsObjectNameEXT` whenever the build had
+  names compiled in.
+- Without a description, or with `enabled` false, nothing is turned on, in any build type.
+
 ## XenosRecomp
 
 Findings from the shaders of Naruto: Rise of a Ninja (`game/xeshader.sdb`: 4,467 containers, 3,322 unique,

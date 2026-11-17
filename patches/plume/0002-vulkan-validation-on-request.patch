@@ -1,0 +1,309 @@
+diff --git a/plume_vulkan.cpp b/plume_vulkan.cpp
+index 58749c4..f7abe54 100644
+--- a/plume_vulkan.cpp
++++ b/plume_vulkan.cpp
+@@ -19,11 +19,6 @@
+ #   include "render/plume_dlss.h"
+ #endif
+ 
+-#ifndef NDEBUG
+-#   define VULKAN_VALIDATION_LAYER_ENABLED
+-#   define VULKAN_OBJECT_NAMES_ENABLED
+-#endif
+-
+ // TODO:
+ // - Fix resource pools.
+ 
+@@ -45,9 +40,6 @@ namespace plume {
+ 
+     static const std::unordered_set<std::string> RequiredInstanceExtensions = {
+         VK_KHR_SURFACE_EXTENSION_NAME,
+-#   ifdef VULKAN_OBJECT_NAMES_ENABLED
+-        VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
+-#   endif
+ #   if defined(_WIN32)
+         VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
+ #   elif defined(__ANDROID__)
+@@ -770,19 +762,22 @@ namespace plume {
+         }
+     }
+ 
+-    static void setObjectName(VkDevice device, VkObjectType objectType, uint64_t object, const std::string &name) {
+-#   ifdef VULKAN_OBJECT_NAMES_ENABLED
++    static void setObjectName(VulkanDevice *device, VkObjectType objectType, uint64_t object, const std::string &name) {
++        // Names need VK_EXT_debug_utils, which the interface enables only with validation.
++        if (!device->renderInterface->debugUtilsEnabled) {
++            return;
++        }
++
+         VkDebugUtilsObjectNameInfoEXT nameInfo = {};
+         nameInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+         nameInfo.objectType = objectType;
+         nameInfo.objectHandle = object;
+         nameInfo.pObjectName = name.c_str();
+-        VkResult res = vkSetDebugUtilsObjectNameEXT(device, &nameInfo);
++        VkResult res = vkSetDebugUtilsObjectNameEXT(device->vk, &nameInfo);
+         if (res != VK_SUCCESS) {
+             fprintf(stderr, "vkSetDebugUtilsObjectNameEXT failed with error code 0x%X.\n", res);
+             return;
+         }
+-#   endif
+     }
+ 
+     static void fillSpecInfo(const RenderSpecConstant *specConstants, uint32_t specConstantsCount,
+@@ -921,7 +916,7 @@ namespace plume {
+     }
+ 
+     void VulkanBuffer::setName(const std::string &name) {
+-        setObjectName(device->vk, VK_OBJECT_TYPE_BUFFER, uint64_t(vk), name);
++        setObjectName(device,VK_OBJECT_TYPE_BUFFER, uint64_t(vk), name);
+     }
+ 
+     uint64_t VulkanBuffer::getDeviceAddress() const {
+@@ -1060,7 +1055,7 @@ namespace plume {
+     }
+ 
+     void VulkanTexture::setName(const std::string &name) {
+-        setObjectName(device->vk, VK_OBJECT_TYPE_IMAGE, uint64_t(vk), name);
++        setObjectName(device,VK_OBJECT_TYPE_IMAGE, uint64_t(vk), name);
+     }
+ 
+     void VulkanTexture::fillSubresourceRange() {
+@@ -1311,7 +1306,7 @@ namespace plume {
+     }
+ 
+     void VulkanShader::setName(const std::string &name) {
+-        setObjectName(device->vk, VK_OBJECT_TYPE_SHADER_MODULE, uint64_t(vk), name);
++        setObjectName(device,VK_OBJECT_TYPE_SHADER_MODULE, uint64_t(vk), name);
+     }
+ 
+     // VulkanSampler
+@@ -1404,7 +1399,7 @@ namespace plume {
+     }
+ 
+     void VulkanComputePipeline::setName(const std::string &name) {
+-        setObjectName(device->vk, VK_OBJECT_TYPE_PIPELINE, uint64_t(vk), name);
++        setObjectName(device,VK_OBJECT_TYPE_PIPELINE, uint64_t(vk), name);
+     }
+ 
+     RenderPipelineProgram VulkanComputePipeline::getProgram(const std::string &name) const {
+@@ -1667,7 +1662,7 @@ namespace plume {
+     }
+ 
+     void VulkanGraphicsPipeline::setName(const std::string &name) {
+-        setObjectName(device->vk, VK_OBJECT_TYPE_PIPELINE, uint64_t(vk), name);
++        setObjectName(device,VK_OBJECT_TYPE_PIPELINE, uint64_t(vk), name);
+     }
+ 
+     RenderPipelineProgram VulkanGraphicsPipeline::getProgram(const std::string &name) const {
+@@ -1871,7 +1866,7 @@ namespace plume {
+     }
+ 
+     void VulkanRaytracingPipeline::setName(const std::string &name) {
+-        setObjectName(device->vk, VK_OBJECT_TYPE_PIPELINE, uint64_t(vk), name);
++        setObjectName(device,VK_OBJECT_TYPE_PIPELINE, uint64_t(vk), name);
+     }
+ 
+     RenderPipelineProgram VulkanRaytracingPipeline::getProgram(const std::string &name) const {
+@@ -4493,9 +4488,9 @@ namespace plume {
+     // VulkanInterface
+ 
+ #if defined(PLUME_SDL2_VULKAN_ENABLED)
+-    VulkanInterface::VulkanInterface(RenderWindow sdlWindow) {
++    VulkanInterface::VulkanInterface(RenderWindow sdlWindow, const VulkanValidationDesc &validation) {
+ #else
+-    VulkanInterface::VulkanInterface() {
++    VulkanInterface::VulkanInterface(const VulkanValidationDesc &validation) {
+ #endif
+         VkResult res = volkInitialize();
+         if (res != VK_SUCCESS) {
+@@ -4594,28 +4589,81 @@ namespace plume {
+             enabledExtensions.push_back(extension.c_str());
+         }
+ 
+-        createInfo.ppEnabledExtensionNames = enabledExtensions.data();
+-        createInfo.enabledExtensionCount = uint32_t(enabledExtensions.size());
+-
+-#   ifdef VULKAN_VALIDATION_LAYER_ENABLED
+-        // Search for validation layer and enabled it.
+-        uint32_t layerCount;
+-        vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
+-
+-        std::vector<VkLayerProperties> availableLayers(layerCount);
+-        vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
+-        
++        // Validation on request: the Khronos layer when it is installed, VK_EXT_debug_utils for the
++        // messages and the object names, and synchronization validation when asked for and offered.
+         const char validationLayerName[] = "VK_LAYER_KHRONOS_validation";
+         const char *enabledLayerNames[] = { validationLayerName };
+-        for (const VkLayerProperties &layerProperties : availableLayers) {
+-            if (strcmp(layerProperties.layerName, validationLayerName) == 0) {
+-                createInfo.ppEnabledLayerNames = enabledLayerNames;
+-                createInfo.enabledLayerCount = 1;
+-                break;
++        VkDebugUtilsMessengerCreateInfoEXT messengerInfo = {};
++        VkValidationFeatureEnableEXT enabledValidationFeatures[] = { VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT };
++        VkValidationFeaturesEXT validationFeatures = {};
++        if (validation.enabled) {
++            uint32_t layerCount;
++            vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
++
++            std::vector<VkLayerProperties> availableLayers(layerCount);
++            vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
++
++            for (const VkLayerProperties &layerProperties : availableLayers) {
++                if (strcmp(layerProperties.layerName, validationLayerName) == 0) {
++                    validationEnabled = true;
++                    break;
++                }
+             }
+         }
+-#   endif
+-        
++
++        if (validationEnabled) {
++            createInfo.ppEnabledLayerNames = enabledLayerNames;
++            createInfo.enabledLayerCount = 1;
++
++            // The extensions of the loader and the drivers, then those the layer adds.
++            uint32_t layerExtensionCount;
++            vkEnumerateInstanceExtensionProperties(validationLayerName, &layerExtensionCount, nullptr);
++
++            std::vector<VkExtensionProperties> layerExtensions(layerExtensionCount);
++            vkEnumerateInstanceExtensionProperties(validationLayerName, &layerExtensionCount, layerExtensions.data());
++
++            auto findExtension = [&](const char *name) {
++                for (const std::vector<VkExtensionProperties> *list : { &availableExtensions, &layerExtensions }) {
++                    for (const VkExtensionProperties &extension : *list) {
++                        if (strcmp(extension.extensionName, name) == 0) {
++                            return true;
++                        }
++                    }
++                }
++
++                return false;
++            };
++
++            debugUtilsEnabled = findExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
++            if (debugUtilsEnabled) {
++                enabledExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
++            }
++
++            if (validation.synchronization && findExtension(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME)) {
++                enabledExtensions.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
++                validationFeatures.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
++                validationFeatures.enabledValidationFeatureCount = uint32_t(std::size(enabledValidationFeatures));
++                validationFeatures.pEnabledValidationFeatures = enabledValidationFeatures;
++                validationFeatures.pNext = createInfo.pNext;
++                createInfo.pNext = &validationFeatures;
++                synchronizationValidationEnabled = true;
++            }
++
++            // Chained to the instance too, so that the creation and destruction of the instance report.
++            if (debugUtilsEnabled && (validation.callback != nullptr)) {
++                messengerInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
++                messengerInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
++                messengerInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
++                messengerInfo.pfnUserCallback = validation.callback;
++                messengerInfo.pUserData = validation.userData;
++                messengerInfo.pNext = createInfo.pNext;
++                createInfo.pNext = &messengerInfo;
++            }
++        }
++
++        createInfo.ppEnabledExtensionNames = enabledExtensions.data();
++        createInfo.enabledExtensionCount = uint32_t(enabledExtensions.size());
++
+         res = vkCreateInstance(&createInfo, nullptr, &instance);
+         if (res != VK_SUCCESS) {
+             fprintf(stderr, "vkCreateInstance failed with error code 0x%X.\n", res);
+@@ -4624,6 +4672,14 @@ namespace plume {
+ 
+         volkLoadInstance(instance);
+ 
++        if (messengerInfo.sType == VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT) {
++            messengerInfo.pNext = nullptr;
++            res = vkCreateDebugUtilsMessengerEXT(instance, &messengerInfo, nullptr, &debugMessenger);
++            if (res != VK_SUCCESS) {
++                fprintf(stderr, "vkCreateDebugUtilsMessengerEXT failed with error code 0x%X.\n", res);
++            }
++        }
++
+         // Fill capabilities.
+         capabilities.shaderFormat = RenderShaderFormat::SPIRV;
+ 
+@@ -4646,6 +4702,10 @@ namespace plume {
+     }
+ 
+     VulkanInterface::~VulkanInterface() {
++        if (debugMessenger != VK_NULL_HANDLE) {
++            vkDestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
++        }
++
+         if (instance != nullptr) {
+             vkDestroyInstance(instance, nullptr);
+         }
+@@ -4671,13 +4731,13 @@ namespace plume {
+     // Global creation function.
+ 
+ #if defined(PLUME_SDL2_VULKAN_ENABLED)
+-    std::unique_ptr<RenderInterface> CreateVulkanInterface(RenderWindow sdlWindow) {
+-        std::unique_ptr<VulkanInterface> createdInterface = std::make_unique<VulkanInterface>(sdlWindow);
++    std::unique_ptr<RenderInterface> CreateVulkanInterface(RenderWindow sdlWindow, const VulkanValidationDesc &validation) {
++        std::unique_ptr<VulkanInterface> createdInterface = std::make_unique<VulkanInterface>(sdlWindow, validation);
+         return createdInterface->isValid() ? std::move(createdInterface) : nullptr;
+     }
+ #else
+-    std::unique_ptr<RenderInterface> CreateVulkanInterface() {
+-        std::unique_ptr<VulkanInterface> createdInterface = std::make_unique<VulkanInterface>();
++    std::unique_ptr<RenderInterface> CreateVulkanInterface(const VulkanValidationDesc &validation) {
++        std::unique_ptr<VulkanInterface> createdInterface = std::make_unique<VulkanInterface>(validation);
+         return createdInterface->isValid() ? std::move(createdInterface) : nullptr;
+     }
+ #endif
+diff --git a/plume_vulkan.h b/plume_vulkan.h
+index 1d36b12..4788a03 100644
+--- a/plume_vulkan.h
++++ b/plume_vulkan.h
+@@ -48,6 +48,23 @@ namespace plume {
+     struct VulkanPool;
+     struct VulkanQueue;
+ 
++    // Validation of an interface: the Khronos validation layer when it is installed, its messages
++    // (warnings and errors) sent to the callback, and object names. The callback may be called from
++    // any thread that makes a Vulkan call.
++    struct VulkanValidationDesc {
++        bool enabled = false;
++        // Also synchronization validation, when the layer offers VK_EXT_validation_features.
++        bool synchronization = false;
++        PFN_vkDebugUtilsMessengerCallbackEXT callback = nullptr;
++        void *userData = nullptr;
++    };
++
++#if defined(PLUME_SDL2_VULKAN_ENABLED)
++    std::unique_ptr<RenderInterface> CreateVulkanInterface(RenderWindow sdlWindow, const VulkanValidationDesc &validation = {});
++#else
++    std::unique_ptr<RenderInterface> CreateVulkanInterface(const VulkanValidationDesc &validation = {});
++#endif
++
+     struct VulkanBuffer : RenderBuffer {
+         VkBuffer vk = VK_NULL_HANDLE;
+         VulkanDevice *device = nullptr;
+@@ -453,11 +470,15 @@ namespace plume {
+         VkApplicationInfo appInfo = {};
+         RenderInterfaceCapabilities capabilities;
+         std::vector<std::string> deviceNames;
++        VkDebugUtilsMessengerEXT debugMessenger = VK_NULL_HANDLE;
++        bool validationEnabled = false;
++        bool synchronizationValidationEnabled = false;
++        bool debugUtilsEnabled = false;
+ 
+ #   if defined(PLUME_SDL2_VULKAN_ENABLED)
+-        VulkanInterface(RenderWindow sdlWindow);
++        VulkanInterface(RenderWindow sdlWindow, const VulkanValidationDesc &validation = {});
+ #   else
+-        VulkanInterface();
++        VulkanInterface(const VulkanValidationDesc &validation = {});
+ #   endif
+ 
+         ~VulkanInterface() override;

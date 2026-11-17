@@ -10,11 +10,12 @@
 #include <plume_vulkan.h>
 
 #include <iterator>
+#include <mutex>
+#include <unordered_map>
 
 namespace plume
 {
     std::unique_ptr<RenderInterface> CreateD3D12Interface();
-    std::unique_ptr<RenderInterface> CreateVulkanInterface();
 }
 
 namespace gpu
@@ -26,6 +27,29 @@ namespace gpu
         constexpr uint32_t kInterpolatorComponents = 18 * 4;
         // The user clip planes (PA_CL_UCP), written as SV_ClipDistance.
         constexpr uint32_t kClipDistances = 6;
+        // A validation message that repeats (every draw, every frame) is logged this many times.
+        constexpr uint32_t kValidationRepeats = 3;
+
+        std::mutex g_validationMutex; // g_validationCounts
+        std::unordered_map<int32_t, uint32_t> g_validationCounts; // by message id
+
+        // Vulkan validation messages go to the log, each message id kValidationRepeats times. Any
+        // thread that makes a Vulkan call.
+        VKAPI_ATTR VkBool32 VKAPI_CALL LogValidationMessage(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+            VkDebugUtilsMessageTypeFlagsEXT, const VkDebugUtilsMessengerCallbackDataEXT* data, void*)
+        {
+            uint32_t count;
+            {
+                std::lock_guard lock(g_validationMutex);
+                count = ++g_validationCounts[data->messageIdNumber];
+            }
+            const char* kind = (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) != 0 ? "error" : "warning";
+            if (count <= kValidationRepeats)
+                Log("gpu: Vulkan validation %s: %s", kind, data->pMessage);
+            if (count == kValidationRepeats)
+                Log("gpu: Vulkan validation: message %d is not logged again", data->messageIdNumber);
+            return VK_FALSE;
+        }
 
         // Turns on the D3D12 debug layer; before Plume creates the device.
         void EnableD3D12DebugLayer()
@@ -158,9 +182,24 @@ namespace gpu
         std::unique_ptr<plume::RenderInterface> api;
         if (settings.api == GpuApi::Vulkan)
         {
-            if (settings.debugLayer)
-                Log("gpu: Vulkan validation layer unavailable");
-            api = plume::CreateVulkanInterface();
+            plume::VulkanValidationDesc validation;
+            validation.enabled = settings.debugLayer;
+            validation.synchronization = settings.syncValidation;
+            validation.callback = LogValidationMessage;
+            api = plume::CreateVulkanInterface(validation);
+            if (api && settings.debugLayer)
+            {
+                const auto& vulkan = static_cast<const plume::VulkanInterface&>(*api);
+                if (!vulkan.validationEnabled)
+                    Log("gpu: Vulkan validation layer unavailable");
+                else if (!vulkan.debugUtilsEnabled)
+                    Log("gpu: Vulkan validation layer on, without VK_EXT_debug_utils: its messages are not logged");
+                else
+                    Log("gpu: Vulkan validation layer on%s", vulkan.synchronizationValidationEnabled
+                        ? ", with synchronization validation" : "");
+                if (settings.syncValidation && vulkan.validationEnabled && !vulkan.synchronizationValidationEnabled)
+                    Log("gpu: Vulkan synchronization validation unavailable");
+            }
         }
         else
         {

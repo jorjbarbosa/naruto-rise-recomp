@@ -19,6 +19,7 @@ namespace gpu
     {
         GpuApi api = GpuApi::D3D12; // ROAN_GPU_API=d3d12|vulkan; any other value keeps the default
         bool debugLayer = false; // ROAN_GPU_DEBUG=1: the API's debug layer
+        bool syncValidation = false; // ROAN_GPU_DEBUG=sync: the debug layer, plus Vulkan's synchronization validation
         bool vsync = true;       // ROAN_VSYNC=0: present without waiting for the vertical blank
         std::string adapter;     // ROAN_ADAPTER=<name>: adapter as listed in the log (default: Plume's choice)
         std::filesystem::path pipelineList; // the pipeline list file (Pipelines); empty: none
@@ -34,7 +35,10 @@ namespace gpu
                     settings.api = GpuApi::Vulkan;
             }
             if (const char* value = std::getenv("ROAN_GPU_DEBUG"))
-                settings.debugLayer = std::strcmp(value, "1") == 0;
+            {
+                settings.syncValidation = std::strcmp(value, "sync") == 0;
+                settings.debugLayer = std::strcmp(value, "1") == 0 || settings.syncValidation;
+            }
             if (const char* value = std::getenv("ROAN_VSYNC"))
                 settings.vsync = std::strcmp(value, "0") != 0;
             if (const char* value = std::getenv("ROAN_ADAPTER"))
