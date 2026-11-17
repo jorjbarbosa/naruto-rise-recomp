@@ -2,14 +2,21 @@
 
 #include "gpu/renderer/descriptors.h"
 
+#include "gpu/renderer/backend.h"
+#include "gpu/renderer/context.h"
 #include "log.h"
 
-#include <plume_d3d12.h>
+#include <cstring>
 
 namespace gpu
 {
     namespace
     {
+        // The format of the zero textures: every component reads as zero, alpha included.
+        constexpr plume::RenderFormat kZeroFormat = plume::RenderFormat::R8G8B8A8_UNORM;
+        constexpr uint32_t kZeroTexelBytes = 4;
+        constexpr uint32_t kCubeFaces = 6;
+
         plume::RenderTextureAddressMode AddressMode(uint32_t clamp)
         {
             // The halfway clamps take the plain clamp of the same mirroring; the host has no
@@ -52,20 +59,62 @@ namespace gpu
         }
     }
 
-    Descriptors::Descriptors(plume::RenderDevice& device) : device_(device)
+    Descriptors::Descriptors(Context& context) : device_(context.Device())
     {
+        CreateZeroTextures(context);
         for (uint32_t set = 0; set < kSetCount; set++)
         {
             plume::RenderDescriptorRangeType type =
                 set == kSamplerSet ? plume::RenderDescriptorRangeType::SAMPLER : plume::RenderDescriptorRangeType::TEXTURE;
-            ranges_[set] = plume::RenderDescriptorRange(type, 0, 1);
+            // The count of a boundless range is its upper bound: Vulkan sizes the binding by it.
+            ranges_[set] = plume::RenderDescriptorRange(type, 0, kCapacity[set]);
             setLayouts_[set] = plume::RenderDescriptorSetDesc(&ranges_[set], 1, true, kCapacity[set]);
-            sets_[set] = device.createDescriptorSet(setLayouts_[set]);
+            sets_[set] = device_.createDescriptorSet(setLayouts_[set]);
             if (set != kSamplerSet)
                 SetNull(TextureSet(set), kNullTexture);
         }
         // Sampler 0 for the slots without a texture.
         Sampler({});
+    }
+
+    void Descriptors::CreateZeroTextures(Context& context)
+    {
+        plume::RenderTextureDesc descs[kSetCount - 1] = {
+            plume::RenderTextureDesc::Texture2D(1, 1, 1, kZeroFormat),
+            plume::RenderTextureDesc::Texture3D(1, 1, 1, 1, kZeroFormat),
+            plume::RenderTextureDesc::Texture2D(1, 1, 1, kZeroFormat, plume::RenderTextureFlag::CUBE),
+        };
+        descs[uint32_t(TextureSet::kCube)].arraySize = kCubeFaces;
+        const plume::RenderTextureViewDesc views[kSetCount - 1] = {
+            plume::RenderTextureViewDesc::Texture2D(kZeroFormat),
+            plume::RenderTextureViewDesc::Texture3D(kZeroFormat),
+            plume::RenderTextureViewDesc::TextureCube(kZeroFormat),
+        };
+
+        plume::RenderCommandList& list = context.Commands();
+        for (uint32_t set = 0; set < kSetCount - 1; set++)
+        {
+            zeroTextures_[set] = device_.createTexture(descs[set]);
+            if (!IsCreated(zeroTextures_[set].get()))
+                Fatal("gpu: cannot create the zero texture of texture set %u", set);
+            zeroViews_[set] = zeroTextures_[set]->createTextureView(views[set]);
+
+            plume::RenderTexture* texture = zeroTextures_[set].get();
+            list.barriers(plume::RenderBarrierStage::COPY,
+                plume::RenderTextureBarrier(texture, plume::RenderTextureLayout::COPY_DEST));
+            uint32_t faces = set == uint32_t(TextureSet::kCube) ? kCubeFaces : 1;
+            for (uint32_t face = 0; face < faces; face++)
+            {
+                // One row of one texel.
+                Context::Upload zeros = context.Allocate(Context::kTextureRowAlignment, Context::kTexturePlacementAlignment);
+                memset(zeros.data, 0, Context::kTextureRowAlignment);
+                list.copyTextureRegion(plume::RenderTextureCopyLocation::Subresource(texture, 0, face),
+                    plume::RenderTextureCopyLocation::PlacedFootprint(zeros.buffer, kZeroFormat, 1, 1, 1,
+                        Context::kTextureRowAlignment / kZeroTexelBytes, zeros.offset));
+            }
+            list.barriers(plume::RenderBarrierStage::GRAPHICS,
+                plume::RenderTextureBarrier(texture, plume::RenderTextureLayout::SHADER_READ));
+        }
     }
 
     void Descriptors::Bind(plume::RenderCommandList& list) const
@@ -76,26 +125,8 @@ namespace gpu
 
     void Descriptors::SetNull(TextureSet set, uint32_t index)
     {
-        // Plume writes a 2D null descriptor; the other sets need one of their own dimension.
-        if (set == TextureSet::k2D)
-        {
-            sets_[0]->setTexture(index, nullptr, plume::RenderTextureLayout::SHADER_READ);
-            return;
-        }
-        D3D12_SHADER_RESOURCE_VIEW_DESC desc = {};
-        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        if (set == TextureSet::k3D)
-        {
-            desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
-            desc.Texture3D.MipLevels = 1;
-        }
-        else
-        {
-            desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
-            desc.TextureCube.MipLevels = 1;
-        }
-        static_cast<plume::D3D12DescriptorSet&>(*sets_[uint32_t(set)]).setSRV(index, nullptr, &desc);
+        uint32_t s = uint32_t(set);
+        sets_[s]->setTexture(index, zeroTextures_[s].get(), plume::RenderTextureLayout::SHADER_READ, zeroViews_[s].get());
     }
 
     uint32_t Descriptors::AddTexture(TextureSet set, const plume::RenderTexture& texture, const plume::RenderTextureView* view)

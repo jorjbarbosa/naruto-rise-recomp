@@ -2,20 +2,17 @@
 
 #include "gpu/renderer/presenter.h"
 
+#include "gpu/renderer/backend.h"
 #include "gpu/renderer/context.h"
 #include "gpu/renderer/passes.h"
 #include "gpu/renderer/targets.h"
 #include "gpu/settings.h"
 #include "log.h"
 
-#include <plume_d3d12.h>
-
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
-
-#include <windows.h>
 
 namespace gpu
 {
@@ -24,7 +21,7 @@ namespace gpu
         constexpr uint32_t kSwapBuffers = 3;
         constexpr uint32_t kFrameLatency = 1;
         // Longest wait for the swap chain to accept another frame.
-        constexpr DWORD kLatencyWaitMs = 100;
+        constexpr uint32_t kLatencyWaitMs = 100;
         // DXGI's largest sync interval.
         constexpr uint32_t kMaxSyncInterval = 4;
         // A refresh rate within 1 Hz of a multiple of 60 Hz counts as that multiple (59.94 Hz, 239.76 Hz).
@@ -52,7 +49,7 @@ namespace gpu
         std::unique_ptr<Presenter> presenter(new Presenter(context, settings.vsync));
         presenter->swapChain_ = context.Queue().createSwapChain(plume::RenderSwapChainDesc(
             static_cast<plume::RenderWindow>(window), kFormat, kSwapBuffers, false, kFrameLatency));
-        if (static_cast<plume::D3D12SwapChain*>(presenter->swapChain_.get())->d3d == nullptr)
+        if (!IsCreated(presenter->swapChain_.get()))
         {
             Log("gpu: error: cannot create the swap chain");
             return nullptr;
@@ -100,17 +97,17 @@ namespace gpu
         // wait per present keeps the count matched, so with a latency of one this returns once the
         // last present is on screen. A wait that times out stays owed, so the late signal of its
         // present is taken by the next wait instead of releasing a later one early.
-        auto* native = static_cast<plume::D3D12SwapChain*>(swapChain_.get());
-        if (native->waitableObject == nullptr)
-            return;
         while (unmatchedPresents_ != 0)
         {
-            if (WaitForSingleObject(native->waitableObject, kLatencyWaitMs) == WAIT_TIMEOUT)
+            LatencyWait wait = WaitForFrameLatency(*swapChain_, kLatencyWaitMs);
+            if (wait == LatencyWait::Unavailable)
+                return;
+            if (wait == LatencyWait::TimedOut)
             {
                 if (!roomTimedOut_)
                 {
                     roomTimedOut_ = true;
-                    Log("gpu: the swap chain took longer than %u ms to accept a frame", unsigned(kLatencyWaitMs));
+                    Log("gpu: the swap chain took longer than %u ms to accept a frame", kLatencyWaitMs);
                 }
                 return;
             }
@@ -154,12 +151,9 @@ namespace gpu
             plume::RenderTextureBarrier(backBuffer, plume::RenderTextureLayout::PRESENT));
         context_.Flush();
 
-        // Tearing needs the swap chain flag and is only asked for with vsync off.
-        auto* native = static_cast<plume::D3D12SwapChain*>(swapChain_.get());
-        UINT flags = syncInterval == 0 && !vsync_ && (native->swapChainFlags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) != 0
-            ? DXGI_PRESENT_ALLOW_TEARING : 0;
+        // Tearing is only asked for with vsync off.
         unmatchedPresents_++;
-        if (FAILED(native->d3d->Present(syncInterval, flags)) && !presentFailed_)
+        if (!PresentSwapChain(*swapChain_, syncInterval, !vsync_) && !presentFailed_)
         {
             presentFailed_ = true;
             Log("gpu: Present failed");

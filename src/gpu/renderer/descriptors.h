@@ -11,6 +11,8 @@
 
 namespace gpu
 {
+    class Context;
+
     // The texture sets of the translated shaders, in register space order. 1D textures go in the
     // 2D set (the shaders sample them as 2D textures one texel high).
     enum class TextureSet : uint32_t
@@ -22,8 +24,9 @@ namespace gpu
 
     // The bindless descriptor sets of the translated shaders: the 2D, 3D and cube texture heaps and
     // the sampler heap (register spaces 0 to 3), indexed through the shared constants. Index 0 of
-    // every texture heap is a null texture of the heap's dimension, which reads as zero. Owner
-    // thread only.
+    // every texture heap, and every released index, holds a 1x1 texture of the heap's dimension that
+    // reads as zero: a real texture rather than a null descriptor, which a Vulkan descriptor set of
+    // Plume cannot hold. Owner thread only.
     class Descriptors
     {
     public:
@@ -33,7 +36,8 @@ namespace gpu
         // Capacities of the sets: 2D textures, 3D textures, cube textures, samplers.
         static constexpr uint32_t kCapacity[kSetCount] = { 16384, 1024, 1024, 512 };
 
-        explicit Descriptors(plume::RenderDevice& device);
+        // Records the clear of the zero textures on the context's open command list.
+        explicit Descriptors(Context& context);
 
         // The layouts of the four sets, for the pipeline layout.
         const plume::RenderDescriptorSetDesc* SetLayouts() const { return setLayouts_; }
@@ -49,9 +53,15 @@ namespace gpu
         uint32_t Sampler(const SamplerState& state);
 
     private:
+        // Creates the zero textures and records their clear.
+        void CreateZeroTextures(Context& context);
+        // Writes the zero texture of the set at the index.
         void SetNull(TextureSet set, uint32_t index);
 
         plume::RenderDevice& device_;
+        // The zero textures and their views, one per texture set; before the sets that point at them.
+        std::unique_ptr<plume::RenderTexture> zeroTextures_[kSetCount - 1];
+        std::unique_ptr<plume::RenderTextureView> zeroViews_[kSetCount - 1];
         plume::RenderDescriptorRange ranges_[kSetCount];
         plume::RenderDescriptorSetDesc setLayouts_[kSetCount];
         std::unique_ptr<plume::RenderDescriptorSet> sets_[kSetCount];

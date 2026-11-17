@@ -7,8 +7,11 @@
 
 namespace gpu
 {
+    class Context;
+
     // The renderer's own full-screen passes: the present and the resolves a copy cannot do. Their
-    // shaders are compiled at build time (src/gpu/renderer/shaders).
+    // shaders are compiled at build time (src/gpu/renderer/shaders). Each pass claims the command
+    // list's graphics state (Context::ClaimGraphicsState). Owner thread only.
     class Passes
     {
     public:
@@ -19,7 +22,7 @@ namespace gpu
             DepthMultisample, // the depth of one sample of a multisampled D32S8 surface
         };
 
-        Passes(plume::RenderDevice& device, plume::RenderFormat presentFormat);
+        Passes(Context& context, plume::RenderFormat presentFormat);
 
         // A descriptor set with one texture (its view: null for the default one) for the passes.
         std::unique_ptr<plume::RenderDescriptorSet> CreateTextureSet(const plume::RenderTexture& texture,
@@ -39,6 +42,7 @@ namespace gpu
             int32_t offsetX, int32_t offsetY, uint32_t sample) const;
 
     private:
+        Context& context_;
         plume::RenderDevice& device_;
         std::unique_ptr<plume::RenderSampler> sampler_;
         std::unique_ptr<plume::RenderPipelineLayout> presentLayout_;

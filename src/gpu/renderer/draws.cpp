@@ -2,6 +2,7 @@
 
 #include "gpu/renderer/draws.h"
 
+#include "gpu/renderer/backend.h"
 #include "gpu/renderer/buffers.h"
 #include "gpu/renderer/constant_ring.h"
 #include "gpu/renderer/context.h"
@@ -10,8 +11,6 @@
 #include "gpu/renderer/textures.h"
 #include "log.h"
 
-#include <plume_d3d12.h>
-
 #include <algorithm>
 #include <cstring>
 
@@ -19,12 +18,6 @@ namespace gpu
 {
     namespace
     {
-        // Root constant buffers of the translated shaders (register b0..b2, space 4).
-        constexpr uint32_t kConstantSpace = 4;
-        constexpr uint32_t kVertexConstantsRoot = 0;
-        constexpr uint32_t kPixelConstantsRoot = 1;
-        constexpr uint32_t kSharedConstantsRoot = 2;
-
         // RB_DEPTHCONTROL: stencil test on.
         constexpr uint32_t kStencilEnable = 0x1;
 
@@ -59,16 +52,6 @@ namespace gpu
         {
             return a.buffer == b.buffer && a.size == b.size && a.format == b.format;
         }
-
-        // Sets a root constant buffer unless it is the one already set.
-        void SetRoot(plume::RenderCommandList& list, std::optional<plume::RenderBufferReference>& current,
-            const plume::RenderBufferReference& reference, uint32_t index)
-        {
-            if (current && *current == reference)
-                return;
-            list.setGraphicsRootDescriptor(reference, index);
-            current = reference;
-        }
     }
 
     Draws::Draws(Context& context, Targets& targets, Descriptors& descriptors, Textures& textures, Buffers& buffers,
@@ -76,15 +59,7 @@ namespace gpu
         : context_(context), targets_(targets), descriptors_(descriptors), textures_(textures), buffers_(buffers),
           vertexRing_(vertexRing), pixelRing_(pixelRing)
     {
-        const plume::RenderRootDescriptorDesc roots[] = {
-            { kVertexConstantsRoot, kConstantSpace, plume::RenderRootDescriptorType::CONSTANT_BUFFER },
-            { kPixelConstantsRoot, kConstantSpace, plume::RenderRootDescriptorType::CONSTANT_BUFFER },
-            { kSharedConstantsRoot, kConstantSpace, plume::RenderRootDescriptorType::CONSTANT_BUFFER },
-        };
-        plume::RenderPipelineLayoutDesc desc(nullptr, 0, descriptors.SetLayouts(), Descriptors::kSetCount, false, true);
-        desc.rootDescriptorDescs = roots;
-        desc.rootDescriptorDescsCount = uint32_t(std::size(roots));
-        layout_ = context.Device().createPipelineLayout(desc);
+        layout_ = CreateDrawLayout(context.Device(), descriptors.SetLayouts(), Descriptors::kSetCount);
         pipelines_ = std::make_unique<Pipelines>(context.Device(), *layout_, pipelineList);
     }
 
@@ -145,16 +120,10 @@ namespace gpu
             return;
         plume::RenderCommandList& list = context_.Commands();
 
-        // The state the last draw set stays unless the command list changed or something else drew in
-        // between: every other drawing sets a pipeline of its own, which becomes Plume's active one.
-        const auto& d3dList = static_cast<const plume::D3D12CommandList&>(list);
-        if (state_.submission != context_.OpenSubmission() ||
-            d3dList.activeGraphicsPipelineLayout != static_cast<const plume::D3D12PipelineLayout*>(layout_.get()) ||
-            static_cast<const plume::RenderPipeline*>(d3dList.activeGraphicsPipeline) != state_.pipeline)
-        {
+        // The state the last draw set stays unless the command list changed or another pass claimed
+        // the graphics state in between.
+        if (!context_.ClaimGraphicsState(this))
             state_ = ListState();
-            state_.submission = context_.OpenSubmission();
-        }
 
         // Vertex streams and indices: the copied ones from the upload buffers, the hosted ones from their
         // host copies; a draw whose host copy is missing is skipped.
@@ -233,9 +202,10 @@ namespace gpu
         }
         targets_.BindForDraw(list, op.color, op.depth);
 
-        plume::RenderBufferReference vertexConstants = Constants(vertexConstants_, vertexRing_, op.vertexConstants);
-        plume::RenderBufferReference pixelConstants = Constants(pixelConstants_, pixelRing_, op.pixelConstants);
-        plume::RenderBufferReference sharedConstants = Shared(shared);
+        DrawConstants constants;
+        constants.vertex = Constants(vertexConstants_, vertexRing_, op.vertexConstants);
+        constants.pixel = Constants(pixelConstants_, pixelRing_, op.pixelConstants);
+        constants.shared = Shared(shared);
 
         if (!state_.layoutSet)
         {
@@ -248,11 +218,9 @@ namespace gpu
             list.setPipeline(pipeline);
             state_.pipeline = pipeline;
         }
-        SetRoot(list, state_.vertexConstants, vertexConstants, kVertexConstantsRoot);
-        SetRoot(list, state_.pixelConstants, pixelConstants, kPixelConstantsRoot);
-        SetRoot(list, state_.sharedConstants, sharedConstants, kSharedConstantsRoot);
+        BindDrawConstants(list, constants, state_.constants);
+        state_.constants = constants;
 
-        ID3D12GraphicsCommandList* d3d = d3dList.d3d;
         bool alphaOnly = false;
         if (op.color.key != 0 && UsesBlendColor(op.state.blendControl, alphaOnly))
         {
@@ -261,15 +229,15 @@ namespace gpu
                 std::fill(color.begin(), color.begin() + 3, op.blendColor[3]);
             if (!state_.blendFactor || *state_.blendFactor != color)
             {
-                d3d->OMSetBlendFactor(color.data());
+                SetBlendConstants(list, color);
                 state_.blendFactor = color;
             }
         }
-        // Plume sets the reference of the pipeline when it differs from the last one it set; every
-        // pipeline has 0, so it never overrides this one.
+        // Plume's D3D12 backend sets the reference of the pipeline when it differs from the last one
+        // it set; every pipeline has 0, so it never overrides this one.
         if (op.depth.key != 0 && (op.state.depthControl & kStencilEnable) != 0 && state_.stencilReference != op.stencilReference)
         {
-            d3d->OMSetStencilRef(op.stencilReference);
+            SetStencilReference(list, op.stencilReference);
             state_.stencilReference = op.stencilReference;
         }
 

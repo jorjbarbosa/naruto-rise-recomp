@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gpu/renderer/backend.h"
 #include "gpu/renderer/context.h"
 #include "gpu/renderer/pipelines.h"
 #include "gpu/renderer/renderer.h"
@@ -69,16 +70,14 @@ namespace gpu
         // open command list, otherwise a new copy.
         plume::RenderBufferReference Shared(const SharedConstants& shared);
 
-        // The state the last draw left in the open command list (submission), which the next draws set
-        // again only where it differs; an empty field is set by the next draw.
+        // The state the last draw left in the open command list while Draws held its graphics state
+        // (Context::ClaimGraphicsState), which the next draws set again only where it differs; an
+        // empty field is set by the next draw.
         struct ListState
         {
-            uint64_t submission = 0;
             bool layoutSet = false; // the pipeline layout and the descriptor sets
             const plume::RenderPipeline* pipeline = nullptr;
-            std::optional<plume::RenderBufferReference> vertexConstants;
-            std::optional<plume::RenderBufferReference> pixelConstants;
-            std::optional<plume::RenderBufferReference> sharedConstants;
+            std::optional<DrawConstants> constants;
             std::optional<std::array<float, 4>> blendFactor;
             int32_t stencilReference = -1; // -1: not set
             std::optional<plume::RenderViewport> viewport;

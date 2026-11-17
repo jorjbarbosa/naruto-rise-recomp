@@ -2,10 +2,10 @@
 
 #include "gpu/renderer/buffers.h"
 
+#include "gpu/renderer/backend.h"
 #include "gpu/renderer/context.h"
 #include "log.h"
 
-#include <plume_d3d12.h>
 
 #include <cstring>
 
@@ -19,7 +19,7 @@ namespace gpu
             ? plume::RenderBufferDesc::VertexBuffer(size, plume::RenderHeapType::DEFAULT)
             : plume::RenderBufferDesc::IndexBuffer(size, plume::RenderHeapType::DEFAULT);
         std::shared_ptr<plume::RenderBuffer> buffer = context_.Device().createBuffer(desc);
-        if (static_cast<plume::D3D12Buffer*>(buffer.get())->d3d == nullptr)
+        if (!IsCreated(buffer.get()))
         {
             LOG_ONCE("gpu: a host buffer of %llu bytes cannot be created", (unsigned long long)size);
             Forget(upload.key);

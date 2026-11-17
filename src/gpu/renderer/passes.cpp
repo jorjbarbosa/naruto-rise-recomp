@@ -2,9 +2,10 @@
 
 #include "gpu/renderer/passes.h"
 
+#include "gpu/renderer/backend.h"
+#include "gpu/renderer/context.h"
 #include "log.h"
 
-#include <plume_d3d12.h>
 
 #include "shaders/fullscreen_vs.h"
 #include "shaders/present_ps.h"
@@ -48,14 +49,16 @@ namespace gpu
             desc.renderTargetBlend[0] = plume::RenderBlendDesc::Copy();
             desc.renderTargetCount = 1;
             std::unique_ptr<plume::RenderPipeline> pipeline = device.createGraphicsPipeline(desc);
-            if (static_cast<plume::D3D12GraphicsPipeline*>(pipeline.get())->d3d == nullptr)
+            if (!IsCreated(pipeline.get()))
                 Fatal("gpu: cannot create the %s pipeline", name);
             return pipeline;
         }
     }
 
-    Passes::Passes(plume::RenderDevice& device, plume::RenderFormat presentFormat) : device_(device)
+    Passes::Passes(Context& context, plume::RenderFormat presentFormat)
+        : context_(context), device_(context.Device())
     {
+        plume::RenderDevice& device = device_;
         plume::RenderSamplerDesc sampler;
         sampler.minFilter = plume::RenderFilter::LINEAR;
         sampler.magFilter = plume::RenderFilter::LINEAR;
@@ -102,6 +105,7 @@ namespace gpu
     void Passes::Present(plume::RenderCommandList& list, plume::RenderDescriptorSet& image,
         plume::RenderBufferReference ramp) const
     {
+        context_.ClaimGraphicsState(this);
         list.setGraphicsPipelineLayout(presentLayout_.get());
         list.setPipeline(present_.get());
         list.setGraphicsDescriptorSet(&image, 0);
@@ -116,6 +120,7 @@ namespace gpu
             : kind == Resolve::Depth                                         ? depth_.get()
                                                                              : depthMultisample_.get();
         const ResolveConstants constants{ offsetX, offsetY, sample };
+        context_.ClaimGraphicsState(this);
         list.setGraphicsPipelineLayout(resolveLayout_.get());
         list.setPipeline(pipeline);
         list.setGraphicsPushConstants(0, &constants, 0, sizeof(constants));

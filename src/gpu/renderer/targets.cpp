@@ -256,7 +256,7 @@ namespace gpu
         ResolvedTexture* resolved = Resolved(address);
         if (resolved == nullptr || resolved->depth)
             return false;
-        constexpr uint32_t kRowAlignment = 256; // D3D12 placed footprints
+        constexpr uint32_t kRowAlignment = Context::kTextureRowAlignment;
         uint32_t rowBytes = resolved->width * kColorBytes;
         uint32_t pitch = (rowBytes + kRowAlignment - 1) / kRowAlignment * kRowAlignment;
         std::unique_ptr<plume::RenderBuffer> buffer =

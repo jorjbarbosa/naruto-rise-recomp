@@ -267,8 +267,8 @@ namespace gpu
         impl->presenter = Presenter::Create(*impl->context, window, settings);
         if (!impl->presenter)
             return nullptr;
-        impl->descriptors = std::make_unique<Descriptors>(impl->context->Device());
-        impl->passes = std::make_unique<Passes>(impl->context->Device(), Presenter::kFormat);
+        impl->descriptors = std::make_unique<Descriptors>(*impl->context);
+        impl->passes = std::make_unique<Passes>(*impl->context, Presenter::kFormat);
         impl->targets = std::make_unique<Targets>(*impl->context, *impl->passes, *impl->descriptors);
         impl->textures = std::make_unique<Textures>(*impl->context, *impl->targets, *impl->descriptors);
         impl->buffers = std::make_unique<Buffers>(*impl->context);

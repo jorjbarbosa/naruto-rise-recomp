@@ -3,12 +3,12 @@
 
 #include "gpu/renderer/textures.h"
 
+#include "gpu/renderer/backend.h"
 #include "gpu/renderer/context.h"
 #include "gpu/renderer/targets.h"
 #include "gpu/textures/formats.h"
 #include "log.h"
 
-#include <plume_d3d12.h>
 
 #include <algorithm>
 #include <cstring>
@@ -17,10 +17,6 @@ namespace gpu
 {
     namespace
     {
-        // Placed footprints: rows aligned to 256 bytes, subresources to 512.
-        constexpr uint32_t kRowAlignment = 256;
-        constexpr uint32_t kPlacementAlignment = 512;
-
         constexpr uint8_t kIdentity[4] = { 0, 1, 2, 3 };
 
         // The view mapping of a fetch swizzle over the host swizzle of the format: a selector of a
@@ -79,7 +75,7 @@ namespace gpu
         texture->format = &format;
         texture->cube = layout.dimension == textures::Dimension::kCube;
         texture->texture = context_.Device().createTexture(desc);
-        if (static_cast<plume::D3D12Texture*>(texture->texture.get())->d3d == nullptr)
+        if (!IsCreated(texture->texture.get()))
         {
             Log("gpu: cannot create a %ux%u texture of format %u; it reads as zero", layout.width, layout.height,
                 layout.format);
@@ -137,8 +133,9 @@ namespace gpu
                 // Host rows: texels when decompressed, otherwise blocks.
                 uint32_t rows = format->Decompresses() ? height : guest.heightBlocks;
                 uint32_t rowBytes = (format->Decompresses() ? width : guest.widthBlocks) * format->hostBytes;
+                constexpr uint32_t kRowAlignment = Context::kTextureRowAlignment;
                 uint32_t pitch = (rowBytes + kRowAlignment - 1) / kRowAlignment * kRowAlignment;
-                Context::Upload staging = context_.Allocate(uint64_t(pitch) * rows, kPlacementAlignment);
+                Context::Upload staging = context_.Allocate(uint64_t(pitch) * rows, Context::kTexturePlacementAlignment);
                 for (uint32_t row = 0; row < rows; row++)
                     memcpy(staging.data + uint64_t(row) * pitch, data.data() + size_t(row) * rowBytes, rowBytes);
                 uint32_t rowWidth = pitch / format->hostBytes * (format->HostCompressed() ? format->block : 1);

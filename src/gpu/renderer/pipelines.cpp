@@ -3,10 +3,10 @@
 
 #include "gpu/renderer/pipelines.h"
 
+#include "gpu/renderer/backend.h"
 #include "gpu/renderer/targets.h"
 #include "log.h"
 
-#include <plume_d3d12.h>
 
 #include <algorithm>
 #include <chrono>
@@ -416,7 +416,7 @@ namespace gpu
             }
         }
         std::unique_ptr<plume::RenderPipeline> pipeline = device_.createGraphicsPipeline(desc);
-        if (static_cast<plume::D3D12GraphicsPipeline*>(pipeline.get())->d3d == nullptr)
+        if (!IsCreated(pipeline.get()))
         {
             Log("gpu: cannot create the pipeline of shaders %016llX and %016llX; their draws are skipped",
                 (unsigned long long)key.vertexShader, (unsigned long long)key.pixelShader);

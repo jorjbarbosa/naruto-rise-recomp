@@ -13,7 +13,7 @@
 
 namespace gpu
 {
-    // The D3D12 device and queue, and the recording of GPU work. Owner thread only, except for the
+    // The device and queue, and the recording of GPU work. Owner thread only, except for the
     // completion thread it runs.
     //
     // Work is recorded into one open command list and submitted by Flush. The completion thread
@@ -56,9 +56,25 @@ namespace gpu
         Upload Allocate(uint64_t size, uint64_t alignment);
         // The alignment of a constant buffer view's data.
         static constexpr uint64_t kConstantAlignment = 256;
+        // Placed footprints of the copies between buffers and textures: each row starts at a multiple
+        // of kTextureRowAlignment bytes, each subresource at a multiple of kTexturePlacementAlignment.
+        static constexpr uint32_t kTextureRowAlignment = 256;
+        static constexpr uint32_t kTexturePlacementAlignment = 512;
         // The number the open command list (or the next one) is submitted as. An Upload stays valid
         // for the work recorded while this number does not change.
         uint64_t OpenSubmission() const { return submitted_ + 1; }
+
+        // The graphics state of the open command list (pipeline layout and pipeline, bindings,
+        // dynamic state, viewport, scissor, vertex and index buffers) belongs to the recorder that
+        // claimed it last. A recorder claims it before it sets any of it; true when the caller made
+        // the last claim on this command list, so what it set since is still in place.
+        bool ClaimGraphicsState(const void* recorder)
+        {
+            bool kept = graphicsRecorder_ == recorder && graphicsSubmission_ == OpenSubmission();
+            graphicsRecorder_ = recorder;
+            graphicsSubmission_ = OpenSubmission();
+            return kept;
+        }
 
     private:
         struct List
@@ -106,6 +122,8 @@ namespace gpu
         std::deque<UploadChunk> chunks_;
         UploadChunk* chunk_ = nullptr; // the chunk being filled
         uint64_t chunkCursor_ = 0;
+        const void* graphicsRecorder_ = nullptr; // ClaimGraphicsState
+        uint64_t graphicsSubmission_ = 0;
 
         std::thread completer_;
         std::mutex mutex_;
