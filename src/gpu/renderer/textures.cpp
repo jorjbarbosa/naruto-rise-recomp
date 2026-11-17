@@ -104,6 +104,7 @@ namespace gpu
         Texture* texture = it != textures_.end() ? it->second.get() : Create(upload, *format);
         if (texture == nullptr)
             return;
+        changes_++;
 
         plume::RenderCommandList& list = context_.Commands();
         list.barriers(plume::RenderBarrierStage::COPY,
@@ -155,24 +156,32 @@ namespace gpu
         {
             context_.Retire(std::shared_ptr<Texture>(std::move(it->second)));
             it = textures_.erase(it);
+            changes_++;
         }
     }
 
-    void Textures::Bind(plume::RenderCommandList& list, uint32_t slot, const DrawTexture& texture, SharedConstants& shared)
+    uint64_t Textures::Changes() const
     {
+        // Neither count goes back, so the sum moves when either does.
+        return changes_ + targets_.ResolvedChanges();
+    }
+
+    TextureBinding Textures::Bind(plume::RenderCommandList& list, const DrawTexture& texture)
+    {
+        TextureBinding binding;
         if (texture.kind == DrawTexture::Kind::None)
-            return;
-        shared.sampler[slot] = descriptors_.Sampler(texture.sampler);
+            return binding;
+        binding.sampler = descriptors_.Sampler(texture.sampler);
 
         if (texture.resolved)
         {
             ResolvedTexture* resolved = targets_.Resolved(texture.address);
             if (resolved == nullptr)
-                return;
+                return binding;
             if (texture.kind != DrawTexture::Kind::Planar)
             {
                 LOG_ONCE("gpu: a resolved texture sampled as a cube reads as zero");
-                return;
+                return binding;
             }
             list.barriers(plume::RenderBarrierStage::GRAPHICS,
                 plume::RenderTextureBarrier(resolved->texture.get(), plume::RenderTextureLayout::SHADER_READ));
@@ -181,8 +190,8 @@ namespace gpu
             // values through the format's host swizzle (every component takes red).
             if (texture.format == textures::k8_8_8_8)
             {
-                shared.texture2D[slot] = resolved->descriptor.Index();
-                return;
+                binding.texture2D = resolved->descriptor.Index();
+                return binding;
             }
             const textures::Format* format = textures::FindFormat(texture.format);
             plume::RenderTextureViewDesc view = plume::RenderTextureViewDesc::Texture2D(resolved->format);
@@ -191,13 +200,13 @@ namespace gpu
                     plume::RenderSwizzle::ONE };
             else
                 view.componentMapping = Mapping(texture.swizzle, format != nullptr ? format->swizzle : kIdentity);
-            shared.texture2D[slot] = resolved->views.Index(descriptors_, TextureSet::k2D, *resolved->texture, view);
-            return;
+            binding.texture2D = resolved->views.Index(descriptors_, TextureSet::k2D, *resolved->texture, view);
+            return binding;
         }
 
         auto it = textures_.find({ texture.address, texture.layout });
         if (it == textures_.end())
-            return;
+            return binding;
         Texture& host = *it->second;
         list.barriers(plume::RenderBarrierStage::GRAPHICS,
             plume::RenderTextureBarrier(host.texture.get(), plume::RenderTextureLayout::SHADER_READ));
@@ -208,8 +217,9 @@ namespace gpu
         view.mipLevels = texture.mipMax - texture.mipMin + 1;
         view.componentMapping = Mapping(texture.swizzle, host.format->swizzle);
         if (host.cube)
-            shared.textureCube[slot] = host.views.Index(descriptors_, TextureSet::kCube, *host.texture, view);
+            binding.textureCube = host.views.Index(descriptors_, TextureSet::kCube, *host.texture, view);
         else
-            shared.texture2D[slot] = host.views.Index(descriptors_, TextureSet::k2D, *host.texture, view);
+            binding.texture2D = host.views.Index(descriptors_, TextureSet::k2D, *host.texture, view);
+        return binding;
     }
 }

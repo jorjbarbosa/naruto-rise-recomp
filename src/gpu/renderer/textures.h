@@ -19,6 +19,14 @@ namespace gpu
         struct Format;
     }
 
+    // The descriptor indices a draw's shaders read a fetch slot through; the defaults read as zero.
+    struct TextureBinding
+    {
+        uint32_t texture2D = Descriptors::kNullTexture;
+        uint32_t textureCube = Descriptors::kNullTexture;
+        uint32_t sampler = 0;
+    };
+
     // The host copies of the guest textures the draws sample, by (GPU address, layout key), filled
     // from the uploads the guest side posts when their memory changes. Owner thread only.
     class Textures
@@ -32,9 +40,13 @@ namespace gpu
         // Releases the textures uploaded from the GPU addresses [begin, end), once the GPU no longer
         // uses them.
         void Release(uint32_t begin, uint32_t end);
-        // Sets the descriptor indices of a draw's fetch slot, recording the barrier that makes its
-        // texture readable. A texture that is missing or not covered leaves the slot reading zero.
-        void Bind(plume::RenderCommandList& list, uint32_t slot, const DrawTexture& texture, SharedConstants& shared);
+        // The descriptor indices of a fetch slot's texture, recording the barrier that makes it
+        // readable. A texture that is missing or not covered reads as zero. The answer and the barrier
+        // hold for the draws that follow in the command list while Changes() stays the same.
+        TextureBinding Bind(plume::RenderCommandList& list, const DrawTexture& texture);
+        // A number that moves whenever Bind may answer differently for the same texture or has to
+        // record its barrier again: an upload, a release, or a change to the resolved textures.
+        uint64_t Changes() const;
 
     private:
         struct Texture
@@ -52,5 +64,6 @@ namespace gpu
         Targets& targets_;
         Descriptors& descriptors_;
         std::map<Key, std::unique_ptr<Texture>> textures_; // ordered by address, for Release
+        uint64_t changes_ = 0; // uploads and releases
     };
 }

@@ -204,9 +204,28 @@ namespace gpu
                 plume::RenderFormat::R32_UINT);
         }
 
+        // A slot the last draw bound to the same texture keeps its descriptors and its barrier, unless
+        // a texture was uploaded, released, resolved or read back since. A fresh state holds the
+        // binding of no texture in every slot, which is what binding one gives.
+        if (uint64_t changes = textures_.Changes(); state_.textureChanges != changes)
+        {
+            state_.textures = {};
+            state_.bindings = {};
+            state_.textureChanges = changes;
+        }
         SharedConstants shared = op.shared;
         for (uint32_t slot = 0; slot < SharedConstants::kFetchSlots; slot++)
-            textures_.Bind(list, slot, op.textures[slot], shared);
+        {
+            if (state_.textures[slot] != op.textures[slot])
+            {
+                state_.bindings[slot] = textures_.Bind(list, op.textures[slot]);
+                state_.textures[slot] = op.textures[slot];
+            }
+            const TextureBinding& binding = state_.bindings[slot];
+            shared.texture2D[slot] = binding.texture2D;
+            shared.textureCube[slot] = binding.textureCube;
+            shared.sampler[slot] = binding.sampler;
+        }
         targets_.BindForDraw(list, op.color, op.depth);
 
         plume::RenderBufferReference vertexConstants = Constants(vertexConstants_, op.vertexConstants);

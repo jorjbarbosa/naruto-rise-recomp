@@ -3,6 +3,7 @@
 #include "gpu/renderer/context.h"
 #include "gpu/renderer/pipelines.h"
 #include "gpu/renderer/renderer.h"
+#include "gpu/renderer/textures.h"
 
 #include <plume_render_interface.h>
 
@@ -16,7 +17,6 @@ namespace gpu
     class Buffers;
     class Descriptors;
     class Targets;
-    class Textures;
 
     // The vertex buffer views of a draw, one per stream.
     struct VertexStreams
@@ -29,7 +29,8 @@ namespace gpu
     // The guest draws: the recording of each draw over the pipelines of Pipelines, with the vertices
     // and indices from the host copies of their buffers (Buffers) or from the draw's own copies, and
     // its constant blocks uploaded once for the draws in a row that share them. State the previous
-    // draw left in the command list is not set again. Owner thread only.
+    // draw left in the command list is not set again, and a fetch slot is bound again only when its
+    // texture differs from the previous draw's. Owner thread only.
     class Draws
     {
     public:
@@ -83,6 +84,11 @@ namespace gpu
             std::optional<Rect> scissor;
             std::optional<VertexStreams> streams;
             std::optional<plume::RenderIndexBufferView> indices;
+            // The fetch slots as the last draw bound them: good for a draw with the same texture in
+            // the slot while Textures::Changes() stays at textureChanges.
+            std::array<DrawTexture, SharedConstants::kFetchSlots> textures{};
+            std::array<TextureBinding, SharedConstants::kFetchSlots> bindings{};
+            uint64_t textureChanges = 0;
         };
 
         Context& context_;

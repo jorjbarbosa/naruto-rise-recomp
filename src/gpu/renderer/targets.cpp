@@ -62,25 +62,38 @@ namespace gpu
 
     ResolvedTexture& Targets::EnsureResolved(uint32_t address, uint32_t width, uint32_t height, bool depth)
     {
-        ResolvedTexture& resolved = resolved_[address];
-        if (resolved.texture && resolved.width == width && resolved.height == height && resolved.depth == depth)
-            return resolved;
-        if (resolved.texture)
-            context_.Retire(std::make_shared<ResolvedTexture>(std::move(resolved)));
-
-        plume::RenderDevice& device = context_.Device();
-        resolved = {};
-        resolved.width = width;
-        resolved.height = height;
-        resolved.depth = depth;
-        resolved.format = depth ? kResolvedDepthFormat : kColorFormat;
-        // A render target too: the resolve passes draw into it.
-        resolved.texture = device.createTexture(plume::RenderTextureDesc::ColorTarget(width, height, resolved.format));
-        const plume::RenderTexture* attachment = resolved.texture.get();
-        resolved.framebuffer = device.createFramebuffer(plume::RenderFramebufferDesc(&attachment, 1));
-        resolved.sampling = passes_.CreateTextureSet(*resolved.texture, nullptr);
-        resolved.descriptor = TextureDescriptor(descriptors_, TextureSet::k2D, *resolved.texture);
-        return resolved;
+        ResolvedAddress& entry = resolved_[address];
+        ResolvedTexture* resolved = nullptr;
+        for (const std::unique_ptr<ResolvedTexture>& texture : entry.textures)
+            if (texture->width == width && texture->height == height && texture->depth == depth)
+                resolved = texture.get();
+        if (resolved == nullptr)
+        {
+            plume::RenderDevice& device = context_.Device();
+            resolved = entry.textures.emplace_back(std::make_unique<ResolvedTexture>()).get();
+            resolved->width = width;
+            resolved->height = height;
+            resolved->depth = depth;
+            resolved->format = depth ? kResolvedDepthFormat : kColorFormat;
+            // A render target too: the resolve passes draw into it.
+            resolved->texture = device.createTexture(plume::RenderTextureDesc::ColorTarget(width, height, resolved->format));
+            const plume::RenderTexture* attachment = resolved->texture.get();
+            resolved->framebuffer = device.createFramebuffer(plume::RenderFramebufferDesc(&attachment, 1));
+            resolved->sampling = passes_.CreateTextureSet(*resolved->texture, nullptr);
+            resolved->descriptor = TextureDescriptor(descriptors_, TextureSet::k2D, *resolved->texture);
+        }
+        if (resolved != entry.latest)
+        {
+            // New, or back after a resolve of another size or kind took the memory: the image it held
+            // is not the memory's any more. It starts over, reading zero where no resolve writes.
+            plume::RenderCommandList& list = context_.Commands();
+            Barrier(list, plume::RenderBarrierStage::GRAPHICS, resolved->texture.get(), plume::RenderTextureLayout::COLOR_WRITE);
+            list.setFramebuffer(resolved->framebuffer.get());
+            list.clearColor(0, plume::RenderColor(0.0f, 0.0f, 0.0f, 0.0f));
+            resolved->region = {};
+            entry.latest = resolved;
+        }
+        return *resolved;
     }
 
     void Targets::RetireSurface(uint32_t key)
@@ -128,7 +141,7 @@ namespace gpu
     ResolvedTexture* Targets::Resolved(uint32_t address)
     {
         auto it = resolved_.find(address);
-        return it != resolved_.end() && it->second.written ? &it->second : nullptr;
+        return it != resolved_.end() ? it->second.latest : nullptr;
     }
 
     void Targets::Clear(const ClearOp& op)
@@ -207,10 +220,10 @@ namespace gpu
         }
         Rect written = { int32_t(destX), int32_t(destY), int32_t(destX) + (region.right - region.left),
             int32_t(destY) + (region.bottom - region.top) };
-        dest.region = dest.written ? Rect{ std::min(dest.region.left, written.left), std::min(dest.region.top, written.top),
-                                           std::max(dest.region.right, written.right), std::max(dest.region.bottom, written.bottom) }
-                                   : written;
-        dest.written = true;
+        dest.region = dest.region.Empty() ? written
+                                          : Rect{ std::min(dest.region.left, written.left), std::min(dest.region.top, written.top),
+                                                std::max(dest.region.right, written.right), std::max(dest.region.bottom, written.bottom) };
+        resolvedChanges_++;
     }
 
     void Targets::ResolvePass(Surface& source, ResolvedTexture& dest, const Rect& region, uint32_t destX, uint32_t destY,
@@ -255,6 +268,7 @@ namespace gpu
                                    resolved->width, resolved->height, 1, pitch / kColorBytes),
             plume::RenderTextureCopyLocation::Subresource(resolved->texture.get()));
         context_.WaitIdle();
+        resolvedChanges_++;
 
         const uint8_t* data = static_cast<const uint8_t*>(buffer->map());
         if (data == nullptr)
@@ -279,10 +293,28 @@ namespace gpu
     void Targets::ReleaseTexture(uint32_t address, uint32_t header)
     {
         auto it = resolved_.find(address);
-        if (it == resolved_.end() || it->second.header != header)
+        if (it == resolved_.end())
             return;
-        context_.Retire(std::make_shared<ResolvedTexture>(std::move(it->second)));
-        resolved_.erase(it);
+        ResolvedAddress& entry = it->second;
+        bool released = false;
+        for (auto texture = entry.textures.begin(); texture != entry.textures.end();)
+        {
+            if ((*texture)->header != header)
+            {
+                ++texture;
+                continue;
+            }
+            if (texture->get() == entry.latest)
+                entry.latest = nullptr;
+            context_.Retire(std::shared_ptr<ResolvedTexture>(std::move(*texture)));
+            texture = entry.textures.erase(texture);
+            released = true;
+        }
+        if (!released)
+            return;
+        if (entry.textures.empty())
+            resolved_.erase(it);
+        resolvedChanges_++;
     }
 
     void Targets::ReleaseResolved(uint32_t begin, uint32_t end)
@@ -294,8 +326,10 @@ namespace gpu
                 ++it;
                 continue;
             }
-            context_.Retire(std::make_shared<ResolvedTexture>(std::move(it->second)));
+            for (std::unique_ptr<ResolvedTexture>& texture : it->second.textures)
+                context_.Retire(std::shared_ptr<ResolvedTexture>(std::move(texture)));
             it = resolved_.erase(it);
+            resolvedChanges_++;
         }
     }
 }

@@ -157,6 +157,8 @@ namespace gpu
         uint32_t filter = 0; // fetch dword 3 bits 19..27: mag, min, mip and anisotropic filters
         int32_t lodBias = 0; // in 1/32
         uint32_t border = 0; // fetch dword 5 bits 0..1
+
+        bool operator==(const SamplerState&) const = default;
     };
 
     // How a draw samples the texture of a fetch constant.
@@ -179,6 +181,8 @@ namespace gpu
         uint32_t mipMin = 0;  // the levels sampled (uploaded textures)
         uint32_t mipMax = 0;
         SamplerState sampler;
+
+        bool operator==(const DrawTexture&) const = default;
     };
 
     // The content of a guest texture, copied from guest memory for the host texture of (address,
