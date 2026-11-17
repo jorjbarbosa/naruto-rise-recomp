@@ -11,6 +11,7 @@
 #include <deque>
 #include <filesystem>
 #include <memory>
+#include <chrono>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
@@ -94,5 +95,16 @@ namespace gpu
         std::vector<std::thread> workers_;
 
         std::FILE* list_ = nullptr; // owner thread
+
+        // What Get cost the draws (owner thread): pipelines created there and waits for a background
+        // thread still creating one, logged per 10 s window that had any, and each one over 20 ms.
+        struct DrawCost
+        {
+            uint32_t created = 0, waited = 0;
+            double createdMs = 0, waitedMs = 0, maxMs = 0;
+            std::chrono::steady_clock::time_point since{};
+        };
+        DrawCost cost_;
+        void NoteDrawCost(bool created, double ms, const PipelineKey& key);
     };
 }

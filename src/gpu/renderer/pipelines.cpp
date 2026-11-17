@@ -239,7 +239,15 @@ namespace gpu
         if (!inserted)
         {
             if (entry.state == State::Creating)
+            {
+                auto start = std::chrono::steady_clock::now();
                 created_.wait(lock, [&] { return entry.state == State::Ready; });
+                const plume::RenderPipeline* pipeline = entry.pipeline.get();
+                // Logged outside the lock: the background threads take it to finish their pipelines.
+                lock.unlock();
+                NoteDrawCost(false, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(), key);
+                return pipeline;
+            }
             if (entry.state == State::Ready)
                 return entry.pipeline.get();
             // Listed but not taken yet: created here instead (the threads skip it).
@@ -248,7 +256,9 @@ namespace gpu
         std::shared_ptr<const VertexInput> entryInput = entry.input;
         lock.unlock();
 
+        auto start = std::chrono::steady_clock::now();
         std::unique_ptr<plume::RenderPipeline> pipeline = Create(key, *entryInput);
+        NoteDrawCost(true, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(), key);
         if (inserted && pipeline)
             AppendToList(key, *entryInput);
 
@@ -256,6 +266,31 @@ namespace gpu
         entry.pipeline = std::move(pipeline);
         entry.state = State::Ready;
         return entry.pipeline.get();
+    }
+
+    void Pipelines::NoteDrawCost(bool created, double ms, const PipelineKey& key)
+    {
+        auto now = std::chrono::steady_clock::now();
+        if (cost_.since == std::chrono::steady_clock::time_point{})
+            cost_.since = now;
+        (created ? cost_.created : cost_.waited)++;
+        (created ? cost_.createdMs : cost_.waitedMs) += ms;
+        cost_.maxMs = std::max(cost_.maxMs, ms);
+        static uint32_t slow = 0;
+        if (ms > 20.0 && slow < 64)
+        {
+            slow++;
+            Log("gpu: a draw %s pipeline %016llX/%016llX for %.1f ms", created ? "created" : "waited for",
+                (unsigned long long)key.vertexShader, (unsigned long long)key.pixelShader, ms);
+        }
+        std::chrono::duration<double> window = now - cost_.since;
+        if (window.count() >= 10.0)
+        {
+            Log("gpu: %.1f s: pipelines created at draws %u (%.1f ms), waited for %u (%.1f ms), longest %.1f ms",
+                window.count(), cost_.created, cost_.createdMs, cost_.waited, cost_.waitedMs, cost_.maxMs);
+            cost_ = {};
+            cost_.since = now;
+        }
     }
 
     void Pipelines::WorkerMain()
