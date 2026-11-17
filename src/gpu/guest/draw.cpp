@@ -578,7 +578,6 @@ namespace gpu::guest
                 index -= minIndex;
 
             const VertexInput& input = *layout.input;
-            op.hosted.resize(layout.streamFetch.size());
             for (size_t stream = 0; stream < layout.streamFetch.size(); stream++)
             {
                 const StreamSource& source = plans[stream].source;
@@ -591,7 +590,7 @@ namespace gpu::guest
                         if (element.stream == stream)
                             bytes = std::max<uint64_t>(bytes, element.offset + 4 * element.dwords);
                 size_t at = op.vertices.size();
-                op.streamOffsets.push_back(uint32_t(at));
+                op.streamOffsets[stream] = uint32_t(at);
                 if (plans[stream].inlineFetch && inlineStream != nullptr)
                     *inlineStream = InlineStream{ uint32_t(at), uint32_t(std::min<uint64_t>(bytes, source.bytes)) };
                 // A buffer the host keeps a copy of is read from it; other vertices are copied.
@@ -622,7 +621,8 @@ namespace gpu::guest
         {
             Device& device = GetDevice();
             uint32_t devAddress = device.Address();
-            if (devAddress == 0 || ActiveRenderer() == nullptr || call.count == 0)
+            Renderer* renderer = ActiveRenderer();
+            if (devAddress == 0 || renderer == nullptr || call.count == 0)
                 return nullptr;
 
             uint32_t vertexObject = mem::Load32(devAddress + dev::kVertexShader);
@@ -665,7 +665,7 @@ namespace gpu::guest
             if (!layout)
                 return nullptr;
 
-            std::unique_ptr<DrawOp> op = std::make_unique<DrawOp>();
+            std::unique_ptr<DrawOp> op = renderer->NewDraw();
             op->vertexShader = vertexShader->key;
             op->pixelShader = pixelShader ? pixelShader->key : 0;
             op->input = layout->input;
@@ -716,7 +716,6 @@ namespace gpu::guest
                 op->hostedIndices = { *indexBuffer, call.startIndex, call.count - call.count % 3, call.baseVertex };
                 if (op->hostedIndices.count == 0)
                     return nullptr;
-                op->hosted.resize(streams);
                 for (size_t stream = 0; stream < streams; stream++)
                 {
                     const StreamSource& source = plans[stream].source;

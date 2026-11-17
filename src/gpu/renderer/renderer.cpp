@@ -19,8 +19,11 @@
 #include <condition_variable>
 #include <deque>
 #include <future>
+#include <iterator>
+#include <memory>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 namespace plume
 {
@@ -31,6 +34,9 @@ namespace gpu
 {
     namespace
     {
+        // The draws the owner receives together.
+        constexpr size_t kDrawBatch = 32;
+
         // Debug layer: the guest clears to any value, so the hint that a clear does not match the
         // value given at the target's creation is noise.
         void FilterDebugMessages(plume::RenderDevice& device)
@@ -57,6 +63,7 @@ namespace gpu
             {
                 {
                     std::lock_guard lock(mutex_);
+                    CloseDraws();
                     stopping_ = true;
                 }
                 cv_.notify_all();
@@ -72,7 +79,8 @@ namespace gpu
             SetThreadDescription(static_cast<HANDLE>(owner_.native_handle()), L"gpu owner");
         }
 
-        // False when the owner is stopping: the task is dropped. A task queued before the stop runs.
+        // False when the owner is stopping: the task is dropped. A task queued before the stop runs,
+        // after the draws posted before it.
         bool Post(std::function<void()> task)
         {
             beforePost();
@@ -80,10 +88,44 @@ namespace gpu
                 std::lock_guard lock(mutex_);
                 if (stopping_)
                     return false;
-                tasks_.push_back(std::move(task));
+                CloseDraws();
+                tasks_.push_back({ std::move(task), {} });
             }
             cv_.notify_one();
             return true;
+        }
+
+        std::unique_ptr<DrawOp> NewDraw()
+        {
+            {
+                std::lock_guard lock(mutex_);
+                if (!freeDraws_.empty())
+                {
+                    std::unique_ptr<DrawOp> op = std::move(freeDraws_.back());
+                    freeDraws_.pop_back();
+                    return op;
+                }
+            }
+            return std::make_unique<DrawOp>();
+        }
+
+        // The draw joins the open batch, which is queued once it is full or before the next task. The
+        // draw is dropped when the owner is stopping.
+        void Draw(std::unique_ptr<DrawOp> op)
+        {
+            beforePost();
+            {
+                std::lock_guard lock(mutex_);
+                if (stopping_)
+                    return;
+                if (openDraws_.empty())
+                    openDraws_.reserve(kDrawBatch);
+                openDraws_.push_back(std::move(op));
+                if (openDraws_.size() < kDrawBatch)
+                    return;
+                CloseDraws();
+            }
+            cv_.notify_one();
         }
 
         // Destroyed in reverse order: the device outlives everything created on it.
@@ -107,27 +149,63 @@ namespace gpu
         std::atomic<bool> displayPaces{ false };
 
     private:
+        using DrawBatch = std::vector<std::unique_ptr<DrawOp>>;
+
+        // What the owner runs: an operation, or the draws of a batch in posting order.
+        struct Task
+        {
+            std::function<void()> run;
+            DrawBatch draws;
+        };
+
+        // Queues the open batch of draws, if there is one. Under mutex_.
+        void CloseDraws()
+        {
+            if (openDraws_.empty())
+                return;
+            tasks_.push_back({ {}, std::move(openDraws_) });
+        }
+
         void OwnerMain()
         {
+            DrawBatch drawn; // the draws of the last batch, on their way to the free ones
             for (;;)
             {
-                std::function<void()> task;
+                Task task;
                 {
                     std::unique_lock lock(mutex_);
+                    std::move(drawn.begin(), drawn.end(), std::back_inserter(freeDraws_));
+                    drawn.clear();
                     cv_.wait(lock, [&] { return stopping_ || !tasks_.empty(); });
                     if (tasks_.empty())
                         return;
                     task = std::move(tasks_.front());
                     tasks_.pop_front();
                 }
-                task();
+                if (task.run)
+                {
+                    task.run();
+                    continue;
+                }
+                for (std::unique_ptr<DrawOp>& op : task.draws)
+                {
+                    draws->Draw(*op);
+                    // A new draw in the same memory, for NewDraw.
+                    std::destroy_at(op.get());
+                    std::construct_at(op.get());
+                }
+                drawn = std::move(task.draws);
             }
         }
 
         std::thread owner_;
-        std::mutex mutex_;
+        std::mutex mutex_; // the state below
         std::condition_variable cv_;
-        std::deque<std::function<void()>> tasks_;
+        std::deque<Task> tasks_;
+        DrawBatch openDraws_; // posted since the last task
+        // Drawn DrawOps for NewDraw: as many as were ever queued at once, about two frames of draws
+        // (the title waits for the previous frame before it ends one).
+        DrawBatch freeDraws_;
         bool stopping_ = false;
     };
 
@@ -207,10 +285,14 @@ namespace gpu
         impl_->Post([impl = impl_.get(), op] { impl->targets->Resolve(op); });
     }
 
+    std::unique_ptr<DrawOp> Renderer::NewDraw()
+    {
+        return impl_->NewDraw();
+    }
+
     void Renderer::Draw(std::unique_ptr<DrawOp> op)
     {
-        // std::function needs a copyable task.
-        impl_->Post([impl = impl_.get(), op = std::shared_ptr<DrawOp>(std::move(op))] { impl->draws->Draw(*op); });
+        impl_->Draw(std::move(op));
     }
 
     void Renderer::UploadTexture(std::unique_ptr<TextureUpload> upload)

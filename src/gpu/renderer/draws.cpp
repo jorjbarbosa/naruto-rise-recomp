@@ -167,7 +167,7 @@ namespace gpu
             const HostedStream& hosted = op.hosted[i];
             if (hosted.bytes == 0)
             {
-                uint32_t end = i + 1 < op.streamOffsets.size() ? op.streamOffsets[i + 1] : uint32_t(op.vertices.size());
+                uint32_t end = i + 1 < streams.count ? op.streamOffsets[i + 1] : uint32_t(op.vertices.size());
                 streams.views[i] = plume::RenderVertexBufferView(
                     plume::RenderBufferReference(vertices.buffer, vertices.offset + op.streamOffsets[i]), end - op.streamOffsets[i]);
             }

@@ -303,12 +303,12 @@ namespace gpu
         std::array<float, 4> blendColor{};
         std::shared_ptr<const VertexInput> input;
 
-        // Vertex data: stream i starts at streamOffsets[i] and is laid out with its stride, unless
-        // hosted[i] names the host copy it reads instead (with hostedIndices every stream is hosted and
-        // streamOffsets is empty).
+        // Vertex data, for each stream of the input: stream i starts at streamOffsets[i] of vertices,
+        // ends where the next one starts and is laid out with its stride, unless hosted[i] names the
+        // host copy it reads instead (with hostedIndices every stream is hosted).
         CaptureVector<uint8_t> vertices;
-        std::vector<uint32_t> streamOffsets;
-        std::vector<HostedStream> hosted;
+        std::array<uint32_t, kMaxVertexStreams> streamOffsets{};
+        std::array<HostedStream, kMaxVertexStreams> hosted{};
         // Indices: a triangle list rebased to the first vertex the streams hold, unless hostedIndices
         // names the host copy of the index buffer (then every stream is hosted from its start).
         CaptureVector<uint32_t> indices;
@@ -330,7 +330,10 @@ namespace gpu
 
     // The host GPU: a D3D12 device, queue and swap chain through Plume. Operations are posted from
     // the guest threads and run in posting order on the owner thread, which alone touches the
-    // D3D12 objects. A completion thread waits for the GPU and reports the end of each batch.
+    // D3D12 objects. Draws reach the owner in batches: a draw waits for the draws posted after it,
+    // up to a full batch, or for the next operation of another kind, so everything that observes a
+    // draw's result (Kick, ReadResolved, Present) runs after it. A completion thread waits for the GPU
+    // and reports the end of each Kick.
     class Renderer
     {
     public:
@@ -350,6 +353,9 @@ namespace gpu
 
         void Clear(const ClearOp& op);
         void Resolve(const ResolveOp& op);
+        // A draw to fill and pass to Draw: a DrawOp as new, in the memory of one the owner has drawn
+        // when there is one. Any thread.
+        std::unique_ptr<DrawOp> NewDraw();
         void Draw(std::unique_ptr<DrawOp> op);
         // Fills the host texture of (address, layout key) with new content; draws posted after it
         // sample it.
