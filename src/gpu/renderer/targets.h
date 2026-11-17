@@ -33,6 +33,9 @@ namespace gpu
         std::unique_ptr<plume::RenderDescriptorSet> sampling;  // for the present
         TextureDescriptor descriptor;                          // for the draws that sample it
         TextureViews views; // for the draws that read it through another format's swizzle
+        // In SHADER_READ with nothing written since (Targets::MakeReadable): its readers need no
+        // barrier. Every other layout it is put in clears it.
+        bool readable = false;
     };
 
     // The host side of the guest surfaces and of the texture memory they are resolved into.
@@ -69,6 +72,10 @@ namespace gpu
         // Binds the targets of a draw (either may have key 0), recording the barriers that put
         // them in the layouts it writes.
         void BindForDraw(plume::RenderCommandList& list, const SurfaceDesc& color, const SurfaceDesc& depth);
+
+        // Puts a resolved texture in SHADER_READ for its readers (the draws, the present), recording
+        // the barrier only when it is not there yet.
+        static void MakeReadable(plume::RenderCommandList& list, ResolvedTexture& texture);
 
     private:
         struct Surface

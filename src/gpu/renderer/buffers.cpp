@@ -34,12 +34,12 @@ namespace gpu
         auto it = buffers_.find(upload.key);
         if (it != buffers_.end())
         {
-            context_.Retire(std::move(it->second));
-            it->second = std::move(buffer);
+            context_.Retire(std::move(it->second.buffer));
+            it->second = Hosted{ std::move(buffer) };
         }
         else
         {
-            buffers_.emplace(upload.key, std::move(buffer));
+            buffers_.emplace(upload.key, Hosted{ std::move(buffer) });
         }
     }
 
@@ -49,7 +49,7 @@ namespace gpu
         {
             if (uint64_t(it->first.address) + it->first.bytes > begin)
             {
-                context_.Retire(std::move(it->second));
+                context_.Retire(std::move(it->second.buffer));
                 it = buffers_.erase(it);
             }
             else
@@ -64,7 +64,7 @@ namespace gpu
         auto it = buffers_.find(key);
         if (it == buffers_.end())
             return;
-        context_.Retire(std::move(it->second));
+        context_.Retire(std::move(it->second.buffer));
         buffers_.erase(it);
     }
 
@@ -73,8 +73,14 @@ namespace gpu
         auto it = buffers_.find(key);
         if (it == buffers_.end())
             return nullptr;
-        list.barriers(plume::RenderBarrierStage::GRAPHICS,
-            plume::RenderBufferBarrier(it->second.get(), plume::RenderBufferAccess::READ));
-        return it->second.get();
+        Hosted& hosted = it->second;
+        // The upload is the only write: one barrier after it covers every later read.
+        if (!hosted.readable)
+        {
+            list.barriers(plume::RenderBarrierStage::GRAPHICS,
+                plume::RenderBufferBarrier(hosted.buffer.get(), plume::RenderBufferAccess::READ));
+            hosted.readable = true;
+        }
+        return hosted.buffer.get();
     }
 }

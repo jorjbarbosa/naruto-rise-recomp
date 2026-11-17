@@ -27,6 +27,22 @@ namespace gpu
         {
             list.barriers(stages, plume::RenderTextureBarrier(texture, layout));
         }
+
+        // A barrier that takes a resolved texture out of SHADER_READ (a write or a copy).
+        void Barrier(plume::RenderCommandList& list, plume::RenderBarrierStages stages, ResolvedTexture& texture,
+            plume::RenderTextureLayout layout)
+        {
+            Barrier(list, stages, texture.texture.get(), layout);
+            texture.readable = false;
+        }
+    }
+
+    void Targets::MakeReadable(plume::RenderCommandList& list, ResolvedTexture& texture)
+    {
+        if (texture.readable)
+            return;
+        Barrier(list, plume::RenderBarrierStage::GRAPHICS, texture.texture.get(), plume::RenderTextureLayout::SHADER_READ);
+        texture.readable = true;
     }
 
     Targets::Surface& Targets::EnsureSurface(const SurfaceDesc& desc)
@@ -87,7 +103,7 @@ namespace gpu
             // New, or back after a resolve of another size or kind took the memory: the image it held
             // is not the memory's any more. It starts over, reading zero where no resolve writes.
             plume::RenderCommandList& list = context_.Commands();
-            Barrier(list, plume::RenderBarrierStage::GRAPHICS, resolved->texture.get(), plume::RenderTextureLayout::COLOR_WRITE);
+            Barrier(list, plume::RenderBarrierStage::GRAPHICS, *resolved, plume::RenderTextureLayout::COLOR_WRITE);
             list.setFramebuffer(resolved->framebuffer.get());
             list.clearColor(0, plume::RenderColor(0.0f, 0.0f, 0.0f, 0.0f));
             resolved->region = {};
@@ -206,14 +222,14 @@ namespace gpu
         else if (op.source.samples > 1)
         {
             Barrier(list, plume::RenderBarrierStage::COPY, source.texture.get(), plume::RenderTextureLayout::RESOLVE_SOURCE);
-            Barrier(list, plume::RenderBarrierStage::COPY, dest.texture.get(), plume::RenderTextureLayout::RESOLVE_DEST);
+            Barrier(list, plume::RenderBarrierStage::COPY, dest, plume::RenderTextureLayout::RESOLVE_DEST);
             const plume::RenderRect rect(region.left, region.top, region.right, region.bottom);
             list.resolveTextureRegion(dest.texture.get(), destX, destY, source.texture.get(), &rect);
         }
         else
         {
             Barrier(list, plume::RenderBarrierStage::COPY, source.texture.get(), plume::RenderTextureLayout::COPY_SOURCE);
-            Barrier(list, plume::RenderBarrierStage::COPY, dest.texture.get(), plume::RenderTextureLayout::COPY_DEST);
+            Barrier(list, plume::RenderBarrierStage::COPY, dest, plume::RenderTextureLayout::COPY_DEST);
             const plume::RenderBox box(region.left, region.top, region.right, region.bottom);
             list.copyTextureRegion(plume::RenderTextureCopyLocation::Subresource(dest.texture.get()),
                 plume::RenderTextureCopyLocation::Subresource(source.texture.get()), destX, destY, 0, &box);
@@ -238,7 +254,7 @@ namespace gpu
 
         plume::RenderCommandList& list = context_.Commands();
         Barrier(list, plume::RenderBarrierStage::GRAPHICS, source.texture.get(), plume::RenderTextureLayout::SHADER_READ);
-        Barrier(list, plume::RenderBarrierStage::GRAPHICS, dest.texture.get(), plume::RenderTextureLayout::COLOR_WRITE);
+        Barrier(list, plume::RenderBarrierStage::GRAPHICS, dest, plume::RenderTextureLayout::COLOR_WRITE);
         list.setFramebuffer(dest.framebuffer.get());
         uint32_t width = uint32_t(region.right - region.left);
         uint32_t height = uint32_t(region.bottom - region.top);
@@ -263,7 +279,7 @@ namespace gpu
             context_.Device().createBuffer(plume::RenderBufferDesc::ReadbackBuffer(uint64_t(pitch) * resolved->height));
 
         plume::RenderCommandList& list = context_.Commands();
-        Barrier(list, plume::RenderBarrierStage::COPY, resolved->texture.get(), plume::RenderTextureLayout::COPY_SOURCE);
+        Barrier(list, plume::RenderBarrierStage::COPY, *resolved, plume::RenderTextureLayout::COPY_SOURCE);
         list.copyTextureRegion(plume::RenderTextureCopyLocation::PlacedFootprint(buffer.get(), kColorFormat,
                                    resolved->width, resolved->height, 1, pitch / kColorBytes),
             plume::RenderTextureCopyLocation::Subresource(resolved->texture.get()));

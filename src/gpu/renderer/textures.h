@@ -55,6 +55,8 @@ namespace gpu
             bool cube = false;
             std::unique_ptr<plume::RenderTexture> texture;
             TextureViews views; // released before the texture
+            // In SHADER_READ with no upload since: the draws that sample it need no barrier.
+            bool readable = false;
         };
         using Key = std::pair<uint32_t, uint64_t>;
 

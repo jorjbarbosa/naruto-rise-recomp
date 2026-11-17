@@ -38,7 +38,7 @@ namespace gpu
         // screen first. Otherwise the image is presented at once (at the next vertical blank with
         // vsync). shown(paced) runs once the first present is submitted, or at once when nothing could
         // be presented; paced tells whether the display paced it.
-        void Present(const Passes& passes, const ResolvedTexture* image, uint32_t vblanks, uint32_t refreshMillihertz,
+        void Present(const Passes& passes, ResolvedTexture* image, uint32_t vblanks, uint32_t refreshMillihertz,
             const std::function<void(bool paced)>& shown);
 
     private:
@@ -46,7 +46,7 @@ namespace gpu
         void CreateFramebuffers();
         uint32_t RefreshMultiple(uint32_t refreshMillihertz);
         void WaitForRoom();
-        void Submit(const Passes& passes, const ResolvedTexture* image, uint32_t syncInterval);
+        void Submit(const Passes& passes, ResolvedTexture* image, uint32_t syncInterval);
 
         Context& context_;
         bool vsync_;

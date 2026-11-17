@@ -115,15 +115,14 @@ namespace gpu
         }
     }
 
-    void Presenter::Submit(const Passes& passes, const ResolvedTexture* image, uint32_t syncInterval)
+    void Presenter::Submit(const Passes& passes, ResolvedTexture* image, uint32_t syncInterval)
     {
         uint32_t index = 0;
         swapChain_->acquireTexture(nullptr, &index);
         plume::RenderTexture* backBuffer = swapChain_->getTexture(index);
         plume::RenderCommandList& list = context_.Commands();
         if (image != nullptr)
-            list.barriers(plume::RenderBarrierStage::GRAPHICS,
-                plume::RenderTextureBarrier(image->texture.get(), plume::RenderTextureLayout::SHADER_READ));
+            Targets::MakeReadable(list, *image);
         list.barriers(plume::RenderBarrierStage::GRAPHICS,
             plume::RenderTextureBarrier(backBuffer, plume::RenderTextureLayout::COLOR_WRITE));
         list.setFramebuffer(framebuffers_[index].get());
@@ -160,7 +159,7 @@ namespace gpu
         }
     }
 
-    void Presenter::Present(const Passes& passes, const ResolvedTexture* image, uint32_t vblanks,
+    void Presenter::Present(const Passes& passes, ResolvedTexture* image, uint32_t vblanks,
         uint32_t refreshMillihertz, const std::function<void(bool paced)>& shown)
     {
         if (swapChain_->needsResize())

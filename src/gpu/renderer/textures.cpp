@@ -105,6 +105,7 @@ namespace gpu
         plume::RenderCommandList& list = context_.Commands();
         list.barriers(plume::RenderBarrierStage::COPY,
             plume::RenderTextureBarrier(texture->texture.get(), plume::RenderTextureLayout::COPY_DEST));
+        texture->readable = false;
         std::vector<uint8_t> data;
         for (uint32_t face = 0; face < layout.faces; face++)
         {
@@ -180,8 +181,7 @@ namespace gpu
                 LOG_ONCE("gpu: a resolved texture sampled as a cube reads as zero");
                 return binding;
             }
-            list.barriers(plume::RenderBarrierStage::GRAPHICS,
-                plume::RenderTextureBarrier(resolved->texture.get(), plume::RenderTextureLayout::SHADER_READ));
+            Targets::MakeReadable(list, *resolved);
             // A resolved color texture holds the surface's colors in order, whatever swizzle reads them
             // back (k_5_6_5 has no alpha: it reads as one); k_8 and the depth resolves read their
             // values through the format's host swizzle (every component takes red).
@@ -205,8 +205,12 @@ namespace gpu
         if (it == textures_.end())
             return binding;
         Texture& host = *it->second;
-        list.barriers(plume::RenderBarrierStage::GRAPHICS,
-            plume::RenderTextureBarrier(host.texture.get(), plume::RenderTextureLayout::SHADER_READ));
+        if (!host.readable)
+        {
+            list.barriers(plume::RenderBarrierStage::GRAPHICS,
+                plume::RenderTextureBarrier(host.texture.get(), plume::RenderTextureLayout::SHADER_READ));
+            host.readable = true;
+        }
         // The view holds the levels the fetch samples, so the sampler's LOD 0 is the first of them.
         plume::RenderTextureViewDesc view = host.cube ? plume::RenderTextureViewDesc::TextureCube(host.format->host)
                                                       : plume::RenderTextureViewDesc::Texture2D(host.format->host);

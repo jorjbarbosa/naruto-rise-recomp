@@ -32,7 +32,14 @@ namespace gpu
         plume::RenderBuffer* Bind(plume::RenderCommandList& list, const BufferKey& key);
 
     private:
+        // A host copy and whether a read barrier followed its upload (the only write it gets).
+        struct Hosted
+        {
+            std::shared_ptr<plume::RenderBuffer> buffer;
+            bool readable = false;
+        };
+
         Context& context_;
-        std::map<BufferKey, std::shared_ptr<plume::RenderBuffer>> buffers_; // ordered by address first
+        std::map<BufferKey, Hosted> buffers_; // ordered by address first
     };
 }
