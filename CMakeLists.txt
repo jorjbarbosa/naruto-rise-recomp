@@ -66,12 +66,18 @@ set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory("${CMAKE_SOURCE_DIR}/thirdparty/SDL" sdl EXCLUDE_FROM_ALL)
 
-# Plume, D3D12 backend only (its own CMake always builds the Vulkan backend too).
+# Plume with its D3D12 and Vulkan backends (the renderer picks one at start, gpu/settings.h). The
+# Vulkan backend loads the Vulkan library at run time through volk, so nothing links against it.
 set(PLUME_DIR "${CMAKE_SOURCE_DIR}/thirdparty/plume")
 add_library(plume STATIC
     "${PLUME_DIR}/plume_d3d12.cpp"
+    "${PLUME_DIR}/plume_vulkan.cpp"
     "${PLUME_DIR}/contrib/D3D12MemoryAllocator/src/D3D12MemAlloc.cpp")
-target_include_directories(plume PUBLIC "${PLUME_DIR}" "${PLUME_DIR}/contrib/D3D12MemoryAllocator/include")
+target_include_directories(plume PUBLIC "${PLUME_DIR}"
+    "${PLUME_DIR}/contrib/D3D12MemoryAllocator/include"
+    "${PLUME_DIR}/contrib/volk"
+    "${PLUME_DIR}/contrib/Vulkan-Headers/include"
+    "${PLUME_DIR}/contrib/VulkanMemoryAllocator/include")
 target_compile_definitions(plume PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
 target_compile_options(plume PRIVATE -Wno-everything)
 target_link_libraries(plume PUBLIC d3d12 dxgi dxguid)

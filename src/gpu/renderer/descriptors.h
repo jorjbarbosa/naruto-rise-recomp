@@ -29,6 +29,9 @@ namespace gpu
     public:
         static constexpr uint32_t kNullTexture = 0;
         static constexpr uint32_t kSetCount = 4;
+        static constexpr uint32_t kSamplerSet = 3;
+        // Capacities of the sets: 2D textures, 3D textures, cube textures, samplers.
+        static constexpr uint32_t kCapacity[kSetCount] = { 16384, 1024, 1024, 512 };
 
         explicit Descriptors(plume::RenderDevice& device);
 

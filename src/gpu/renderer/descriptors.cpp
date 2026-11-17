@@ -10,10 +10,6 @@ namespace gpu
 {
     namespace
     {
-        // Capacities of the sets: 2D textures, 3D textures, cube textures, samplers.
-        constexpr uint32_t kCapacity[Descriptors::kSetCount] = { 16384, 1024, 1024, 512 };
-        constexpr uint32_t kSamplerSet = 3;
-
         plume::RenderTextureAddressMode AddressMode(uint32_t clamp)
         {
             // The halfway clamps take the plain clamp of the same mirroring; the host has no

@@ -2,6 +2,7 @@
 
 #include "gpu/renderer/renderer.h"
 
+#include "gpu/renderer/backend.h"
 #include "gpu/renderer/buffers.h"
 #include "gpu/renderer/constant_ring.h"
 #include "gpu/renderer/context.h"
@@ -14,8 +15,6 @@
 #include "gpu/settings.h"
 #include "log.h"
 
-#include <plume_d3d12.h>
-
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -25,11 +24,6 @@
 #include <mutex>
 #include <thread>
 #include <vector>
-
-namespace plume
-{
-    std::unique_ptr<RenderInterface> CreateD3D12Interface();
-}
 
 namespace gpu
 {
@@ -42,22 +36,6 @@ namespace gpu
         // about 2 MB of vertex constants and 0.6 MB of pixel constants, and the capture runs at most
         // about two frames ahead of the owner.
         constexpr uint64_t kConstantRingBytes = 8 << 20;
-
-        // Debug layer: the guest clears to any value, so the hint that a clear does not match the
-        // value given at the target's creation is noise.
-        void FilterDebugMessages(plume::RenderDevice& device)
-        {
-            ID3D12InfoQueue* queue = nullptr;
-            if (FAILED(static_cast<plume::D3D12Device&>(device).d3d->QueryInterface(IID_PPV_ARGS(&queue))))
-                return;
-            D3D12_MESSAGE_ID ignored[] = { D3D12_MESSAGE_ID_CLEARRENDERTARGETVIEW_MISMATCHINGCLEARVALUE,
-                D3D12_MESSAGE_ID_CLEARDEPTHSTENCILVIEW_MISMATCHINGCLEARVALUE };
-            D3D12_INFO_QUEUE_FILTER filter = {};
-            filter.DenyList.NumIDs = UINT(std::size(ignored));
-            filter.DenyList.pIDList = ignored;
-            queue->AddStorageFilterEntries(&filter);
-            queue->Release();
-        }
     }
 
     class Renderer::Impl
@@ -260,44 +238,30 @@ namespace gpu
     std::unique_ptr<Renderer> Renderer::Create(void* window, const Settings& settings, Completion completion,
         BeforePost beforePost)
     {
-        if (settings.debugLayer)
-        {
-            // Before Plume creates the device.
-            ID3D12Debug* debug = nullptr;
-            if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))))
-            {
-                debug->EnableDebugLayer();
-                debug->Release();
-                Log("gpu: D3D12 debug layer on");
-            }
-            else
-            {
-                Log("gpu: D3D12 debug layer unavailable");
-            }
-        }
-
         auto impl = std::make_unique<Impl>();
         impl->beforePost = std::move(beforePost);
-        impl->api = plume::CreateD3D12Interface();
+        impl->api = CreateInterface(settings);
         if (!impl->api)
-        {
-            Log("gpu: error: cannot create the D3D12 interface");
             return nullptr;
-        }
         for (const std::string& name : impl->api->getDeviceNames())
             Log("gpu: adapter \"%s\"", name.c_str());
 
         std::unique_ptr<plume::RenderDevice> device = impl->api->createDevice(settings.adapter);
         if (!device)
         {
-            Log("gpu: error: cannot create the D3D12 device");
+            Log("gpu: error: cannot create the %s device", ApiName(settings.api));
             return nullptr;
         }
         const auto& description = device->getDescription();
         Log("gpu: device \"%s\", %llu MB", description.name.c_str(),
             (unsigned long long)(description.dedicatedVideoMemory >> 20));
-        if (settings.debugLayer)
-            FilterDebugMessages(*device);
+        if (!PrepareDevice(*device, settings))
+            return nullptr;
+        if (settings.api == GpuApi::Vulkan)
+        {
+            Log("gpu: the renderer does not draw on Vulkan yet");
+            return nullptr;
+        }
 
         impl->context = std::make_unique<Context>(std::move(device), std::move(completion));
         impl->presenter = Presenter::Create(*impl->context, window, settings);
