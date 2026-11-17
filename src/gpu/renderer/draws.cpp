@@ -136,7 +136,7 @@ namespace gpu
             key.state.depthBias = 0;
             key.state.depthBiasSlope = 0;
         }
-        const plume::RenderPipeline* pipeline = pipelines_->Get(key, op.input);
+        const plume::RenderPipeline* pipeline = pipelines_->Get(key, *op.input);
         if (pipeline == nullptr)
             return;
         const SurfaceDesc& target = op.color.key != 0 ? op.color : op.depth;

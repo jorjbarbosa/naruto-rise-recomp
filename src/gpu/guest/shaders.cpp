@@ -7,6 +7,8 @@
 #include "kernel/kernel.h"
 
 #include <algorithm>
+#include <atomic>
+#include <memory>
 #include <mutex>
 #include <unordered_map>
 
@@ -23,8 +25,15 @@ namespace gpu::guest
         constexpr uint32_t kMaxPhysicalSize = 0x40000;
         constexpr uint32_t kMaxElements = 16;
 
-        std::mutex g_mutex;
+        std::mutex g_mutex; // g_shaders
         std::unordered_map<uint32_t, std::shared_ptr<const ShaderInfo>> g_shaders;
+        // Changes with every registration, after g_shaders.
+        std::atomic<uint64_t> g_generation{ 0 };
+
+        // The drawing thread's lookups since the generation it last synchronized with, null for an
+        // object not registered. Holding the shaders keeps them alive while a draw uses them.
+        std::unordered_map<uint32_t, std::shared_ptr<const ShaderInfo>> g_found;
+        uint64_t g_foundGeneration = 0;
 
         // The end of the float4 constants of the container's constant table (ShaderInfo::
         // constantRegisters). A table that does not fit the virtual part counts as reading every
@@ -122,14 +131,34 @@ namespace gpu::guest
                 g_shaders[object] = std::move(info);
             else
                 g_shaders.erase(object);
+            g_generation.fetch_add(1, std::memory_order_release);
         }
     }
 
-    std::shared_ptr<const ShaderInfo> FindShader(uint32_t object)
+    void SyncShaders()
     {
-        std::lock_guard lock(g_mutex);
-        auto it = g_shaders.find(object);
-        return it != g_shaders.end() ? it->second : nullptr;
+        uint64_t generation = g_generation.load(std::memory_order_acquire);
+        if (generation == g_foundGeneration)
+            return;
+        g_found.clear();
+        g_foundGeneration = generation;
+    }
+
+    const ShaderInfo* FindShader(uint32_t object)
+    {
+        auto found = g_found.find(object);
+        if (found == g_found.end())
+        {
+            std::shared_ptr<const ShaderInfo> info;
+            {
+                std::lock_guard lock(g_mutex);
+                auto it = g_shaders.find(object);
+                if (it != g_shaders.end())
+                    info = it->second;
+            }
+            found = g_found.emplace(object, std::move(info)).first;
+        }
+        return found->second.get();
     }
 }
 

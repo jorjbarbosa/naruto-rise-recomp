@@ -228,10 +228,13 @@ namespace gpu
         std::fflush(list_);
     }
 
-    const plume::RenderPipeline* Pipelines::Get(const PipelineKey& key, const std::shared_ptr<const VertexInput>& input)
+    const plume::RenderPipeline* Pipelines::Get(const PipelineKey& key, const VertexInput& input)
     {
         std::unique_lock lock(mutex_);
-        auto [it, inserted] = entries_.try_emplace(key, Entry{ State::Creating, input, nullptr });
+        auto it = entries_.find(key);
+        bool inserted = it == entries_.end();
+        if (inserted)
+            it = entries_.emplace(key, Entry{ State::Creating, std::make_shared<const VertexInput>(input), nullptr }).first;
         Entry& entry = it->second;
         if (!inserted)
         {

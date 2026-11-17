@@ -8,6 +8,7 @@
 #include "kernel/kernel.h"
 
 #include <algorithm>
+#include <memory>
 #include <unordered_map>
 
 DECLARE_ORIGINAL(D3D_PATCH_VERTEX_SHADER);
@@ -97,8 +98,23 @@ namespace gpu::guest
             }
         };
 
-        std::unordered_map<Key, std::shared_ptr<const VertexLayout>, KeyHash> g_layouts;
+        std::unordered_map<Key, std::unique_ptr<const VertexLayout>, KeyHash> g_layouts;
+        // The layout of the last lookup that could not be cached.
+        std::unique_ptr<const VertexLayout> g_uncached;
+        // Every distinct vertex input made, by id; never freed (DrawOp::input).
+        std::unordered_map<uint64_t, std::vector<std::unique_ptr<const VertexInput>>> g_inputs;
         uint32_t g_scratch = 0;
+
+        // The kept vertex input equal to input, made from it the first time.
+        const VertexInput* Intern(VertexInput&& input)
+        {
+            std::vector<std::unique_ptr<const VertexInput>>& same = g_inputs[input.id];
+            for (const std::unique_ptr<const VertexInput>& kept : same)
+                if (kept->elements == input.elements && kept->strides == input.strides)
+                    return kept.get();
+            same.push_back(std::make_unique<const VertexInput>(std::move(input)));
+            return same.back().get();
+        }
 
         // The microcode with its fetch instructions patched for the declaration and strides, as the
         // shader commit of a draw patches it.
@@ -133,7 +149,7 @@ namespace gpu::guest
             return patched;
         }
 
-        std::shared_ptr<const VertexLayout> Build(const ShaderInfo& shader, const std::vector<uint32_t>& code)
+        std::unique_ptr<const VertexLayout> Build(const ShaderInfo& shader, const std::vector<uint32_t>& code)
         {
             // The fetches at the element addresses in address order. The patch can reorder them
             // (mini fetches follow the full fetch of their stream), so the fetch of an element is
@@ -175,8 +191,8 @@ namespace gpu::guest
                 fetches.push_back(fetch);
             }
 
-            auto layout = std::make_shared<VertexLayout>();
-            auto input = std::make_shared<VertexInput>();
+            auto layout = std::make_unique<VertexLayout>();
+            VertexInput input;
             for (const ShaderElement& element : shader.elements)
             {
                 if (element.usage >= kUsageCount)
@@ -231,31 +247,31 @@ namespace gpu::guest
                 if (it == layout->streamFetch.end())
                 {
                     layout->streamFetch.push_back(match->constant);
-                    input->strides.push_back(match->stride * 4);
+                    input.strides.push_back(match->stride * 4);
                 }
-                else if (input->strides[stream] != match->stride * 4)
+                else if (input.strides[stream] != match->stride * 4)
                 {
                     LOG_ONCE("gpu: two vertex elements read one stream with different strides; draws with them are "
                         "skipped");
                     return nullptr;
                 }
-                input->elements.push_back({ element.usage, element.usageIndex, uint8_t(stream), uint8_t(dwords), offset * 4 });
+                input.elements.push_back({ element.usage, element.usageIndex, uint8_t(stream), uint8_t(dwords), offset * 4 });
                 layout->descriptors.push_back(Descriptor(match->w1));
             }
 
             uint64_t id = 0;
-            for (const VertexElement& element : input->elements)
+            for (const VertexElement& element : input.elements)
                 id = Mix(Mix(id, element.usage | element.usageIndex << 8 | element.stream << 16 | element.dwords << 24),
                     element.offset);
-            for (uint32_t streamStride : input->strides)
+            for (uint32_t streamStride : input.strides)
                 id = Mix(id, streamStride);
-            input->id = id;
-            layout->input = std::move(input);
+            input.id = id;
+            layout->input = Intern(std::move(input));
             return layout;
         }
     }
 
-    std::shared_ptr<const VertexLayout> FindVertexLayout(PPCContext& ctx, uint8_t* base, uint32_t shaderObject,
+    const VertexLayout* FindVertexLayout(PPCContext& ctx, uint8_t* base, uint32_t shaderObject,
         const ShaderInfo& shader, uint32_t declaration, const std::array<uint8_t, 16>& strides)
     {
         // Each declaration gets an id at its first patch; one without an id yet is not cached, since
@@ -266,7 +282,7 @@ namespace gpu::guest
         {
             auto it = g_layouts.find(key);
             if (it != g_layouts.end())
-                return it->second;
+                return it->second.get();
         }
 
         if (shader.code.size() * 4 > kMaxCodeBytes)
@@ -279,10 +295,10 @@ namespace gpu::guest
         // as the shader database has them.
         bool unpatched = declaration == 0 ||
             (mem::Load32(shaderObject + shader::kVertexContainer) & shader::kFlagUnpatched) != 0;
-        std::shared_ptr<const VertexLayout> layout =
+        std::unique_ptr<const VertexLayout> layout =
             Build(shader, unpatched ? shader.code : Patch(ctx, base, shaderObject, shader, declaration, strides));
-        if (cached)
-            g_layouts.emplace(key, layout);
-        return layout;
+        std::unique_ptr<const VertexLayout>& kept = cached ? g_layouts[key] : g_uncached;
+        kept = std::move(layout);
+        return kept.get();
     }
 }

@@ -143,7 +143,8 @@ namespace gpu
     // The vertex streams a draw can read: one per vertex fetch stride of the device.
     constexpr uint32_t kMaxVertexStreams = 16;
 
-    // The vertex input of a draw. Shared by the draws of one (vertex shader, declaration, strides).
+    // The vertex input of a draw. The guest side makes one for each distinct input and keeps it for
+    // the life of the process, so draws name it by pointer; it does not change once made.
     struct VertexInput
     {
         std::vector<VertexElement> elements; // in the order of the shader's inputs
@@ -322,7 +323,7 @@ namespace gpu
         RenderState state;
         uint8_t stencilReference = 0; // per draw, not part of the pipeline
         std::array<float, 4> blendColor{};
-        std::shared_ptr<const VertexInput> input;
+        const VertexInput* input = nullptr;
 
         // Vertex data, for each stream of the input: stream i starts at streamOffsets[i] of vertices,
         // ends where the next one starts and is laid out with its stride, unless hosted[i] names the

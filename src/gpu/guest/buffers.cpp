@@ -9,6 +9,7 @@
 #include "memory.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -33,6 +34,11 @@ namespace gpu::guest
         // reach the owner thread in the order the entries changed.
         std::mutex g_mutex; // the state below (the render thread draws, any thread unlocks or frees)
         std::map<BufferKey, Buffer> g_buffers; // ordered by address first
+        // The entries the draws found lately, by a hash of their key: most draws read the buffers an
+        // earlier draw of the frame read. An entry is null when its slot is empty; all of them go when
+        // an entry of g_buffers is erased.
+        constexpr uint32_t kRecentBits = 6;
+        std::array<std::pair<BufferKey, Buffer*>, 1u << kRecentBits> g_recent{};
         uint32_t g_largest = 0; // the largest size of an entry ever made, which bounds the overlap scans
         uint64_t g_frame = 1;
         // The latest write check when the previous frame began.
@@ -55,6 +61,25 @@ namespace gpu::guest
                 else
                     ++it;
             }
+        }
+
+        std::pair<BufferKey, Buffer*>& RecentSlot(const BufferKey& key)
+        {
+            uint32_t hash = (key.address ^ key.bytes * 0x9E3779B1u ^ uint32_t(key.format) << 8 ^ key.endian) * 0x85EBCA6Bu;
+            return g_recent[hash >> (32 - kRecentBits)];
+        }
+
+        // The entry of a key, or null. Under g_mutex.
+        Buffer* FindEntry(const BufferKey& key)
+        {
+            std::pair<BufferKey, Buffer*>& slot = RecentSlot(key);
+            if (slot.second != nullptr && slot.first == key)
+                return slot.second;
+            auto it = g_buffers.find(key);
+            if (it == g_buffers.end())
+                return nullptr;
+            slot = { key, &it->second };
+            return &it->second;
         }
 
         // The host copy of a buffer: a vertex buffer as it is, an index buffer as host-order indices
@@ -104,17 +129,18 @@ namespace gpu::guest
         if (renderer == nullptr || bytes == 0 || uint64_t(address) + bytes > kPhysicalEnd)
             return false;
         std::lock_guard lock(g_mutex);
-        auto it = g_buffers.find(key);
-        if (it == g_buffers.end())
+        Buffer* entry = FindEntry(key);
+        if (entry == nullptr)
         {
             // Memory a check found written in this frame or the previous one is dynamic: copied by the
             // draws, without an entry or a check of its own.
             if (LastWriteFound(address, bytes) > g_previousFrameStart)
                 return false;
-            it = g_buffers.emplace(key, Buffer()).first;
+            entry = &g_buffers.emplace(key, Buffer()).first->second;
+            RecentSlot(key) = { key, entry };
             g_largest = std::max(g_largest, bytes);
         }
-        Buffer& buffer = it->second;
+        Buffer& buffer = *entry;
         // Checked in this frame: hosted, or written in this frame and copied by every draw of it
         // (dynamic vertices).
         if (buffer.lastCheckFrame == g_frame && !buffer.recheck)
@@ -159,7 +185,13 @@ namespace gpu::guest
     void ForgetBuffers(uint32_t begin, uint32_t end)
     {
         std::lock_guard lock(g_mutex);
-        ForEachOverlap(begin, end, [](auto it) { return g_buffers.erase(it); });
+        bool erased = false;
+        ForEachOverlap(begin, end, [&erased](auto it) {
+            erased = true;
+            return g_buffers.erase(it);
+        });
+        if (erased)
+            g_recent.fill({});
         if (Renderer* renderer = ActiveRenderer())
             renderer->ReleaseBuffers(begin, end);
     }
@@ -176,8 +208,9 @@ namespace gpu::guest
     void EndBufferFrame()
     {
         std::lock_guard lock(g_mutex);
-        std::erase_if(g_buffers,
-            [](const auto& entry) { return !entry.second.hosted && entry.second.lastCheckFrame + kIdleFrames < g_frame; });
+        if (std::erase_if(g_buffers,
+                [](const auto& entry) { return !entry.second.hosted && entry.second.lastCheckFrame + kIdleFrames < g_frame; }) != 0)
+            g_recent.fill({});
         g_frame++;
         g_previousFrameStart = g_frameStart;
         g_frameStart = LatestCheck();

@@ -3,7 +3,6 @@
 // The D3D shader objects of the title, registered when the Jade shader database creates them.
 
 #include <cstdint>
-#include <memory>
 #include <vector>
 
 namespace gpu::guest
@@ -34,7 +33,11 @@ namespace gpu::guest
         std::vector<ShaderElement> elements;
     };
 
+    // The lookups of the thread that draws (one thread at a time, as the device requires): it keeps
+    // what it found, without a lock, until a shader is registered, which it notices at the next
+    // SyncShaders. Call SyncShaders before the lookups of each draw.
+    void SyncShaders();
     // The shader object at a guest address, or null when it was not created through the shader
-    // database. Thread-safe.
-    std::shared_ptr<const ShaderInfo> FindShader(uint32_t object);
+    // database. Valid until the next SyncShaders.
+    const ShaderInfo* FindShader(uint32_t object);
 }

@@ -660,17 +660,18 @@ namespace gpu::guest
 
             uint32_t vertexObject = mem::Load32(devAddress + dev::kVertexShader);
             uint32_t pixelObject = mem::Load32(devAddress + dev::kPixelShader);
-            std::shared_ptr<const ShaderInfo> vertexShader = FindShader(vertexObject);
-            if (!vertexShader || vertexShader->pixel)
+            SyncShaders();
+            const ShaderInfo* vertexShader = FindShader(vertexObject);
+            if (vertexShader == nullptr || vertexShader->pixel)
             {
                 LogUnregistered(vertexObject, false);
                 return nullptr;
             }
-            std::shared_ptr<const ShaderInfo> pixelShader;
+            const ShaderInfo* pixelShader = nullptr;
             if (pixelObject != 0)
             {
                 pixelShader = FindShader(pixelObject);
-                if (!pixelShader || !pixelShader->pixel)
+                if (pixelShader == nullptr || !pixelShader->pixel)
                 {
                     LogUnregistered(pixelObject, true);
                     return nullptr;
@@ -693,14 +694,14 @@ namespace gpu::guest
             memcpy(strides.data(), mem::Ptr(devAddress + dev::kStreamStrides), strides.size());
             if (call.inlineVertices != 0)
                 strides[0] = kInlineStride / 4;
-            std::shared_ptr<const VertexLayout> layout = FindVertexLayout(ctx, base, vertexObject, *vertexShader,
+            const VertexLayout* layout = FindVertexLayout(ctx, base, vertexObject, *vertexShader,
                 mem::Load32(devAddress + dev::kVertexDeclaration), strides);
-            if (!layout)
+            if (layout == nullptr)
                 return nullptr;
 
             std::unique_ptr<DrawOp> op = renderer->NewDraw();
             op->vertexShader = vertexShader->key;
-            op->pixelShader = pixelShader ? pixelShader->key : 0;
+            op->pixelShader = pixelShader != nullptr ? pixelShader->key : 0;
             op->input = layout->input;
             if (!ReadState(device, devAddress, *op) || !ReadTargets(device, *op, depthOnly))
                 return nullptr;
@@ -763,7 +764,7 @@ namespace gpu::guest
             // Constants, as the host shaders read them.
             std::optional<ConstantRange> vertexConstants = g_vertexConstants.Store(*renderer, vertexShader->constantRegisters);
             std::optional<ConstantRange> pixelConstants =
-                g_pixelConstants.Store(*renderer, pixelShader ? pixelShader->constantRegisters : 0);
+                g_pixelConstants.Store(*renderer, pixelShader != nullptr ? pixelShader->constantRegisters : 0);
             if (!vertexConstants || !pixelConstants)
                 return nullptr;
             op->vertexConstants = *vertexConstants;

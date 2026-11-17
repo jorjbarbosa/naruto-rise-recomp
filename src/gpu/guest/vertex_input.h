@@ -9,7 +9,6 @@
 
 #include <array>
 #include <cstdint>
-#include <memory>
 #include <vector>
 
 namespace gpu::guest
@@ -24,7 +23,7 @@ namespace gpu::guest
     // each element. Shared by the draws with the same shader, declaration and strides.
     struct VertexLayout
     {
-        std::shared_ptr<const VertexInput> input;
+        const VertexInput* input = nullptr; // kept for the life of the process
         std::vector<uint32_t> streamFetch; // the vertex fetch constant of each stream
         // The fetch descriptor of each element (SharedConstants::vertexFetch) without the endian
         // swap, which comes from the fetch constant of its stream at draw time.
@@ -37,7 +36,7 @@ namespace gpu::guest
     // The layout of a vertex shader object for the declaration and strides (dwords per stream).
     // The first time, the library's patcher (82140540) runs on a copy of the shader's microcode,
     // with ctx (the context of the draw hook) to run guest code. Null when the layout is not covered
-    // (logged once per reason). Render thread only.
-    std::shared_ptr<const VertexLayout> FindVertexLayout(PPCContext& ctx, uint8_t* base, uint32_t shaderObject,
+    // (logged once per reason). Valid until the next call; the thread that draws only.
+    const VertexLayout* FindVertexLayout(PPCContext& ctx, uint8_t* base, uint32_t shaderObject,
         const ShaderInfo& shader, uint32_t declaration, const std::array<uint8_t, 16>& strides);
 }

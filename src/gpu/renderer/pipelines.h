@@ -48,8 +48,8 @@ namespace gpu
 
         // The pipeline of a key: ready, waited for while a background thread creates it, or created
         // here (then added to the list). Null when its shaders are missing or the driver refuses it
-        // (logged once per key). Owner thread only.
-        const plume::RenderPipeline* Get(const PipelineKey& key, const std::shared_ptr<const VertexInput>& input);
+        // (logged once per key). A new key keeps a copy of input. Owner thread only.
+        const plume::RenderPipeline* Get(const PipelineKey& key, const VertexInput& input);
 
     private:
         struct KeyHash
