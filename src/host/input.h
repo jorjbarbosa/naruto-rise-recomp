@@ -15,7 +15,8 @@ namespace host
     constexpr int kInputSlots = 4;
 
     // One slot in the X_INPUT_GAMEPAD layout, host byte order: XDK button bits, triggers 0-255,
-    // sticks with up positive and no dead zone (the game applies its own).
+    // sticks with up positive, after the host dead zone of gamepad.dead_zone (0: none; the game
+    // applies its own after it).
     struct PadState
     {
         // Changes whenever any other field changes: the game reads the rest only on a new packet.
@@ -29,6 +30,9 @@ namespace host
         int16_t thumbRY = 0;
     };
 
+    // Takes the keyboard bindings (keyboard.*) and the dead zone from the store (settings.h). Host
+    // main thread, after SDL_Init with SDL_INIT_GAMEPAD; again after a change.
+    void ApplyInputSettings();
     // Feeds one SDL event to the input state. Host main thread only, after SDL_Init with
     // SDL_INIT_GAMEPAD; events that are not about input are ignored.
     void HandleInputEvent(const SDL_Event& event);

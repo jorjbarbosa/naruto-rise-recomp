@@ -2,13 +2,16 @@
 
 #include "host/window.h"
 
+#include "host/audio.h"
 #include "host/input.h"
 #include "log.h"
+#include "settings/settings.h"
 
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 
@@ -20,6 +23,10 @@ namespace host
         std::atomic<void*> g_handle{ nullptr };
         std::atomic<bool> g_quitRequested{ false };
         std::atomic<uint32_t> g_refreshMillihertz{ 0 };
+        // The window is borderless, or is becoming so: its moves and resizes are not the windowed
+        // rectangle. Set before SDL is asked, so the events of the switch are already covered. Main
+        // thread.
+        bool g_borderless = false;
 
         // Reads the current mode of the window's display. Main thread.
         void UpdateRefreshRate()
@@ -34,9 +41,111 @@ namespace host
         }
         std::atomic<uint32_t> g_diagnosticKeyPresses{ 0 };
         constexpr SDL_Scancode kDiagnosticKey = SDL_SCANCODE_F8;
+
+        // The display whose usable area holds the point, or 0.
+        SDL_DisplayID DisplayAt(int x, int y)
+        {
+            int count = 0;
+            SDL_DisplayID* displays = SDL_GetDisplays(&count);
+            SDL_DisplayID found = 0;
+            SDL_Point point{ x, y };
+            for (int i = 0; i < count && found == 0; i++)
+            {
+                SDL_Rect bounds;
+                if (SDL_GetDisplayUsableBounds(displays[i], &bounds) && SDL_PointInRect(&point, &bounds))
+                    found = displays[i];
+            }
+            SDL_free(displays);
+            return found;
+        }
+
+        // The stored windowed rectangle, placed: a position whose centre is on no connected display
+        // is centred on the primary one (relocated is set); the size is cut to the usable area of its
+        // display.
+        SDL_Rect PlaceWindow(bool& relocated)
+        {
+            relocated = false;
+            settings::WindowRect stored = settings::GetWindowRect();
+            SDL_Rect rect{ stored.x, stored.y, stored.width, stored.height };
+            bool centered = stored.centerX || stored.centerY;
+            SDL_DisplayID display = 0;
+            if (!centered)
+            {
+                display = DisplayAt(rect.x + rect.w / 2, rect.y + rect.h / 2);
+                if (display == 0)
+                {
+                    Log("window: the saved position %d,%d is on no monitor, centring the window", rect.x, rect.y);
+                    centered = true;
+                    relocated = true;
+                }
+            }
+            if (display == 0)
+                display = SDL_GetPrimaryDisplay();
+            SDL_Rect bounds;
+            if (display != 0 && SDL_GetDisplayUsableBounds(display, &bounds))
+            {
+                rect.w = std::min(rect.w, bounds.w);
+                rect.h = std::min(rect.h, bounds.h);
+            }
+            if (centered)
+            {
+                rect.x = int(SDL_WINDOWPOS_CENTERED_DISPLAY(display));
+                rect.y = int(SDL_WINDOWPOS_CENTERED_DISPLAY(display));
+            }
+            return rect;
+        }
+
+        void SetBorderless(bool borderless)
+        {
+            bool was = g_borderless;
+            g_borderless = borderless;
+            if (!SDL_SetWindowFullscreen(g_window, borderless))
+            {
+                Log("window: error: cannot switch to %s: %s", borderless ? "borderless" : "windowed", SDL_GetError());
+                g_borderless = was;
+                return;
+            }
+            settings::SetWindowMode(borderless ? settings::WindowMode::Borderless : settings::WindowMode::Windowed);
+            Log("window: %s", borderless ? "borderless" : "windowed");
+        }
+
+        // Keeps the windowed rectangle and the maximized state in the store. Main thread.
+        void HandleWindowEvent(const SDL_Event& event)
+        {
+            switch (event.type)
+            {
+            case SDL_EVENT_WINDOW_MOVED:
+            case SDL_EVENT_WINDOW_RESIZED:
+            {
+                SDL_WindowFlags flags = SDL_GetWindowFlags(g_window);
+                if (g_borderless || (flags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_MINIMIZED | SDL_WINDOW_FULLSCREEN)) != 0)
+                    break;
+                int x = 0, y = 0, width = 0, height = 0;
+                if (SDL_GetWindowPosition(g_window, &x, &y) && SDL_GetWindowSize(g_window, &width, &height))
+                    settings::SetWindowRect(x, y, width, height);
+                break;
+            }
+            case SDL_EVENT_WINDOW_MAXIMIZED:
+                if (!g_borderless)
+                    settings::SetWindowMaximized(true);
+                break;
+            case SDL_EVENT_WINDOW_RESTORED:
+                if (!g_borderless && (SDL_GetWindowFlags(g_window) & SDL_WINDOW_MINIMIZED) == 0)
+                    settings::SetWindowMaximized((SDL_GetWindowFlags(g_window) & SDL_WINDOW_MAXIMIZED) != 0);
+                break;
+            case SDL_EVENT_WINDOW_FOCUS_GAINED:
+                SetAudioFocus(true);
+                break;
+            case SDL_EVENT_WINDOW_FOCUS_LOST:
+                SetAudioFocus(false);
+                break;
+            default:
+                break;
+            }
+        }
     }
 
-    bool CreateMainWindow(const char* title, int width, int height)
+    bool CreateMainWindow(const char* title)
     {
         SDL_SetMainReady();
         if (!SDL_Init(SDL_INIT_VIDEO))
@@ -50,7 +159,25 @@ namespace host
         // Without audio the game runs silent (host/audio.cpp keeps time instead).
         if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
             Log("error: no audio support: %s", SDL_GetError());
-        g_window = SDL_CreateWindow(title, width, height, SDL_WINDOW_RESIZABLE);
+        ApplyInputSettings();
+
+        bool relocated = false;
+        SDL_Rect rect = PlaceWindow(relocated);
+        g_borderless = settings::GetWindowMode() == settings::WindowMode::Borderless;
+        SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
+        if (settings::WindowMaximized())
+            flags |= SDL_WINDOW_MAXIMIZED;
+        if (g_borderless)
+            flags |= SDL_WINDOW_FULLSCREEN; // no fullscreen mode set: SDL's desktop fullscreen
+        SDL_PropertiesID properties = SDL_CreateProperties();
+        SDL_SetStringProperty(properties, SDL_PROP_WINDOW_CREATE_TITLE_STRING, title);
+        SDL_SetNumberProperty(properties, SDL_PROP_WINDOW_CREATE_X_NUMBER, rect.x);
+        SDL_SetNumberProperty(properties, SDL_PROP_WINDOW_CREATE_Y_NUMBER, rect.y);
+        SDL_SetNumberProperty(properties, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, rect.w);
+        SDL_SetNumberProperty(properties, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, rect.h);
+        SDL_SetNumberProperty(properties, SDL_PROP_WINDOW_CREATE_FLAGS_NUMBER, flags);
+        g_window = SDL_CreateWindowWithProperties(properties);
+        SDL_DestroyProperties(properties);
         if (g_window == nullptr)
         {
             Log("error: SDL_CreateWindow failed: %s", SDL_GetError());
@@ -62,6 +189,15 @@ namespace host
             Log("error: the window has no HWND: %s", SDL_GetError());
             return false;
         }
+        // A relocated window keeps its new place, so the next start does not relocate it again.
+        if (relocated && !g_borderless && !settings::WindowMaximized())
+        {
+            int x = 0, y = 0, width = 0, height = 0;
+            if (SDL_GetWindowPosition(g_window, &x, &y) && SDL_GetWindowSize(g_window, &width, &height))
+                settings::SetWindowRect(x, y, width, height);
+        }
+        Log("window: %dx%d%s%s", rect.w, rect.h, settings::WindowMaximized() ? ", maximized" : "",
+            g_borderless ? ", borderless" : "");
         UpdateRefreshRate();
         return true;
     }
@@ -87,6 +223,15 @@ namespace host
                 UpdateRefreshRate();
             if (event.type == SDL_EVENT_KEY_DOWN && event.key.scancode == kDiagnosticKey && !event.key.repeat)
                 g_diagnosticKeyPresses.fetch_add(1, std::memory_order_relaxed);
+            // Alt+Enter switches the window mode and is not also a game input (Return is Start).
+            if (event.type == SDL_EVENT_KEY_DOWN && (event.key.mod & SDL_KMOD_ALT) != 0 &&
+                (event.key.scancode == SDL_SCANCODE_RETURN || event.key.scancode == SDL_SCANCODE_KP_ENTER))
+            {
+                if (!event.key.repeat)
+                    SetBorderless(!g_borderless);
+                continue;
+            }
+            HandleWindowEvent(event);
             HandleInputEvent(event);
         }
         Log("error: SDL_WaitEvent failed: %s", SDL_GetError());

@@ -118,8 +118,9 @@ int main(int argc, char** argv)
     // XAudioInitialize reads the XMA context base early in the title's startup.
     apu::InitializeXma();
 
-    if (!host::CreateMainWindow("roan-xenon", 1280, 720))
+    if (!host::CreateMainWindow("roan-xenon"))
         return 1;
+    settings::SetDisplayRefreshSource(host::DisplayRefreshMillihertz);
 
     // Recompiled code recurses deeply on the host stack: same reservation as the other guest threads.
     HANDLE guest = CreateThread(nullptr, 16 * 1024 * 1024, GuestMain, nullptr, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
@@ -132,6 +133,8 @@ int main(int argc, char** argv)
 
     if (host::RunEventLoop())
         Log("window closed");
+    // The window's mode, rectangle and maximized state. The guest's own exits do not come here yet.
+    settings::SaveIfChanged();
     host::StopInput();
     kernel::PrintImportSummary();
     // Plain exit: guest threads are still running, so no static destructors.

@@ -6,16 +6,18 @@
 
 namespace host
 {
-    // Initializes SDL (video, and gamepads and audio when available) and opens the window. False
+    // Initializes SDL (video, and gamepads and audio when available), applies the input settings and
+    // opens the window with the stored mode, size, position and maximized state (settings.h). False
     // on failure (logged).
-    bool CreateMainWindow(const char* title, int width, int height);
+    bool CreateMainWindow(const char* title);
     // HWND of the window, or null before it exists. Any thread.
     void* MainWindowHandle();
     // Refresh rate of the display the window is on, in millihertz (59.94 Hz is 59940); 0 when
     // unknown. Follows display and mode changes as the event loop sees them. Any thread.
     uint32_t DisplayRefreshMillihertz();
     // Pumps window events until the window is closed (returns true) or RequestQuit is called
-    // (returns false).
+    // (returns false). Alt+Enter switches between windowed and borderless; the windowed rectangle,
+    // the maximized state and the mode go to the store as they change (saved by the caller).
     bool RunEventLoop();
     // Ends RunEventLoop. Any thread.
     void RequestQuit();

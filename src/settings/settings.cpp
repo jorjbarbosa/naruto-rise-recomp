@@ -5,9 +5,13 @@
 #include "host/paths.h"
 #include "log.h"
 
+#include <SDL3/SDL_keyboard.h>
+#include <SDL3/SDL_scancode.h>
 #include <toml++/toml.hpp>
 
+#include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -26,13 +30,20 @@ namespace settings
         // The state interpolation rates; 30 and below is the game's own rate.
         constexpr int64_t kMinRate = 31;
         constexpr int64_t kMaxRate = 240;
+        // The stored rate of "display".
+        constexpr int64_t kDisplayRate = -1;
+        // The stored position of "center".
+        constexpr int64_t kCenter = INT64_MIN;
 
         enum class Kind : uint8_t
         {
-            Bool,   // true, false
-            Rate,   // "game" (0), or an integer: 30 and below is "game", above kMaxRate is cut to it
-            Text,   // a string
-            Choice, // one of the option's choices, stored as its index
+            Bool,     // true, false
+            Rate,     // "game" (0), "display", or an integer: 30 and below is "game", above kMaxRate is cut
+            Integer,  // an integer from minimum to maximum; outside, clamped
+            Position, // an integer from minimum to maximum, or "center"
+            Text,     // a string
+            Choice,   // one of the option's choices (or its alias), stored as its index
+            Keys,     // an array of one or two SDL scancode names ("" for an empty slot), stored packed
         };
 
         // When a change applies, for the menu pages (phase 6).
@@ -46,42 +57,126 @@ namespace settings
         {
             const char* table;
             const char* key;
-            const char* variable; // the environment variable that overrides it
-            Kind kind;
-            Apply apply;
-            int64_t defaultNumber;   // Bool, Rate, Choice
-            const char* defaultText; // Text
-            std::span<const char* const> choices;
-            const char* comment; // written above the key; lines separated by '\n'
+            const char* variable = nullptr; // the environment variable that overrides it, if any
+            Kind kind = Kind::Bool;
+            Apply apply = Apply::Live;
+            int64_t defaultNumber = 0;          // every kind but Text
+            const char* defaultText = nullptr;  // Text
+            std::span<const char* const> choices = {};
+            const char* alias = nullptr; // Choice: another name read as choices[aliasIndex]
+            int64_t aliasIndex = 0;
+            int64_t minimum = 0, maximum = 0; // Integer, Position
+            const char* comment = nullptr;    // written above the key; lines separated by '\n'
         };
+
+        constexpr int64_t Keys(SDL_Scancode first, SDL_Scancode second = SDL_SCANCODE_UNKNOWN)
+        {
+            return int64_t(first) | (int64_t(second) << 16);
+        }
 
         // In the order of Language.
         constexpr const char* kLanguages[] = { "english", "french", "spanish", "italian", "german" };
         // The XDK language of each (ExGetXConfigSetting(3, 9)): English 1, French 4, Spanish 5,
         // Italian 6, German 3 (game-side-findings.md section 8).
         constexpr uint32_t kXdkLanguages[] = { 1, 4, 5, 6, 3 };
+        // In the order of WindowMode.
+        constexpr const char* kWindowModes[] = { "windowed", "borderless" };
 
         enum Id : size_t
         {
             kVSync,
             kFrameRate,
             kAdapter,
-            kLanguage,
+            kWindowMode,
+            kWindowWidth,
+            kWindowHeight,
+            kWindowX,
+            kWindowY,
+            kWindowMaximized,
+            kVolume,
+            kAudioDevice,
+            kMuteInBackground,
+            kDeadZone,
+            kKeyboardFirst, // the PadInput order
+            kLanguage = kKeyboardFirst + size_t(PadInput::Count),
             kCount,
         };
 
+        constexpr Option Key(const char* key, int64_t keys, const char* comment = nullptr)
+        {
+            return { .table = "keyboard", .key = key, .kind = Kind::Keys, .defaultNumber = keys, .comment = comment };
+        }
+
         // The option table, in the order of Id. Tables are written in the order they first appear.
         constexpr Option kOptions[] = {
-            { "video", "vsync", "ROAN_VSYNC", Kind::Bool, Apply::Live, 1, nullptr, {},
-                "Wait for the vertical blank when presenting. true, false. ROAN_VSYNC=0|1" },
-            { "video", "frame_rate", "ROAN_FRAME_RATE", Kind::Rate, Apply::Live, 0, nullptr, {},
-                "\"game\": the game's own rate; 31 to 240: state interpolation at that rate. ROAN_FRAME_RATE" },
-            { "video", "adapter", "ROAN_ADAPTER", Kind::Text, Apply::Restart, 0, "", {},
-                "Graphics adapter, as named in the log; \"\": the default one. Applies at the next start.\n"
-                "ROAN_ADAPTER" },
-            { "game", "language", "ROAN_LANGUAGE", Kind::Choice, Apply::Restart, 0, nullptr, kLanguages,
-                "english, french (texts, voices, movies), spanish, italian, german (texts only).\n"
-                "Applies at the next start. ROAN_LANGUAGE" },
+            { .table = "video", .key = "vsync", .variable = "ROAN_VSYNC", .kind = Kind::Bool, .defaultNumber = 1,
+                .comment = "Wait for the vertical blank when presenting. true, false. ROAN_VSYNC=0|1" },
+            { .table = "video", .key = "frame_rate", .variable = "ROAN_FRAME_RATE", .kind = Kind::Rate,
+                .comment = "\"game\": the game's own rate; \"display\": the monitor's refresh rate; 31 to 240: state\n"
+                           "interpolation at that rate. ROAN_FRAME_RATE" },
+            { .table = "video", .key = "adapter", .variable = "ROAN_ADAPTER", .kind = Kind::Text,
+                .apply = Apply::Restart, .defaultText = "",
+                .comment = "Graphics adapter, as named in the log; \"\": the default one. Applies at the next start.\n"
+                           "ROAN_ADAPTER" },
+
+            { .table = "window", .key = "mode", .kind = Kind::Choice, .choices = kWindowModes,
+                .alias = "fullscreen", .aliasIndex = 1,
+                .comment = "windowed, borderless (fullscreen on the window's monitor). Alt+Enter switches; kept on exit." },
+            { .table = "window", .key = "width", .kind = Kind::Integer, .defaultNumber = 1280, .minimum = 320,
+                .maximum = 16384,
+                .comment = "The window's size and position in windowed mode, kept on exit; \"center\" centres it on the\n"
+                           "primary monitor. The monitor is the one the position falls on; a position on no connected\n"
+                           "monitor is centred again." },
+            { .table = "window", .key = "height", .kind = Kind::Integer, .defaultNumber = 720, .minimum = 200,
+                .maximum = 16384 },
+            { .table = "window", .key = "x", .kind = Kind::Position, .defaultNumber = kCenter, .minimum = -1000000,
+                .maximum = 1000000 },
+            { .table = "window", .key = "y", .kind = Kind::Position, .defaultNumber = kCenter, .minimum = -1000000,
+                .maximum = 1000000 },
+            { .table = "window", .key = "maximized", .kind = Kind::Bool },
+
+            { .table = "audio", .key = "volume", .kind = Kind::Integer, .defaultNumber = 100, .minimum = 0,
+                .maximum = 100,
+                .comment = "Master volume, 0 to 100, over the game's own music, voice and effects volumes." },
+            { .table = "audio", .key = "device", .kind = Kind::Text, .defaultText = "",
+                .comment = "Output device, as named in the log; \"\": the system's default (and it follows the default)." },
+            { .table = "audio", .key = "mute_in_background", .kind = Kind::Bool,
+                .comment = "Silence the game while its window is not focused. true, false." },
+
+            { .table = "gamepad", .key = "dead_zone", .kind = Kind::Integer, .minimum = 0, .maximum = 50,
+                .comment = "Stick dead zone in percent of full deflection, 0 to 50, before the game's own." },
+
+            Key("a", Keys(SDL_SCANCODE_SPACE),
+                "One or two keys per pad input, by SDL's key names; \"\" leaves a slot empty. Alt+Enter is kept\n"
+                "for the window mode."),
+            Key("b", Keys(SDL_SCANCODE_LSHIFT)),
+            Key("x", Keys(SDL_SCANCODE_F)),
+            Key("y", Keys(SDL_SCANCODE_R)),
+            Key("start", Keys(SDL_SCANCODE_RETURN)),
+            Key("back", Keys(SDL_SCANCODE_BACKSPACE)),
+            Key("lb", Keys(SDL_SCANCODE_Q)),
+            Key("rb", Keys(SDL_SCANCODE_E)),
+            Key("ls", Keys(SDL_SCANCODE_TAB)),
+            Key("rs", Keys(SDL_SCANCODE_O)),
+            Key("lt", Keys(SDL_SCANCODE_Z)),
+            Key("rt", Keys(SDL_SCANCODE_C)),
+            Key("dpad_up", Keys(SDL_SCANCODE_UP)),
+            Key("dpad_down", Keys(SDL_SCANCODE_DOWN)),
+            Key("dpad_left", Keys(SDL_SCANCODE_LEFT)),
+            Key("dpad_right", Keys(SDL_SCANCODE_RIGHT)),
+            Key("left_stick_up", Keys(SDL_SCANCODE_W)),
+            Key("left_stick_down", Keys(SDL_SCANCODE_S)),
+            Key("left_stick_left", Keys(SDL_SCANCODE_A)),
+            Key("left_stick_right", Keys(SDL_SCANCODE_D)),
+            Key("right_stick_up", Keys(SDL_SCANCODE_I)),
+            Key("right_stick_down", Keys(SDL_SCANCODE_K)),
+            Key("right_stick_left", Keys(SDL_SCANCODE_J)),
+            Key("right_stick_right", Keys(SDL_SCANCODE_L)),
+
+            { .table = "game", .key = "language", .variable = "ROAN_LANGUAGE", .kind = Kind::Choice,
+                .apply = Apply::Restart, .choices = kLanguages,
+                .comment = "english, french (texts, voices, movies), spanish, italian, german (texts only).\n"
+                           "Applies at the next start. ROAN_LANGUAGE" },
         };
         static_assert(std::size(kOptions) == kCount);
         static_assert(std::size(kLanguages) == std::size(kXdkLanguages));
@@ -93,8 +188,10 @@ namespace settings
 
         struct Value
         {
-            int64_t number = 0; // Bool (0, 1), Rate (0: the game's), Choice (index)
+            int64_t number = 0; // every kind but Text: Bool 0/1, Rate (0 game, -1 display), Choice index, Keys packed
             std::string text;   // Text
+
+            bool operator==(const Value&) const = default;
         };
 
         using Values = std::array<Value, kCount>;
@@ -110,14 +207,16 @@ namespace settings
             return values;
         }
 
-        // Main thread, set by Load (stored, effective) and later by the menu (stored).
+        // Main thread, set by Load and by the setters.
         Values g_stored = Defaults();
         Values g_effective = Defaults();
         std::array<bool, kCount> g_overridden{};
         std::filesystem::path g_file;
-        toml::table g_document;   // the file as read: the keys this build does not know are kept from it
-        bool g_newer = false;     // the file has a higher version: never written
+        toml::table g_document;    // the file as read: the keys this build does not know are kept from it
+        bool g_newer = false;      // the file has a higher version: never written
         bool g_unreadable = false; // the file exists but could not be read: never written
+        bool g_changed = false;    // a setter changed a value since the last write
+        uint32_t (*g_displayRefresh)() = nullptr;
 
         std::string Name(const Option& option)
         {
@@ -161,15 +260,35 @@ namespace settings
             return out + "\"";
         }
 
+        uint16_t KeyAt(int64_t keys, int slot)
+        {
+            return uint16_t(keys >> (16 * slot));
+        }
+
+        std::string KeyName(uint16_t key)
+        {
+            return key == 0 ? "" : SDL_GetScancodeName(SDL_Scancode(key));
+        }
+
         // A value as written in the file (and in the log).
         std::string ValueText(const Option& option, const Value& value)
         {
             switch (option.kind)
             {
             case Kind::Bool: return value.number != 0 ? "true" : "false";
-            case Kind::Rate: return value.number == 0 ? "\"game\"" : std::to_string(value.number);
+            case Kind::Rate:
+                return value.number == 0 ? "\"game\"" : value.number == kDisplayRate ? "\"display\"" : std::to_string(value.number);
+            case Kind::Integer: return std::to_string(value.number);
+            case Kind::Position: return value.number == kCenter ? "\"center\"" : std::to_string(value.number);
             case Kind::Text: return Quote(value.text);
             case Kind::Choice: return Quote(option.choices[size_t(value.number)]);
+            case Kind::Keys:
+            {
+                std::string text = "[" + Quote(KeyName(KeyAt(value.number, 0)));
+                if (KeyAt(value.number, 1) != 0)
+                    text += ", " + Quote(KeyName(KeyAt(value.number, 1)));
+                return text + "]";
+            }
             }
             return {};
         }
@@ -202,7 +321,7 @@ namespace settings
         enum class Parsed
         {
             Ok,
-            Adjusted, // valid, but stored differently (a rate cut to kMaxRate): logged, the file rewritten
+            Adjusted, // valid, but stored differently (clamped): logged, the file rewritten
             Invalid,
         };
 
@@ -219,28 +338,55 @@ namespace settings
             return Parsed::Ok;
         }
 
+        Parsed IntegerFromNumber(const Option& option, int64_t number, Value& value)
+        {
+            int64_t clamped = std::clamp(number, option.minimum, option.maximum);
+            value.number = clamped;
+            if (clamped == number)
+                return Parsed::Ok;
+            Log("settings: %s %lld outside %lld to %lld, using %lld", Name(option).c_str(), (long long)number,
+                (long long)option.minimum, (long long)option.maximum, (long long)clamped);
+            return Parsed::Adjusted;
+        }
+
+        bool ParseInteger(std::string_view text, int64_t& number)
+        {
+            std::string digits(text);
+            char* end = nullptr;
+            number = std::strtoll(digits.c_str(), &end, 10);
+            return !digits.empty() && *end == '\0';
+        }
+
         // A value from text: the environment, and the strings of the file.
         Parsed FromText(const Option& option, std::string_view text, Value& value)
         {
+            int64_t number = 0;
             switch (option.kind)
             {
             case Kind::Bool:
                 value.number = text != "0" ? 1 : 0; // the variables' rule: 0 off, anything else on
                 return Parsed::Ok;
             case Kind::Rate:
-            {
                 if (Equal(text, "game"))
                 {
                     value.number = 0;
                     return Parsed::Ok;
                 }
-                std::string digits(text);
-                char* end = nullptr;
-                long long rate = std::strtoll(digits.c_str(), &end, 10);
-                if (digits.empty() || *end != '\0')
-                    return Parsed::Invalid;
-                return RateFromNumber(option, rate, value);
-            }
+                if (Equal(text, "display"))
+                {
+                    value.number = kDisplayRate;
+                    return Parsed::Ok;
+                }
+                return ParseInteger(text, number) ? RateFromNumber(option, number, value) : Parsed::Invalid;
+            case Kind::Position:
+                if (Equal(text, "center"))
+                {
+                    value.number = kCenter;
+                    return Parsed::Ok;
+                }
+                [[fallthrough]];
+            case Kind::Integer:
+                return ParseInteger(text, number) ? IntegerFromNumber(option, number, value) : Parsed::Invalid;
             case Kind::Text:
                 value.text = text;
                 return Parsed::Ok;
@@ -253,9 +399,37 @@ namespace settings
                         return Parsed::Ok;
                     }
                 }
+                if (option.alias != nullptr && Equal(text, option.alias))
+                {
+                    value.number = option.aliasIndex;
+                    return Parsed::Ok;
+                }
+                return Parsed::Invalid;
+            case Kind::Keys:
                 return Parsed::Invalid;
             }
             return Parsed::Invalid;
+        }
+
+        Parsed KeysFromArray(const toml::array& array, Value& value)
+        {
+            if (array.empty() || array.size() > 2)
+                return Parsed::Invalid;
+            int64_t keys = 0;
+            for (size_t i = 0; i < array.size(); i++)
+            {
+                const auto* name = array.get(i)->as_string();
+                if (name == nullptr)
+                    return Parsed::Invalid;
+                if (name->get().empty())
+                    continue;
+                SDL_Scancode key = SDL_GetScancodeFromName(name->get().c_str());
+                if (key == SDL_SCANCODE_UNKNOWN)
+                    return Parsed::Invalid;
+                keys |= int64_t(key) << (16 * i);
+            }
+            value.number = keys;
+            return Parsed::Ok;
         }
 
         // A value from the file.
@@ -273,9 +447,19 @@ namespace settings
             case Kind::Rate:
                 if (const auto* integer = node.as_integer())
                     return RateFromNumber(option, integer->get(), value);
-                if (const auto* string = node.as_string(); string != nullptr && Equal(string->get(), "game"))
+                // "game" or "display"; a number in a string is not accepted.
+                if (const auto* string = node.as_string(); string != nullptr &&
+                    (Equal(string->get(), "game") || Equal(string->get(), "display")))
+                    return FromText(option, string->get(), value);
+                return Parsed::Invalid;
+            case Kind::Integer:
+            case Kind::Position:
+                if (const auto* integer = node.as_integer())
+                    return IntegerFromNumber(option, integer->get(), value);
+                if (const auto* string = node.as_string(); string != nullptr && option.kind == Kind::Position &&
+                    Equal(string->get(), "center"))
                 {
-                    value.number = 0;
+                    value.number = kCenter;
                     return Parsed::Ok;
                 }
                 return Parsed::Invalid;
@@ -283,6 +467,10 @@ namespace settings
             case Kind::Choice:
                 if (const auto* string = node.as_string())
                     return FromText(option, string->get(), value);
+                return Parsed::Invalid;
+            case Kind::Keys:
+                if (const auto* array = node.as_array())
+                    return KeysFromArray(*array, value);
                 return Parsed::Invalid;
             }
             return Parsed::Invalid;
@@ -423,7 +611,7 @@ namespace settings
                     const Option& option = kOptions[j];
                     if (std::string_view(option.table) != table)
                         continue;
-                    std::string_view comment = option.comment;
+                    std::string_view comment = option.comment != nullptr ? option.comment : "";
                     while (!comment.empty())
                     {
                         size_t end = comment.find('\n');
@@ -456,6 +644,16 @@ namespace settings
                 out += "\n" + Format(rest);
             return out;
         }
+
+        // A setter: the stored and the effective value (the window's options have no variable).
+        void Set(Id id, const Value& value)
+        {
+            if (g_stored[id] == value)
+                return;
+            g_stored[id] = value;
+            g_effective[id] = value;
+            g_changed = true;
+        }
     }
 
     void Load(const std::filesystem::path& file)
@@ -466,6 +664,7 @@ namespace settings
         g_document = {};
         g_newer = false;
         g_unreadable = false;
+        g_changed = false;
         std::string path = host::PathText(file);
 
         bool rewrite = false;
@@ -512,7 +711,7 @@ namespace settings
         for (size_t i = 0; i < kCount; i++)
         {
             const Option& option = kOptions[i];
-            const char* variable = std::getenv(option.variable);
+            const char* variable = option.variable != nullptr ? std::getenv(option.variable) : nullptr;
             if (variable == nullptr)
                 continue;
             Value value = g_effective[i];
@@ -525,15 +724,19 @@ namespace settings
             g_overridden[i] = true;
         }
 
+        // The values not at their defaults, so the line stays short.
+        Values defaults = Defaults();
         std::string summary;
         for (size_t i = 0; i < kCount; i++)
         {
+            if (g_effective[i] == defaults[i] && !g_overridden[i])
+                continue;
             summary += summary.empty() ? "" : ", ";
             summary += Name(kOptions[i]) + " = " + ValueText(kOptions[i], g_effective[i]);
             if (g_overridden[i])
                 summary += std::string(" (") + kOptions[i].variable + ")";
         }
-        Log("settings: %s", summary.c_str());
+        Log("settings: %s", summary.empty() ? "all at their defaults" : (summary + "; the rest at their defaults").c_str());
 
         if (rewrite && !g_newer && !g_unreadable)
             Save();
@@ -570,8 +773,19 @@ namespace settings
             Log("settings: error: cannot replace %s (error %lu)", path.c_str(), GetLastError());
             return false;
         }
+        g_changed = false;
         Log("settings: wrote %s", path.c_str());
         return true;
+    }
+
+    bool SaveIfChanged()
+    {
+        return g_changed && Save();
+    }
+
+    void SetDisplayRefreshSource(uint32_t (*millihertz)())
+    {
+        g_displayRefresh = millihertz;
     }
 
     bool VSync()
@@ -581,12 +795,86 @@ namespace settings
 
     uint32_t FrameRate()
     {
-        return uint32_t(g_effective[kFrameRate].number);
+        int64_t rate = g_effective[kFrameRate].number;
+        if (rate != kDisplayRate)
+            return uint32_t(rate);
+        uint32_t hertz = g_displayRefresh != nullptr ? (g_displayRefresh() + 500) / 1000 : 0;
+        return hertz < kMinRate ? 0 : std::min<uint32_t>(hertz, kMaxRate);
     }
 
     const std::string& Adapter()
     {
         return g_effective[kAdapter].text;
+    }
+
+    WindowMode GetWindowMode()
+    {
+        return WindowMode(g_effective[kWindowMode].number);
+    }
+
+    WindowRect GetWindowRect()
+    {
+        WindowRect rect;
+        int64_t x = g_effective[kWindowX].number, y = g_effective[kWindowY].number;
+        rect.centerX = x == kCenter;
+        rect.centerY = y == kCenter;
+        rect.x = rect.centerX ? 0 : int32_t(x);
+        rect.y = rect.centerY ? 0 : int32_t(y);
+        rect.width = int32_t(g_effective[kWindowWidth].number);
+        rect.height = int32_t(g_effective[kWindowHeight].number);
+        return rect;
+    }
+
+    bool WindowMaximized()
+    {
+        return g_effective[kWindowMaximized].number != 0;
+    }
+
+    void SetWindowMode(WindowMode mode)
+    {
+        Set(kWindowMode, Value{ int64_t(mode) });
+    }
+
+    void SetWindowRect(int32_t x, int32_t y, int32_t width, int32_t height)
+    {
+        auto clamp = [](Id id, int64_t number) {
+            return Value{ std::clamp(number, kOptions[id].minimum, kOptions[id].maximum) };
+        };
+        Set(kWindowX, clamp(kWindowX, x));
+        Set(kWindowY, clamp(kWindowY, y));
+        Set(kWindowWidth, clamp(kWindowWidth, width));
+        Set(kWindowHeight, clamp(kWindowHeight, height));
+    }
+
+    void SetWindowMaximized(bool maximized)
+    {
+        Set(kWindowMaximized, Value{ maximized ? 1 : 0 });
+    }
+
+    uint32_t Volume()
+    {
+        return uint32_t(g_effective[kVolume].number);
+    }
+
+    const std::string& AudioDevice()
+    {
+        return g_effective[kAudioDevice].text;
+    }
+
+    bool MuteInBackground()
+    {
+        return g_effective[kMuteInBackground].number != 0;
+    }
+
+    uint32_t DeadZone()
+    {
+        return uint32_t(g_effective[kDeadZone].number);
+    }
+
+    std::array<uint16_t, 2> KeyboardKeys(PadInput input)
+    {
+        int64_t keys = g_effective[kKeyboardFirst + size_t(input)].number;
+        return { KeyAt(keys, 0), KeyAt(keys, 1) };
     }
 
     Language GameLanguage()

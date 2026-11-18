@@ -1,12 +1,15 @@
-// Audio output: guest driver frames to the default SDL 3 playback device, or to a clock without one.
+// Audio output: guest driver frames to an SDL 3 playback device, or to a clock without one.
 
 #include "host/audio.h"
 
 #include "log.h"
+#include "settings/settings.h"
 
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <atomic>
+#include <string>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -27,6 +30,10 @@ namespace host
         constexpr int64_t kDeviceStallMs = 200;
 
         SDL_AudioStream* g_stream = nullptr;
+        // g_stream once opened, for the gain set from the main thread.
+        std::atomic<SDL_AudioStream*> g_gainStream{ nullptr };
+        // The window has the focus (SDL reports it when the window is created).
+        std::atomic<bool> g_focused{ true };
         uint32_t g_targetFrames = kMinLatencyFrames;
 
         // Wake-ups from SDL's device thread. Lock order: SDL's stream lock, then g_mutex; the
@@ -73,6 +80,51 @@ namespace host
             return bytes > 0 ? uint32_t(bytes) / kFrameBytes : 0;
         }
 
+        // The master volume (squared, so 50 sounds about half as loud), and silence while unfocused
+        // with audio.mute_in_background. Any thread: SDL takes the stream's lock.
+        void ApplyGain()
+        {
+            SDL_AudioStream* stream = g_gainStream.load();
+            if (stream == nullptr)
+                return;
+            float volume = float(settings::Volume()) / 100.0f;
+            float gain = settings::MuteInBackground() && !g_focused.load() ? 0.0f : volume * volume;
+            if (!SDL_SetAudioStreamGain(stream, gain))
+                LOG_ONCE("error: SDL_SetAudioStreamGain failed: %s", SDL_GetError());
+        }
+
+        // The playback device named audio.device, logging the names of all of them; the default
+        // device when the setting is empty or names none.
+        SDL_AudioDeviceID ChooseDevice()
+        {
+            const std::string& wanted = settings::AudioDevice();
+            SDL_AudioDeviceID chosen = SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
+            int count = 0;
+            SDL_AudioDeviceID* devices = SDL_GetAudioPlaybackDevices(&count);
+            std::string names;
+            for (int i = 0; i < count; i++)
+            {
+                const char* name = SDL_GetAudioDeviceName(devices[i]);
+                if (name == nullptr)
+                    continue;
+                names += names.empty() ? "\"" : ", \"";
+                names += name;
+                names += "\"";
+                if (!wanted.empty() && chosen == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK && wanted == name)
+                    chosen = devices[i];
+            }
+            SDL_free(devices);
+            Log("audio: devices: %s", names.empty() ? "none listed" : names.c_str());
+            if (!wanted.empty())
+            {
+                if (chosen != SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK)
+                    Log("audio: using \"%s\"", wanted.c_str());
+                else
+                    Log("audio: no device named \"%s\", using the default", wanted.c_str());
+            }
+            return chosen;
+        }
+
         void SleepTicks(int64_t ticks)
         {
             LARGE_INTEGER due;
@@ -97,7 +149,7 @@ namespace host
             return;
         }
         SDL_AudioSpec spec{ SDL_AUDIO_F32, int(kAudioChannels), int(kAudioRate) };
-        g_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, OnDevicePull, nullptr);
+        g_stream = SDL_OpenAudioDeviceStream(ChooseDevice(), &spec, OnDevicePull, nullptr);
         if (g_stream == nullptr)
         {
             Log("error: no audio device, running silent: %s", SDL_GetError());
@@ -116,6 +168,9 @@ namespace host
         }
         Log("audio: device %d channels at %d Hz, %d-frame buffer, %u frames queued", deviceSpec.channels,
             deviceSpec.freq, deviceFrames, g_targetFrames);
+
+        g_gainStream = g_stream;
+        ApplyGain();
 
         {
             std::lock_guard lock(g_mutex);
@@ -173,5 +228,11 @@ namespace host
         int64_t target = FramesToTicks(g_targetFrames);
         for (int64_t ahead = g_clockEnd - Now(); ahead >= target; ahead = g_clockEnd - Now())
             SleepTicks(ahead - target + 1);
+    }
+
+    void SetAudioFocus(bool focused)
+    {
+        g_focused = focused;
+        ApplyGain();
     }
 }
