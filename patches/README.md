@@ -12,6 +12,8 @@ git submodule update --init --recursive
 ./patches/apply.ps1 -Revert    # undo, in reverse order
 ```
 
+On Linux, `./patches/apply.sh` and `./patches/apply.sh --revert` do the same.
+
 Patches are applied in order, so the script takes the last patch of a folder that reverses cleanly as applied
 together with every patch before it (an earlier patch checked on its own can fail to reverse when a later one
 changed the lines around it).

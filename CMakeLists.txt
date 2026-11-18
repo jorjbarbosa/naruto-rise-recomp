@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(roan-xenon LANGUAGES C CXX)
 
 if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    message(FATAL_ERROR "roan-xenon must be built with clang-cl; use scripts/build.ps1")
+    message(FATAL_ERROR "roan-xenon must be built with clang (clang-cl on Windows); use scripts/build.ps1")
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -24,7 +24,15 @@ target_include_directories(ppc_common INTERFACE
     "${CMAKE_SOURCE_DIR}/src/ppc"
     "${XENON_RECOMP_DIR}/thirdparty/simde")
 target_compile_definitions(ppc_common INTERFACE PPC_INCLUDE_DETAIL NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
-target_compile_options(ppc_common INTERFACE /arch:AVX)
+# The same CPU baseline in the spelling of each driver: clang-cl on Windows, clang elsewhere. clang-cl
+# turns /arch:AVX into the Sandy Bridge feature set with generic tuning. It also does not assume
+# strict aliasing, and that is what the generated code and the accessors of guest memory have always
+# been compiled and tested with, so clang is told the same.
+if(MSVC)
+    target_compile_options(ppc_common INTERFACE /arch:AVX)
+else()
+    target_compile_options(ppc_common INTERFACE -march=sandybridge -mtune=generic -fno-strict-aliasing)
+endif()
 
 # add_ppc_module(<name> <generated dir> <guest file name> <mapping table>): an object library with the
 # recompiled code of one guest module, plus its PPCModuleInfo (g_ppcModule_<name>, see ppc_module.h),
@@ -35,7 +43,7 @@ set(PPC_SHARED_HEADERS "")
 function(add_ppc_module name dir file mappings)
     file(GLOB sources CONFIGURE_DEPENDS "${dir}/*.cpp")
     if(NOT sources)
-        message(FATAL_ERROR "No generated code in ${dir}; run scripts/recompile.ps1 first")
+        message(FATAL_ERROR "No generated code in ${dir}; run scripts/recompile.ps1 (recompile.sh on Linux) first")
     endif()
     set(info "${CMAKE_BINARY_DIR}/generated/ppc_module_${name}.cpp")
     file(CONFIGURE OUTPUT "${info}" CONTENT [=[
@@ -66,28 +74,34 @@ set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory("${CMAKE_SOURCE_DIR}/thirdparty/SDL" sdl EXCLUDE_FROM_ALL)
 
-# Plume with its D3D12 and Vulkan backends (the renderer picks one at start, gpu/settings.h). The
-# Vulkan backend loads the Vulkan library at run time through volk, so nothing links against it.
+# Plume with its Vulkan backend and, on Windows, its D3D12 one (the renderer picks one at start,
+# gpu/settings.h). The Vulkan backend loads the Vulkan library at run time through volk, so nothing
+# links against it. Off Windows the Vulkan surface comes from the SDL window, X11 or Wayland.
 set(PLUME_DIR "${CMAKE_SOURCE_DIR}/thirdparty/plume")
-add_library(plume STATIC
-    "${PLUME_DIR}/plume_d3d12.cpp"
-    "${PLUME_DIR}/plume_vulkan.cpp"
-    "${PLUME_DIR}/contrib/D3D12MemoryAllocator/src/D3D12MemAlloc.cpp")
+add_library(plume STATIC "${PLUME_DIR}/plume_vulkan.cpp")
 target_include_directories(plume PUBLIC "${PLUME_DIR}"
-    "${PLUME_DIR}/contrib/D3D12MemoryAllocator/include"
     "${PLUME_DIR}/contrib/volk"
     "${PLUME_DIR}/contrib/Vulkan-Headers/include"
     "${PLUME_DIR}/contrib/VulkanMemoryAllocator/include")
-target_compile_definitions(plume PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
 target_compile_options(plume PRIVATE -Wno-everything)
-target_link_libraries(plume PUBLIC d3d12 dxgi dxguid)
+if(WIN32)
+    target_sources(plume PRIVATE
+        "${PLUME_DIR}/plume_d3d12.cpp"
+        "${PLUME_DIR}/contrib/D3D12MemoryAllocator/src/D3D12MemAlloc.cpp")
+    target_include_directories(plume PUBLIC "${PLUME_DIR}/contrib/D3D12MemoryAllocator/include")
+    target_compile_definitions(plume PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(plume PUBLIC d3d12 dxgi dxguid)
+else()
+    target_compile_definitions(plume PUBLIC PLUME_SDL3_VULKAN_ENABLED)
+    target_link_libraries(plume PUBLIC SDL3::Headers)
+endif()
 
-# The shaders translated by XenosRecomp (scripts/recompile.ps1), with the zstd decompressor and the
-# xxHash header of its submodule.
+# The shaders translated by XenosRecomp (scripts/recompile.ps1, recompile.sh on Linux), with the zstd
+# decompressor and the xxHash header of its submodule.
 set(XENOS_THIRDPARTY_DIR "${CMAKE_SOURCE_DIR}/tools/XenosRecomp/thirdparty")
 set(SHADER_CACHE "${CMAKE_SOURCE_DIR}/build/shaders/shader_cache.cpp")
 if(NOT EXISTS "${SHADER_CACHE}")
-    message(FATAL_ERROR "No shader cache at ${SHADER_CACHE}; run scripts/recompile.ps1 first")
+    message(FATAL_ERROR "No shader cache at ${SHADER_CACHE}; run scripts/recompile.ps1 (recompile.sh on Linux) first")
 endif()
 add_library(shader_cache OBJECT "${SHADER_CACHE}")
 target_include_directories(shader_cache PRIVATE "${CMAKE_SOURCE_DIR}/src/gpu/renderer")
