@@ -5,6 +5,7 @@
 #include "game/addresses.h"
 #include "game/interpolation/diagnostics.h"
 #include "game/interpolation/world.h"
+#include "host/debug.h"
 #include "host/window.h"
 #include "kernel/kernel.h"
 #include "log.h"
@@ -19,18 +20,14 @@
 #include <map>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <vector>
-#include <windows.h>
-#include <dbghelp.h>
-#include <tlhelp32.h>
 
 namespace game::interpolation::watch
 {
     namespace
     {
         constexpr uint32_t kSteps = 8;          // main steps watched per F8 press
-        constexpr uint32_t kSlots = 4;          // the debug registers 0 to 3
+        constexpr uint32_t kSlots = host::kDataBreakpoints;
         constexpr uint32_t kCounterOffset = jade::view::kRenderingCounter;
         constexpr int kStackDepth = 10;
 
@@ -63,7 +60,7 @@ namespace game::interpolation::watch
         std::array<std::atomic<uint8_t*>, kSlots> g_host{};
         std::atomic<bool> g_inBlock{ false };
         std::atomic<uint32_t> g_step{ 0 };
-        std::mutex g_mutex; // g_sites, g_last and dbghelp
+        std::mutex g_mutex; // g_sites, g_last and the symbol engine (host::WalkStack, FormatSymbol)
         std::map<std::pair<uint32_t, uint64_t>, Site> g_sites; // by slot and instruction
         std::array<uint32_t, kSlots> g_last{};
         // Set while the handler runs on this thread: its own read of a word traps again.
@@ -73,36 +70,17 @@ namespace game::interpolation::watch
         {
             uint32_t value;
             std::memcpy(&value, host, 4);
-            return _byteswap_ulong(value);
+            return __builtin_bswap32(value);
         }
 
-        void CaptureStack(const CONTEXT& faulting, uint64_t* stack)
-        {
-            CONTEXT context = faulting;
-            STACKFRAME64 frame{};
-            frame.AddrPC.Offset = context.Rip;
-            frame.AddrPC.Mode = AddrModeFlat;
-            frame.AddrFrame.Offset = context.Rbp;
-            frame.AddrFrame.Mode = AddrModeFlat;
-            frame.AddrStack.Offset = context.Rsp;
-            frame.AddrStack.Mode = AddrModeFlat;
-            for (int i = 0; i < kStackDepth; i++)
-            {
-                if (!StackWalk64(IMAGE_FILE_MACHINE_AMD64, GetCurrentProcess(), GetCurrentThread(), &frame, &context,
-                        nullptr, SymFunctionTableAccess64, SymGetModuleBase64, nullptr) || frame.AddrPC.Offset == 0)
-                    break;
-                stack[i] = frame.AddrPC.Offset;
-            }
-        }
-
-        // Counts one access of slot's word at the instruction before context.Rip. A value different
-        // from the last one seen is a write.
-        void Record(uint32_t slot, const CONTEXT& context, uint32_t value, bool inBlock)
+        // Counts one access of slot's word at the instruction before context.instruction. A value
+        // different from the last one seen is a write.
+        void Record(uint32_t slot, const host::MachineContext& context, uint32_t value, bool inBlock)
         {
             std::lock_guard lock(g_mutex);
             bool write = value != g_last[slot];
             g_last[slot] = value;
-            auto [it, added] = g_sites.try_emplace({ slot, context.Rip });
+            auto [it, added] = g_sites.try_emplace({ slot, context.instruction });
             Site& site = it->second;
             if (added)
             {
@@ -110,110 +88,43 @@ namespace game::interpolation::watch
                 site.thread = thread == nullptr ? "host" : thread->name.empty() ? std::to_string(thread->id) : thread->name;
                 site.firstStep = g_step.load();
                 site.firstValue = value;
-                CaptureStack(context, site.stack);
+                host::WalkStack(context, site.stack, kStackDepth);
             }
             uint64_t& count = inBlock ? (write ? site.writesInBlock : site.readsInBlock)
                                       : (write ? site.writesOutside : site.readsOutside);
             count++;
         }
 
-        // The data breakpoints' single-step trap. Counts the access and continues; any other exception
-        // goes on to the next handler.
-        LONG CALLBACK OnTrap(EXCEPTION_POINTERS* info)
+        // A data breakpoint hit: counts the access and lets the thread go on.
+        void OnTrap(uint32_t hits, const host::MachineContext& context)
         {
-            if (info->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP)
-                return EXCEPTION_CONTINUE_SEARCH;
-            CONTEXT* context = info->ContextRecord;
-            DWORD64 hits = context->Dr6 & 0xF;
-            if (hits == 0)
-                return EXCEPTION_CONTINUE_SEARCH;
-            context->Dr6 = 0;
             // A trap that was pending when the watch ended, or the handler's own read below.
             if (t_inHandler)
-                return EXCEPTION_CONTINUE_EXECUTION;
+                return;
             t_inHandler = true;
             for (uint32_t slot = 0; slot < kSlots; slot++)
             {
                 uint8_t* host = g_host[slot].load();
-                if ((hits & (1ull << slot)) != 0 && host != nullptr)
-                    Record(slot, *context, LoadWord(host), g_inBlock.load());
+                if ((hits & (1u << slot)) != 0 && host != nullptr)
+                    Record(slot, context, LoadWord(host), g_inBlock.load());
             }
             t_inHandler = false;
-            return EXCEPTION_CONTINUE_EXECUTION;
         }
 
-        // Sets (an address not null) or clears debug registers 0 to 3 on every thread of the process. Runs
-        // on a helper thread, since a thread cannot change its own debug registers; each thread is
-        // suspended only while its context is set, and nothing is allocated meanwhile.
+        // Sets (an address not null) or clears the data breakpoints on every thread of the process.
         void SetBreakpoints(const std::array<void*, kSlots>& addresses)
         {
-            std::thread helper([addresses] {
-                DWORD self = GetCurrentThreadId();
-                DWORD process = GetCurrentProcessId();
-                std::vector<DWORD> threads;
-                HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-                if (snapshot == INVALID_HANDLE_VALUE)
-                    return;
-                THREADENTRY32 entry{ sizeof(entry) };
-                for (BOOL more = Thread32First(snapshot, &entry); more; more = Thread32Next(snapshot, &entry))
-                {
-                    if (entry.th32OwnerProcessID == process && entry.th32ThreadID != self)
-                        threads.push_back(entry.th32ThreadID);
-                }
-                CloseHandle(snapshot);
-
-                // Per slot i: Li (bit 2i), R/Wi = 11 (reads and writes, bits 16+4i..17+4i), LENi = 11 (4
-                // bytes, bits 18+4i..19+4i).
-                DWORD64 mask = 0, bits = 0;
-                for (uint32_t i = 0; i < kSlots; i++)
-                {
-                    mask |= (DWORD64(3) << (2 * i)) | (DWORD64(0xF) << (16 + 4 * i));
-                    if (addresses[i] != nullptr)
-                        bits |= (DWORD64(1) << (2 * i)) | (DWORD64(0xF) << (16 + 4 * i));
-                }
-                uint32_t done = 0;
-                for (DWORD id : threads)
-                {
-                    HANDLE thread = OpenThread(THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_SUSPEND_RESUME, FALSE, id);
-                    if (thread == nullptr)
-                        continue;
-                    if (SuspendThread(thread) != DWORD(-1))
-                    {
-                        CONTEXT context{};
-                        context.ContextFlags = CONTEXT_DEBUG_REGISTERS;
-                        if (GetThreadContext(thread, &context))
-                        {
-                            context.Dr0 = reinterpret_cast<DWORD64>(addresses[0]);
-                            context.Dr1 = reinterpret_cast<DWORD64>(addresses[1]);
-                            context.Dr2 = reinterpret_cast<DWORD64>(addresses[2]);
-                            context.Dr3 = reinterpret_cast<DWORD64>(addresses[3]);
-                            context.Dr7 = (context.Dr7 & ~mask) | bits;
-                            context.Dr6 = 0;
-                            if (SetThreadContext(thread, &context))
-                                done++;
-                        }
-                        ResumeThread(thread);
-                    }
-                    CloseHandle(thread);
-                }
-                Log("watch: %s the breakpoints on %u of %zu threads", bits != 0 ? "set" : "cleared", done,
-                    threads.size());
-            });
-            helper.join();
+            uint32_t set = 0, threads = 0;
+            if (!host::SetDataBreakpoints(addresses, set, threads))
+                return;
+            bool any = std::any_of(addresses.begin(), addresses.end(), [](void* a) { return a != nullptr; });
+            Log("watch: %s the breakpoints on %u of %u threads", any ? "set" : "cleared", set, threads);
         }
 
         std::string Symbol(uint64_t address)
         {
-            alignas(SYMBOL_INFO) char buffer[sizeof(SYMBOL_INFO) + 256];
-            auto* symbol = reinterpret_cast<SYMBOL_INFO*>(buffer);
-            symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
-            symbol->MaxNameLen = 255;
-            DWORD64 displacement = 0;
             char text[320];
-            if (SymFromAddr(GetCurrentProcess(), address, &displacement, symbol))
-                std::snprintf(text, sizeof(text), "%s+0x%llX", symbol->Name, (unsigned long long)displacement);
-            else
-                std::snprintf(text, sizeof(text), "%016llX", (unsigned long long)address);
+            host::FormatSymbol(address, text, sizeof(text));
             return text;
         }
 
@@ -282,7 +193,7 @@ namespace game::interpolation::watch
                 parse("ROAN_DATA_WATCH_OBJECT", g_objectOffsets, true);
                 if (g_objectOffsets.size() > kSlots - std::min<size_t>(g_fixedAddresses.size(), kSlots))
                     g_objectOffsets.resize(kSlots - std::min<size_t>(g_fixedAddresses.size(), kSlots));
-                AddVectoredExceptionHandler(1, OnTrap);
+                host::InstallDataBreakpointHandler(OnTrap);
                 g_presses = host::DiagnosticKeyPresses();
                 if (!g_fixedAddresses.empty() || !g_objectOffsets.empty())
                     Log("watch: armed, press F8 in the game window to watch %zu words for %u main steps",

@@ -6,6 +6,7 @@
 
 #include "apu/xma.h"
 #include "gpu/replay.h"
+#include "host/debug.h"
 #include "host/input.h"
 #include "host/paths.h"
 #include "host/thread.h"
@@ -13,9 +14,8 @@
 #include "kernel/kernel.h"
 #include "loader.h"
 
+#include <cstdlib>
 #include <filesystem>
-#include <windows.h>
-#include <dbghelp.h>
 
 PPC_EXTERN_FUNC(_xstart);
 
@@ -23,53 +23,32 @@ namespace fs = std::filesystem;
 
 namespace
 {
-    // Prints the host stack with symbol names. Recompiled functions are named after their guest
-    // address (__imp__sub_XXXXXXXX), so this is also the guest call stack.
-    void PrintStack(CONTEXT* context)
-    {
-        HANDLE process = GetCurrentProcess();
-        HANDLE thread = GetCurrentThread();
-        STACKFRAME64 frame{};
-        frame.AddrPC.Offset = context->Rip;
-        frame.AddrPC.Mode = AddrModeFlat;
-        frame.AddrFrame.Offset = context->Rbp;
-        frame.AddrFrame.Mode = AddrModeFlat;
-        frame.AddrStack.Offset = context->Rsp;
-        frame.AddrStack.Mode = AddrModeFlat;
+    constexpr int kCrashFrames = 40;
 
-        alignas(SYMBOL_INFO) char buffer[sizeof(SYMBOL_INFO) + 256];
-        auto* symbol = reinterpret_cast<SYMBOL_INFO*>(buffer);
-        for (int i = 0; i < 40; i++)
-        {
-            if (!StackWalk64(IMAGE_FILE_MACHINE_AMD64, process, thread, &frame, context, nullptr,
-                    SymFunctionTableAccess64, SymGetModuleBase64, nullptr) || frame.AddrPC.Offset == 0)
-                break;
-            symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
-            symbol->MaxNameLen = 255;
-            DWORD64 displacement = 0;
-            if (SymFromAddr(process, frame.AddrPC.Offset, &displacement, symbol))
-                Log("  #%-2d %s+0x%llX", i, symbol->Name, (unsigned long long)displacement);
-            else
-                Log("  #%-2d %016llX", i, (unsigned long long)frame.AddrPC.Offset);
-        }
-    }
-
-    LONG WINAPI CrashHandler(EXCEPTION_POINTERS* info)
+    // Logs the crash, the guest thread it happened on and the host stack with symbols (also the guest
+    // call stack), then the import summary, and ends the process.
+    void OnCrash(const host::Crash& crash)
     {
-        auto* record = info->ExceptionRecord;
         auto* thread = kernel::CurrentThread();
-        Log("crash: exception %08lX at %p (guest thread %u%s%s)", record->ExceptionCode, record->ExceptionAddress,
-            thread ? thread->id : 0, thread && !thread->name.empty() ? ", " : "", thread ? thread->name.c_str() : "");
-        if (record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION)
+        Log("crash: %s at %p (guest thread %u%s%s)", crash.description, crash.address, thread ? thread->id : 0,
+            thread && !thread->name.empty() ? ", " : "", thread ? thread->name.c_str() : "");
+        if (crash.memoryFault)
         {
-            auto* address = reinterpret_cast<uint8_t*>(record->ExceptionInformation[1]);
-            const char* access = record->ExceptionInformation[0] == 1 ? "write" : "read";
+            auto* address = static_cast<const uint8_t*>(crash.data);
+            const char* access = crash.write ? "write" : "read";
             if (address >= mem::g_base && address < mem::g_base + mem::kSize * 2)
                 Log("crash: %s at guest address %08llX", access, (unsigned long long)(address - mem::g_base));
             else
                 Log("crash: %s at host address %p", access, address);
         }
-        PrintStack(info->ContextRecord);
+        uint64_t frames[kCrashFrames];
+        int count = host::WalkCrashStack(crash, frames, kCrashFrames);
+        char symbol[320];
+        for (int i = 0; i < count; i++)
+        {
+            host::FormatSymbol(frames[i], symbol, sizeof(symbol));
+            Log("  #%-2d %s", i, symbol);
+        }
         kernel::PrintImportSummary();
         std::_Exit(1);
     }
@@ -100,9 +79,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
-    SymInitialize(GetCurrentProcess(), nullptr, TRUE);
-    SetUnhandledExceptionFilter(CrashHandler);
+    host::InstallCrashHandler(OnCrash);
 
     // A recorded frame drawn instead of the game (gpu/replay.h).
     if (const char* replay = getenv("ROAN_REPLAY"))
