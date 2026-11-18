@@ -123,6 +123,7 @@ namespace gpu
         }
         // A quad of BeginVertices still waiting for its vertices goes before anything else posted.
         Settings settings = Settings::FromEnvironment();
+        settings.recordFrames = guest::CompareRecordsFrames();
         std::filesystem::path executable = host::ExecutableDirectory();
         if (!executable.empty())
             settings.SetCacheDirectory(executable / "cache");

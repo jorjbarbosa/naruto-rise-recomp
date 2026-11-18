@@ -81,6 +81,8 @@ namespace gpu::guest
                         harness.records.push_back(frame);
                 std::sort(harness.records.begin(), harness.records.end());
             }
+            if (frames != nullptr && harness.records.empty())
+                Log("compare: ROAN_RECORD_FRAMES needs ROAN_RECORD_DIR and a frame above 1; nothing is recorded");
             harness.enabled = !harness.keys.empty() || !harness.records.empty();
             if (harness.enabled)
                 Log("compare: %zu scripted keys, %zu frames to record", harness.keys.size(), harness.records.size());
@@ -92,6 +94,11 @@ namespace gpu::guest
             static Harness harness = ReadEnvironment();
             return harness;
         }
+    }
+
+    bool CompareRecordsFrames()
+    {
+        return !State().records.empty();
     }
 
     void EndCompareFrame(Renderer* renderer)

@@ -5,6 +5,7 @@
 
 #include "gpu/renderer/backend.h"
 #include "gpu/renderer/targets.h"
+#include "host/paths.h"
 #include "log.h"
 
 
@@ -219,17 +220,7 @@ namespace gpu
 
     void Pipelines::LoadCache()
     {
-        std::vector<uint8_t> file;
-        if (std::FILE* stream = _wfopen(cacheFile_.c_str(), L"rb"))
-        {
-            std::fseek(stream, 0, SEEK_END);
-            long size = std::ftell(stream);
-            std::fseek(stream, 0, SEEK_SET);
-            file.resize(size > 0 ? size_t(size) : 0);
-            if (!file.empty() && std::fread(file.data(), 1, file.size(), stream) != file.size())
-                file.clear();
-            std::fclose(stream);
-        }
+        std::vector<uint8_t> file = host::ReadWholeFile(cacheFile_);
         if (LoadPipelineCache(device_, file, cache_.Hash()))
             loadedCache_ = std::move(file);
     }

@@ -1,6 +1,7 @@
 // Frame recordings: what the recorder keeps while the game runs, and the file format.
 
 #include "gpu/renderer/recording.h"
+#include "host/paths.h"
 
 #include "log.h"
 
@@ -434,17 +435,7 @@ namespace gpu
 
     bool ReadRecordedFrame(const std::filesystem::path& path, RecordedFrame& frame)
     {
-        std::vector<uint8_t> data;
-        if (std::FILE* file = _wfopen(path.c_str(), L"rb"))
-        {
-            std::fseek(file, 0, SEEK_END);
-            long long size = _ftelli64(file);
-            std::fseek(file, 0, SEEK_SET);
-            data.resize(size > 0 ? size_t(size) : 0);
-            if (std::fread(data.data(), 1, data.size(), file) != data.size())
-                data.clear();
-            std::fclose(file);
-        }
+        std::vector<uint8_t> data = host::ReadWholeFile(path);
         Reader in(data);
         uint32_t magic = 0, version = 0, sizeCount = 0;
         in.Pod(magic);

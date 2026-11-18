@@ -4,6 +4,7 @@
 
 #include "log.h"
 
+#include <cstdio>
 #include <windows.h>
 
 namespace host
@@ -29,5 +30,25 @@ namespace host
         std::string text(size_t(size), '\0');
         WideCharToMultiByte(CP_UTF8, 0, wide.data(), int(wide.size()), text.data(), size, nullptr, nullptr);
         return text;
+    }
+
+    std::vector<uint8_t> ReadWholeFile(const std::filesystem::path& path)
+    {
+        std::vector<uint8_t> data;
+        std::FILE* file = _wfopen(path.c_str(), L"rb");
+        if (file == nullptr)
+            return data;
+        if (_fseeki64(file, 0, SEEK_END) == 0)
+        {
+            long long size = _ftelli64(file);
+            if (size > 0 && _fseeki64(file, 0, SEEK_SET) == 0)
+            {
+                data.resize(size_t(size));
+                if (std::fread(data.data(), 1, data.size(), file) != data.size())
+                    data.clear();
+            }
+        }
+        std::fclose(file);
+        return data;
     }
 }

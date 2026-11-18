@@ -22,4 +22,8 @@ namespace gpu::guest
     // A frame was presented: presses and lets go of the script's keys, and starts or ends the frame
     // recordings.
     void EndCompareFrame(Renderer* renderer);
+
+    // Whether the run records frames, so that the renderer must keep the uploads a recording starts
+    // from (Settings::recordFrames). Any thread.
+    bool CompareRecordsFrames();
 }
