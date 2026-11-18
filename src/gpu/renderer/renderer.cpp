@@ -10,6 +10,7 @@
 #include "gpu/renderer/draws.h"
 #include "gpu/renderer/passes.h"
 #include "gpu/renderer/presenter.h"
+#include "gpu/renderer/recording.h"
 #include "gpu/renderer/targets.h"
 #include "gpu/renderer/textures.h"
 #include "gpu/settings.h"
@@ -146,6 +147,7 @@ namespace gpu
         std::unique_ptr<Buffers> buffers;
         std::unique_ptr<Draws> draws;
         std::unique_ptr<Presenter> presenter;
+        std::unique_ptr<FrameRecorder> recorder; // Settings::recordFrames
         Renderer::BeforePost beforePost;
 
         // Presents: numbered as they are posted, and the last one the owner handed to the swap chain.
@@ -240,6 +242,8 @@ namespace gpu
     {
         auto impl = std::make_unique<Impl>();
         impl->beforePost = std::move(beforePost);
+        if (settings.recordFrames)
+            impl->recorder = std::make_unique<FrameRecorder>();
         impl->api = CreateInterface(settings);
         if (!impl->api)
             return nullptr;
@@ -284,11 +288,15 @@ namespace gpu
 
     void Renderer::Clear(const ClearOp& op)
     {
+        if (impl_->recorder)
+            impl_->recorder->Clear(op);
         impl_->Post([impl = impl_.get(), op] { impl->targets->Clear(op); });
     }
 
     void Renderer::Resolve(const ResolveOp& op)
     {
+        if (impl_->recorder)
+            impl_->recorder->Resolve(op);
         impl_->Post([impl = impl_.get(), op] { impl->targets->Resolve(op); });
     }
 
@@ -299,6 +307,9 @@ namespace gpu
 
     void Renderer::Draw(std::unique_ptr<DrawOp> op)
     {
+        // The ranges are the poster's until the owner draws the draw, so reading them here is safe.
+        if (impl_->recorder)
+            impl_->recorder->Draw(*op, impl_->vertexRing.Data(op->vertexConstants), impl_->pixelRing.Data(op->pixelConstants));
         impl_->Draw(std::move(op));
     }
 
@@ -309,35 +320,49 @@ namespace gpu
 
     void Renderer::UploadTexture(std::unique_ptr<TextureUpload> upload)
     {
-        impl_->Post([impl = impl_.get(), upload = std::shared_ptr<TextureUpload>(std::move(upload))] {
+        std::shared_ptr<const TextureUpload> shared = std::move(upload);
+        if (impl_->recorder)
+            impl_->recorder->UploadTexture(shared);
+        impl_->Post([impl = impl_.get(), upload = std::move(shared)] {
             impl->textures->Upload(*upload);
         });
     }
 
     void Renderer::UploadBuffer(std::unique_ptr<BufferUpload> upload)
     {
-        impl_->Post([impl = impl_.get(), upload = std::shared_ptr<BufferUpload>(std::move(upload))] {
+        std::shared_ptr<const BufferUpload> shared = std::move(upload);
+        if (impl_->recorder)
+            impl_->recorder->UploadBuffer(shared);
+        impl_->Post([impl = impl_.get(), upload = std::move(shared)] {
             impl->buffers->Upload(*upload);
         });
     }
 
     void Renderer::ReleaseBuffers(uint32_t begin, uint32_t end)
     {
+        if (impl_->recorder)
+            impl_->recorder->ReleaseBuffers(begin, end);
         impl_->Post([impl = impl_.get(), begin, end] { impl->buffers->Release(begin, end); });
     }
 
     void Renderer::ReleaseBuffer(const BufferKey& key)
     {
+        if (impl_->recorder)
+            impl_->recorder->ReleaseBuffer(key);
         impl_->Post([impl = impl_.get(), key] { impl->buffers->Forget(key); });
     }
 
     void Renderer::ReleaseSurface(uint32_t key)
     {
+        if (impl_->recorder)
+            impl_->recorder->ReleaseSurface(key);
         impl_->Post([impl = impl_.get(), key] { impl->targets->ReleaseSurface(key); });
     }
 
     void Renderer::ReleaseTexture(uint32_t address, uint32_t header)
     {
+        if (impl_->recorder)
+            impl_->recorder->ReleaseTexture(address, header);
         impl_->Post([impl = impl_.get(), address, header] {
             impl->targets->ReleaseTexture(address, header);
             impl->textures->Release(address, address + 1);
@@ -346,6 +371,8 @@ namespace gpu
 
     void Renderer::ReleaseMemory(uint32_t begin, uint32_t end)
     {
+        if (impl_->recorder)
+            impl_->recorder->ReleaseMemory(begin, end);
         impl_->Post([impl = impl_.get(), begin, end] {
             impl->targets->ReleaseResolved(begin, end);
             impl->textures->Release(begin, end);
@@ -367,6 +394,8 @@ namespace gpu
 
     uint64_t Renderer::Present(uint32_t frontAddress, uint32_t vblanks, uint32_t refreshMillihertz)
     {
+        if (impl_->recorder)
+            impl_->recorder->Present(frontAddress);
         uint64_t present = impl_->presentsPosted.fetch_add(1) + 1;
         if (!impl_->Post([impl = impl_.get(), frontAddress, vblanks, refreshMillihertz, present] {
                 impl->presenter->Present(*impl->passes, impl->targets->Resolved(frontAddress), vblanks, refreshMillihertz,
@@ -403,5 +432,13 @@ namespace gpu
     void Renderer::SetGammaRamp(const GammaRamp& ramp)
     {
         impl_->Post([impl = impl_.get(), ramp] { impl->presenter->SetGammaRamp(ramp); });
+    }
+
+    void Renderer::RecordNextFrame(const std::filesystem::path& file)
+    {
+        if (impl_->recorder)
+            impl_->recorder->RecordNextFrame(file);
+        else
+            LOG_ONCE("gpu: a frame recording was asked of a renderer that does not keep its uploads");
     }
 }

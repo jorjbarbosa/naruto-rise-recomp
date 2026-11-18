@@ -7,6 +7,7 @@
 
 #include "gpu/guest/addresses.h"
 #include "gpu/guest/buffers.h"
+#include "gpu/guest/compare.h"
 #include "gpu/guest/device.h"
 #include "gpu/guest/draw.h"
 #include "gpu/guest/resources.h"
@@ -124,10 +125,7 @@ namespace gpu
         Settings settings = Settings::FromEnvironment();
         std::filesystem::path executable = host::ExecutableDirectory();
         if (!executable.empty())
-        {
-            settings.pipelineList = executable / "cache" / "pipelines.bin";
-            settings.pipelineCache = executable / "cache" / "vulkan-pipeline-cache.bin";
-        }
+            settings.SetCacheDirectory(executable / "cache");
         g_renderer = Renderer::Create(window, settings,
             [](uint32_t fence) { guest::GetDevice().Publish(fence); }, [] { guest::FlushInlineDraw(); });
         if (!g_renderer)
@@ -172,6 +170,7 @@ namespace gpu
         guest::EndTextureFrame();
         guest::EndBufferFrame();
         guest::EndWatchFrame();
+        guest::EndCompareFrame(g_renderer.get());
         bool paced = rate == 0 && g_renderer && g_renderer->DisplayPaces() && g_renderer->WaitPresented(present);
         g_limiter.Pace(paced ? 0 : vblanks, rate);
     }

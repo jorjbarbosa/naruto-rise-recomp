@@ -2,8 +2,10 @@
 //
 // usage: roan-xenon [game folder]   (default: <repository>/game)
 // ROAN_TRACE=1 logs every traced kernel call.
+// ROAN_REPLAY=<recording> ROAN_REPLAY_OUT=<folder> draws a recorded frame instead (gpu/replay.h).
 
 #include "apu/xma.h"
+#include "gpu/replay.h"
 #include "host/input.h"
 #include "host/paths.h"
 #include "host/window.h"
@@ -101,6 +103,20 @@ int main(int argc, char** argv)
     SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
     SymInitialize(GetCurrentProcess(), nullptr, TRUE);
     SetUnhandledExceptionFilter(CrashHandler);
+
+    // A recorded frame drawn instead of the game (gpu/replay.h).
+    if (const char* replay = getenv("ROAN_REPLAY"))
+    {
+        const char* output = getenv("ROAN_REPLAY_OUT");
+        if (output == nullptr)
+        {
+            Log("error: ROAN_REPLAY needs ROAN_REPLAY_OUT, the folder its images go to");
+            return 1;
+        }
+        if (!host::CreateMainWindow("roan-xenon replay", 1280, 720))
+            return 1;
+        std::_Exit(gpu::RunReplay(replay, output));
+    }
 
     if (!mem::Init())
     {

@@ -24,6 +24,14 @@ namespace gpu
         std::string adapter;     // ROAN_ADAPTER=<name>: adapter as listed in the log (default: Plume's choice)
         std::filesystem::path pipelineList; // the pipeline list file (Pipelines); empty: none
         std::filesystem::path pipelineCache; // the driver's pipeline cache file, on Vulkan (Pipelines); empty: none
+        bool recordFrames = false; // ROAN_RECORD_FRAMES set: frames may be recorded (Renderer::RecordNextFrame)
+
+        // The pipeline files in the folder the renderer keeps its caches in.
+        void SetCacheDirectory(const std::filesystem::path& directory)
+        {
+            pipelineList = directory / "pipelines.bin";
+            pipelineCache = directory / "vulkan-pipeline-cache.bin";
+        }
 
         static Settings FromEnvironment()
         {
@@ -44,6 +52,7 @@ namespace gpu
                 settings.vsync = std::strcmp(value, "0") != 0;
             if (const char* value = std::getenv("ROAN_ADAPTER"))
                 settings.adapter = value;
+            settings.recordFrames = std::getenv("ROAN_RECORD_FRAMES") != nullptr;
             return settings;
         }
     };

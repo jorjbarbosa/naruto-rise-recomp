@@ -34,6 +34,9 @@ namespace host
     void HandleInputEvent(const SDL_Event& event);
     // Copies the state of a slot. False when nothing is connected to it. Any thread.
     bool GetPadState(int slot, PadState& out);
+    // Holds or lets go of a keyboard key, named as SDL names it ("Return", "Space", "S"), as if typed:
+    // for scripted runs (gpu/guest/compare.h). False for a name SDL does not know. Any thread.
+    bool SetScriptedKey(const char* name, bool down);
     // Sets the rumble motors of a slot (0-65535 each); they keep running until changed. Muted while
     // the window is not focused. False when nothing is connected to the slot. Any thread.
     bool SetPadRumble(int slot, uint16_t left, uint16_t right);

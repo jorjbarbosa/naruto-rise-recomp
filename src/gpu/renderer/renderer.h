@@ -6,6 +6,7 @@
 #include <array>
 #include <compare>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <new>
@@ -424,6 +425,12 @@ namespace gpu
         bool DisplayPaces() const;
         // The ramp the presents posted after it map the front buffer through.
         void SetGammaRamp(const GammaRamp& ramp);
+
+        // Records the operations posted from now to the next Present into file (gpu/renderer/
+        // recording.h), written at that Present. Only for a renderer created with
+        // Settings::recordFrames, which keeps the uploads a recording starts from; otherwise logged
+        // and ignored.
+        void RecordNextFrame(const std::filesystem::path& file);
 
         class Impl;
 

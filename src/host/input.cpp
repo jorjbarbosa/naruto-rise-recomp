@@ -346,6 +346,17 @@ namespace host
         return true;
     }
 
+    bool SetScriptedKey(const char* name, bool down)
+    {
+        SDL_Scancode key = SDL_GetScancodeFromName(name);
+        if (key == SDL_SCANCODE_UNKNOWN || key >= SDL_SCANCODE_COUNT)
+            return false;
+        std::lock_guard lock(g_mutex);
+        g_keys[key] = down;
+        UpdateSlot(0);
+        return true;
+    }
+
     bool SetPadRumble(int slot, uint16_t left, uint16_t right)
     {
         if (slot < 0 || slot >= kInputSlots)
