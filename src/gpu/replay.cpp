@@ -136,6 +136,11 @@ namespace gpu
         if (!ReadRecordedFrame(file, frame))
             return 1;
         Settings settings = Settings::FromEnvironment();
+        if (!settings.renderer)
+        {
+            Log("replay: error: ROAN_GPU_API=none, and a replay needs a renderer");
+            return 1;
+        }
         settings.recordFrames = false;
         if (std::filesystem::path executable = host::ExecutableDirectory(); !executable.empty())
             settings.SetCacheDirectory(executable / "cache");

@@ -19,13 +19,18 @@ namespace gpu
     // Renderer settings. Defaults, with a few environment overrides.
     struct Settings
     {
-        // ROAN_GPU_API=d3d12|vulkan. Any other value, and d3d12 where it is not built (ROAN_D3D12,
-        // Windows only; logged), keeps the default: D3D12 where it is built, else Vulkan.
+        // ROAN_GPU_API=d3d12|vulkan|none. d3d12 or vulkan picks the API; none turns the renderer off
+        // (renderer below). Any other value, and d3d12 where it is not built (ROAN_D3D12, Windows only;
+        // logged), keeps the default: D3D12 where it is built, else Vulkan.
 #ifdef ROAN_D3D12
         GpuApi api = GpuApi::D3D12;
 #else
         GpuApi api = GpuApi::Vulkan;
 #endif
+        // False for ROAN_GPU_API=none: no renderer is made. The game runs and presents nothing, its
+        // frames paced by the limiter; a replay refuses to run. Read by the callers of
+        // Renderer::Create, not by the renderer.
+        bool renderer = true;
         bool debugLayer = false; // ROAN_GPU_DEBUG=1: the API's debug layer
         bool syncValidation = false; // ROAN_GPU_DEBUG=sync: the debug layer, plus Vulkan's synchronization validation
         bool vsync = true;       // ROAN_VSYNC=0: present without waiting for the vertical blank
@@ -57,6 +62,10 @@ namespace gpu
                 else if (std::strcmp(value, "vulkan") == 0)
                 {
                     settings.api = GpuApi::Vulkan;
+                }
+                else if (std::strcmp(value, "none") == 0)
+                {
+                    settings.renderer = false;
                 }
             }
             if (const char* value = std::getenv("ROAN_GPU_DEBUG"))

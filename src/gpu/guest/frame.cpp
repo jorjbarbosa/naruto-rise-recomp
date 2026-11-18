@@ -114,18 +114,23 @@ namespace gpu
     {
         if (g_renderer)
             return;
+        Settings settings = Settings::FromEnvironment();
+        if (!settings.renderer)
+        {
+            Log("gpu: no renderer (ROAN_GPU_API=none)");
+            return;
+        }
         void* window = host::MainWindowHandle();
         if (window == nullptr)
         {
             Log("gpu: error: no game window, running without a renderer");
             return;
         }
-        // A quad of BeginVertices still waiting for its vertices goes before anything else posted.
-        Settings settings = Settings::FromEnvironment();
         settings.recordFrames = guest::CompareRecordsFrames();
         std::filesystem::path executable = host::ExecutableDirectory();
         if (!executable.empty())
             settings.SetCacheDirectory(executable / "cache");
+        // A quad of BeginVertices still waiting for its vertices goes before anything else posted.
         g_renderer = Renderer::Create(window, settings,
             [](uint32_t fence) { guest::GetDevice().Publish(fence); }, [] { guest::FlushInlineDraw(); });
         if (!g_renderer)
