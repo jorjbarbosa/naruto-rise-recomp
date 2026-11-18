@@ -268,7 +268,7 @@ namespace gpu
         impl->textures = std::make_unique<Textures>(*impl->context, *impl->targets, *impl->descriptors);
         impl->buffers = std::make_unique<Buffers>(*impl->context);
         impl->draws = std::make_unique<Draws>(*impl->context, *impl->targets, *impl->descriptors, *impl->textures,
-            *impl->buffers, impl->vertexRing, impl->pixelRing, settings.pipelineList);
+            *impl->buffers, impl->vertexRing, impl->pixelRing, settings.pipelineList, settings.pipelineCache);
         impl->Start();
         return std::unique_ptr<Renderer>(new Renderer(std::move(impl)));
     }

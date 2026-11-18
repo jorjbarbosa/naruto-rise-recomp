@@ -9,6 +9,9 @@
 
 #include <algorithm>
 
+#define XXH_INLINE_ALL
+#include <xxhash.h>
+
 namespace gpu
 {
     ShaderCache::ShaderCache(plume::RenderShaderFormat format) : format_(format)
@@ -20,6 +23,7 @@ namespace gpu
         size_t size = ZSTD_decompress(data_.data(), data_.size(), compressed, compressedSize);
         if (ZSTD_isError(size) || size != data_.size())
             Fatal("gpu: the shader cache does not decompress (%s)", ZSTD_isError(size) ? ZSTD_getErrorName(size) : "size");
+        hash_ = XXH3_64bits(compressed, compressedSize);
         Log("gpu: shader cache with %zu shaders, %zu MB of %s", g_shaderCacheEntryCount, data_.size() >> 20,
             dxil ? "DXIL" : "SMOL-V");
     }

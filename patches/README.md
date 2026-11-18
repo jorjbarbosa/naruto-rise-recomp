@@ -270,6 +270,16 @@ D3D12.
 Result in the village scene of Player Save 2 (paced at 30 frames a second): GPU busy 8.3% of the time
 (D3D12 7.8%), 2.75 ms of GPU work a frame instead of 25-28 ms; synchronization validation stays clean.
 
+### 0008: Vulkan pipeline cache
+
+Upstream creates every pipeline with `VK_NULL_HANDLE` as its cache, so on Vulkan the application has
+no way to keep compiled pipelines between runs (a driver may keep its own on-disk cache, but nothing
+requires it to). `VulkanDevice` gains a `VkPipelineCache` that graphics and compute pipelines are
+created through, `resetPipelineCache(data, size)` to start it from a previous run's data (an empty cache
+when the driver refuses the data) and `getPipelineCacheData()` to read it back (retried while other
+threads grow it). Both are members of the Vulkan device only. The renderer keeps the data in a file of
+its own, behind a header it checks before handing the data to the driver (`gpu/renderer/backend.cpp`).
+
 ## XenosRecomp
 
 Findings from the shaders of Naruto: Rise of a Ninja (`game/xeshader.sdb`: 4,467 containers, 3,322 unique,

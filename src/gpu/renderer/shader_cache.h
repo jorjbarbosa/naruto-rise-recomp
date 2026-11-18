@@ -43,6 +43,9 @@ namespace gpu
 
         // Whether the shader database has a shader with the key in this format.
         bool Has(uint64_t key) const;
+        // Tells this build's shaders in this format from another build's (XXH3-64 of the compressed
+        // cache).
+        uint64_t Hash() const { return hash_; }
         // The code of the shader with the key, or empty when there is none or its SPIR-V does not
         // decode (logged). The SPIR-V is stored SMOL-V encoded and decoded here.
         std::vector<uint8_t> Code(uint64_t key) const;
@@ -53,5 +56,6 @@ namespace gpu
 
         plume::RenderShaderFormat format_;
         std::vector<uint8_t> data_;
+        uint64_t hash_ = 0;
     };
 }

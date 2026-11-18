@@ -36,9 +36,10 @@ namespace gpu
     class Draws
     {
     public:
-        // pipelineList: the file the pipelines are remembered in (Pipelines; empty: none).
+        // pipelineList, pipelineCache: the files the pipelines are remembered in (Pipelines; empty: none).
         Draws(Context& context, Targets& targets, Descriptors& descriptors, Textures& textures, Buffers& buffers,
-            const ConstantRing& vertexRing, const ConstantRing& pixelRing, const std::filesystem::path& pipelineList);
+            const ConstantRing& vertexRing, const ConstantRing& pixelRing, const std::filesystem::path& pipelineList,
+            const std::filesystem::path& pipelineCache);
         ~Draws();
 
         // Records the draw; a draw whose shaders or pipeline are missing is skipped (logged).

@@ -1,0 +1,117 @@
+diff --git a/plume_vulkan.cpp b/plume_vulkan.cpp
+index 1d108f7..93732e6 100644
+--- a/plume_vulkan.cpp
++++ b/plume_vulkan.cpp
+@@ -1394,7 +1394,7 @@ namespace plume {
+         pipelineInfo.layout = pipelineLayout->vk;
+         pipelineInfo.stage = stageInfo;
+ 
+-        VkResult res = vkCreateComputePipelines(device->vk, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &vk);
++        VkResult res = vkCreateComputePipelines(device->vk, device->pipelineCache, 1, &pipelineInfo, nullptr, &vk);
+         if (res != VK_SUCCESS) {
+             fprintf(stderr, "vkCreateComputePipelines failed with error code 0x%X.\n", res);
+             return;
+@@ -1661,7 +1661,7 @@ namespace plume {
+         pipelineInfo.layout = pipelineLayout->vk;
+         pipelineInfo.renderPass = renderPass;
+ 
+-        VkResult res = vkCreateGraphicsPipelines(device->vk, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &vk);
++        VkResult res = vkCreateGraphicsPipelines(device->vk, device->pipelineCache, 1, &pipelineInfo, nullptr, &vk);
+         if (res != VK_SUCCESS) {
+             fprintf(stderr, "vkCreateGraphicsPipelines failed with error code 0x%X.\n", res);
+             return;
+@@ -4578,6 +4578,11 @@ namespace plume {
+     void VulkanDevice::release() {
+         nullBuffer = nullptr; // force destruction before destroying allocator
+ 
++        if (pipelineCache != VK_NULL_HANDLE) {
++            vkDestroyPipelineCache(vk, pipelineCache, nullptr);
++            pipelineCache = VK_NULL_HANDLE;
++        }
++
+         if (allocator != VK_NULL_HANDLE) {
+             vmaDestroyAllocator(allocator);
+             allocator = VK_NULL_HANDLE;
+@@ -4593,6 +4598,57 @@ namespace plume {
+         return vk != nullptr;
+     }
+ 
++    bool VulkanDevice::resetPipelineCache(const void *data, size_t size) {
++        if (pipelineCache != VK_NULL_HANDLE) {
++            vkDestroyPipelineCache(vk, pipelineCache, nullptr);
++            pipelineCache = VK_NULL_HANDLE;
++        }
++
++        VkPipelineCacheCreateInfo createInfo = {};
++        createInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
++        createInfo.initialDataSize = size;
++        createInfo.pInitialData = (size > 0) ? data : nullptr;
++        if ((size > 0) && (vkCreatePipelineCache(vk, &createInfo, nullptr, &pipelineCache) == VK_SUCCESS)) {
++            return true;
++        }
++
++        createInfo.initialDataSize = 0;
++        createInfo.pInitialData = nullptr;
++        VkResult res = vkCreatePipelineCache(vk, &createInfo, nullptr, &pipelineCache);
++        if (res != VK_SUCCESS) {
++            fprintf(stderr, "vkCreatePipelineCache failed with error code 0x%X.\n", res);
++            pipelineCache = VK_NULL_HANDLE;
++        }
++
++        return size == 0;
++    }
++
++    std::vector<uint8_t> VulkanDevice::getPipelineCacheData() const {
++        std::vector<uint8_t> data;
++        if (pipelineCache == VK_NULL_HANDLE) {
++            return data;
++        }
++
++        // The cache can grow between the two calls while other threads create pipelines.
++        for (;;) {
++            size_t size = 0;
++            if (vkGetPipelineCacheData(vk, pipelineCache, &size, nullptr) != VK_SUCCESS) {
++                return {};
++            }
++
++            data.resize(size);
++            VkResult res = vkGetPipelineCacheData(vk, pipelineCache, &size, data.data());
++            if (res == VK_SUCCESS) {
++                data.resize(size);
++                return data;
++            }
++
++            if (res != VK_INCOMPLETE) {
++                return {};
++            }
++        }
++    }
++
+     bool VulkanDevice::beginCapture() {
+         assert(false && "Captures are not currently implemented in Vulkan.");
+         return false;
+diff --git a/plume_vulkan.h b/plume_vulkan.h
+index e05e4b0..13be89d 100644
+--- a/plume_vulkan.h
++++ b/plume_vulkan.h
+@@ -446,6 +446,8 @@ namespace plume {
+         std::unique_ptr<RenderBuffer> nullBuffer;
+         bool loadStoreOpNoneSupported = false;
+         bool nullDescriptorSupported = false;
++        // The cache graphics and compute pipelines are created through; none until resetPipelineCache.
++        VkPipelineCache pipelineCache = VK_NULL_HANDLE;
+ 
+         VulkanDevice(VulkanInterface *renderInterface, const std::string &preferredDeviceName);
+         ~VulkanDevice() override;
+@@ -473,6 +475,11 @@ namespace plume {
+         RenderSampleCounts getSampleCountsSupported(RenderFormat format) const override;
+         void release();
+         bool isValid() const;
++        // Replaces the pipeline cache with one started from data (size 0: an empty cache). False, with
++        // an empty cache, when the driver refuses the data. No pipeline may be in creation meanwhile.
++        bool resetPipelineCache(const void *data, size_t size);
++        // What the pipeline cache holds, for resetPipelineCache in a later run; empty without a cache.
++        std::vector<uint8_t> getPipelineCacheData() const;
+         bool beginCapture() override;
+         bool endCapture() override;
+     };

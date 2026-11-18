@@ -36,15 +36,22 @@ namespace gpu
 
     // The pipelines of the guest draws, by key. The list file remembers every pipeline created, and
     // at the next start a few background threads create the listed ones again before the draws ask
-    // for them, so the frame that first uses a pipeline seldom waits for the driver.
+    // for them, so the frame that first uses a pipeline seldom waits for the driver. Where the
+    // application keeps the driver's pipeline cache (Vulkan, KeepsPipelineCache), the cache file is
+    // loaded before them and written once they are done, so that the next start finds the listed
+    // pipelines compiled; a pipeline first created at a draw is listed, compiled by the next start's
+    // threads and in the cache from then on.
     //
     // Get runs on the owner thread; the background threads only create pipelines. A pipeline lives
     // as long as this object, which joins its threads before the device goes.
     class Pipelines
     {
     public:
-        // listFile: the pipeline list, read now and appended to (empty: no list).
-        Pipelines(plume::RenderDevice& device, const plume::RenderPipelineLayout& layout, std::filesystem::path listFile);
+        // listFile: the pipeline list, read now and appended to (empty: no list). cacheFile: the
+        // pipeline cache file, read now and written when the listed pipelines are created (empty:
+        // none).
+        Pipelines(plume::RenderDevice& device, const plume::RenderPipelineLayout& layout, std::filesystem::path listFile,
+            std::filesystem::path cacheFile);
         ~Pipelines();
 
         // The pipeline of a key: ready, waited for while a background thread creates it, or created
@@ -77,6 +84,11 @@ namespace gpu
         void ReadList(const std::filesystem::path& listFile);
         void AppendToList(const PipelineKey& key, const VertexInput& input);
         void WorkerMain();
+        // Loads the pipeline cache file into the device's cache. Before any pipeline is created.
+        void LoadCache();
+        // Writes the device's pipeline cache to the cache file, unless it is what was loaded. Any
+        // thread; once.
+        void SaveCache();
 
         plume::RenderDevice& device_;
         const plume::RenderPipelineLayout& layout_;
@@ -95,6 +107,9 @@ namespace gpu
         std::vector<std::thread> workers_;
 
         std::FILE* list_ = nullptr; // owner thread
+
+        std::filesystem::path cacheFile_; // empty: the cache is not kept
+        std::vector<uint8_t> loadedCache_; // the cache file as read (SaveCache's thread after the constructor)
 
         // What Get cost the draws (owner thread): pipelines created there and waits for a background
         // thread still creating one, logged per 10 s window that had any, and each one over 20 ms.

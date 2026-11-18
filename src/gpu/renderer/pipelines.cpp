@@ -136,9 +136,15 @@ namespace gpu
         return size_t(hash);
     }
 
-    Pipelines::Pipelines(plume::RenderDevice& device, const plume::RenderPipelineLayout& layout, std::filesystem::path listFile)
+    Pipelines::Pipelines(plume::RenderDevice& device, const plume::RenderPipelineLayout& layout, std::filesystem::path listFile,
+        std::filesystem::path cacheFile)
         : device_(device), layout_(layout), cache_(ShaderFormat(device))
     {
+        if (!cacheFile.empty() && KeepsPipelineCache(device))
+        {
+            cacheFile_ = std::move(cacheFile);
+            LoadCache();
+        }
         if (listFile.empty())
             return;
         ReadList(listFile);
@@ -209,6 +215,49 @@ namespace gpu
         for (const PipelineKey& key : queue_)
             AppendToList(key, *entries_.at(key).input);
         std::fflush(list_);
+    }
+
+    void Pipelines::LoadCache()
+    {
+        std::vector<uint8_t> file;
+        if (std::FILE* stream = _wfopen(cacheFile_.c_str(), L"rb"))
+        {
+            std::fseek(stream, 0, SEEK_END);
+            long size = std::ftell(stream);
+            std::fseek(stream, 0, SEEK_SET);
+            file.resize(size > 0 ? size_t(size) : 0);
+            if (!file.empty() && std::fread(file.data(), 1, file.size(), stream) != file.size())
+                file.clear();
+            std::fclose(stream);
+        }
+        if (LoadPipelineCache(device_, file, cache_.Hash()))
+            loadedCache_ = std::move(file);
+    }
+
+    void Pipelines::SaveCache()
+    {
+        if (cacheFile_.empty())
+            return;
+        std::vector<uint8_t> file = SavePipelineCache(device_, cache_.Hash());
+        if (file.empty() || file == loadedCache_)
+            return;
+        // Written beside it and renamed over it: the process may end in the middle of the write.
+        std::filesystem::path temporary = cacheFile_;
+        temporary += L".tmp";
+        std::error_code error;
+        std::filesystem::create_directories(cacheFile_.parent_path(), error);
+        std::FILE* stream = _wfopen(temporary.c_str(), L"wb");
+        bool written = stream != nullptr && std::fwrite(file.data(), 1, file.size(), stream) == file.size();
+        if (stream != nullptr)
+            written = std::fclose(stream) == 0 && written;
+        if (written)
+            std::filesystem::rename(temporary, cacheFile_, error);
+        if (!written || error)
+        {
+            Log("gpu: cannot write the pipeline cache %s", cacheFile_.string().c_str());
+            return;
+        }
+        Log("gpu: pipeline cache of %zu KB written", file.size() >> 10);
     }
 
     void Pipelines::AppendToList(const PipelineKey& key, const VertexInput& input)
@@ -305,12 +354,15 @@ namespace gpu
                 return;
             if (queue_.empty())
             {
-                // The thread that finishes the last listed pipeline reports how long the list took.
+                // The thread that finishes the last listed pipeline reports how long the list took
+                // and keeps the pipeline cache.
                 if (busy_ == 0 && !reported_)
                 {
                     reported_ = true;
                     std::chrono::duration<double> seconds = std::chrono::steady_clock::now() - start;
                     Log("gpu: the pipeline list was created in %.1f s", seconds.count());
+                    lock.unlock();
+                    SaveCache();
                 }
                 return;
             }

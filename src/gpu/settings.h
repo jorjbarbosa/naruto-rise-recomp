@@ -23,6 +23,7 @@ namespace gpu
         bool vsync = true;       // ROAN_VSYNC=0: present without waiting for the vertical blank
         std::string adapter;     // ROAN_ADAPTER=<name>: adapter as listed in the log (default: Plume's choice)
         std::filesystem::path pipelineList; // the pipeline list file (Pipelines); empty: none
+        std::filesystem::path pipelineCache; // the driver's pipeline cache file, on Vulkan (Pipelines); empty: none
 
         static Settings FromEnvironment()
         {

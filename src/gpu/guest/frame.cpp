@@ -124,7 +124,10 @@ namespace gpu
         Settings settings = Settings::FromEnvironment();
         std::filesystem::path executable = host::ExecutableDirectory();
         if (!executable.empty())
+        {
             settings.pipelineList = executable / "cache" / "pipelines.bin";
+            settings.pipelineCache = executable / "cache" / "vulkan-pipeline-cache.bin";
+        }
         g_renderer = Renderer::Create(window, settings,
             [](uint32_t fence) { guest::GetDevice().Publish(fence); }, [] { guest::FlushInlineDraw(); });
         if (!g_renderer)

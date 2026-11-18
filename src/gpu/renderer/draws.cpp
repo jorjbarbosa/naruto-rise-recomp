@@ -55,12 +55,13 @@ namespace gpu
     }
 
     Draws::Draws(Context& context, Targets& targets, Descriptors& descriptors, Textures& textures, Buffers& buffers,
-        const ConstantRing& vertexRing, const ConstantRing& pixelRing, const std::filesystem::path& pipelineList)
+        const ConstantRing& vertexRing, const ConstantRing& pixelRing, const std::filesystem::path& pipelineList,
+        const std::filesystem::path& pipelineCache)
         : context_(context), targets_(targets), descriptors_(descriptors), textures_(textures), buffers_(buffers),
           vertexRing_(vertexRing), pixelRing_(pixelRing)
     {
         layout_ = CreateDrawLayout(context.Device(), descriptors.SetLayouts(), Descriptors::kSetCount);
-        pipelines_ = std::make_unique<Pipelines>(context.Device(), *layout_, pipelineList);
+        pipelines_ = std::make_unique<Pipelines>(context.Device(), *layout_, pipelineList, pipelineCache);
     }
 
     Draws::~Draws() = default;

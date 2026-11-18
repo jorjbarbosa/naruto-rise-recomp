@@ -11,9 +11,13 @@
 #include <plume_d3d12.h>
 #include <plume_vulkan.h>
 
+#include <cstring>
 #include <iterator>
 #include <mutex>
 #include <unordered_map>
+
+#define XXH_INLINE_ALL
+#include <xxhash.h>
 
 namespace plume
 {
@@ -41,6 +45,60 @@ namespace gpu
 
         // A validation message that repeats (every draw, every frame) is logged this many times.
         constexpr uint32_t kValidationRepeats = 3;
+
+        // The header of a pipeline cache file, before the driver's data. Plain data without padding.
+        // The driver checks its own header in the data too, but some drivers keep the cache UUID
+        // across updates that change the data, hence the driver version and the data's hash.
+        constexpr uint32_t kPipelineCacheMagic = 0x43505852; // "RXPC"
+        constexpr uint32_t kPipelineCacheVersion = 1;
+        struct PipelineCacheHeader
+        {
+            uint32_t magic = kPipelineCacheMagic;
+            uint32_t version = kPipelineCacheVersion;
+            uint32_t vendorId = 0;
+            uint32_t deviceId = 0;
+            uint32_t driverVersion = 0;
+            uint32_t dataSize = 0;
+            uint8_t cacheUuid[VK_UUID_SIZE] = {};
+            uint64_t shaderHash = 0;
+            uint64_t dataHash = 0; // XXH3-64 of the data
+        };
+        static_assert(sizeof(PipelineCacheHeader) == 56, "PipelineCacheHeader has padding");
+
+        // The header of a file the device would take, without the data's size and hash.
+        PipelineCacheHeader PipelineCacheIdentity(const plume::VulkanDevice& device, uint64_t shaderHash)
+        {
+            const VkPhysicalDeviceProperties& properties = device.physicalDeviceProperties;
+            PipelineCacheHeader header;
+            header.vendorId = properties.vendorID;
+            header.deviceId = properties.deviceID;
+            header.driverVersion = properties.driverVersion;
+            memcpy(header.cacheUuid, properties.pipelineCacheUUID, VK_UUID_SIZE);
+            header.shaderHash = shaderHash;
+            return header;
+        }
+
+        // Why a pipeline cache file does not fit the device, or null when it does.
+        const char* PipelineCacheMismatch(const std::vector<uint8_t>& file, const PipelineCacheHeader& expected)
+        {
+            PipelineCacheHeader header;
+            if (file.size() < sizeof(header))
+                return "it is too short";
+            memcpy(&header, file.data(), sizeof(header));
+            if (header.magic != expected.magic || header.version != expected.version)
+                return "its format is another";
+            if (header.vendorId != expected.vendorId || header.deviceId != expected.deviceId)
+                return "it is of another device";
+            if (header.driverVersion != expected.driverVersion ||
+                memcmp(header.cacheUuid, expected.cacheUuid, VK_UUID_SIZE) != 0)
+                return "it is of another driver";
+            if (header.shaderHash != expected.shaderHash)
+                return "it is of other shaders";
+            if (header.dataSize != file.size() - sizeof(header) ||
+                XXH3_64bits(file.data() + sizeof(header), header.dataSize) != header.dataHash)
+                return "it is damaged";
+            return nullptr;
+        }
 
         std::mutex g_validationMutex; // g_validationCounts
         std::unordered_map<int32_t, uint32_t> g_validationCounts; // by message id
@@ -304,6 +362,55 @@ namespace gpu
     {
         return dynamic_cast<plume::D3D12Device*>(&device) != nullptr ? plume::RenderShaderFormat::DXIL
                                                                      : plume::RenderShaderFormat::SPIRV;
+    }
+
+    bool KeepsPipelineCache(plume::RenderDevice& device)
+    {
+        return dynamic_cast<plume::VulkanDevice*>(&device) != nullptr;
+    }
+
+    bool LoadPipelineCache(plume::RenderDevice& device, const std::vector<uint8_t>& file, uint64_t shaderHash)
+    {
+        auto* vulkan = dynamic_cast<plume::VulkanDevice*>(&device);
+        if (vulkan == nullptr)
+            return false;
+        if (file.empty())
+        {
+            vulkan->resetPipelineCache(nullptr, 0);
+            Log("gpu: no pipeline cache yet; it starts empty");
+            return false;
+        }
+        if (const char* mismatch = PipelineCacheMismatch(file, PipelineCacheIdentity(*vulkan, shaderHash)))
+        {
+            vulkan->resetPipelineCache(nullptr, 0);
+            Log("gpu: the pipeline cache file is not used (%s); the cache starts empty", mismatch);
+            return false;
+        }
+        size_t dataSize = file.size() - sizeof(PipelineCacheHeader);
+        if (!vulkan->resetPipelineCache(file.data() + sizeof(PipelineCacheHeader), dataSize))
+        {
+            Log("gpu: the driver refused the pipeline cache file; the cache starts empty");
+            return false;
+        }
+        Log("gpu: pipeline cache of %zu KB loaded", dataSize >> 10);
+        return true;
+    }
+
+    std::vector<uint8_t> SavePipelineCache(plume::RenderDevice& device, uint64_t shaderHash)
+    {
+        auto* vulkan = dynamic_cast<plume::VulkanDevice*>(&device);
+        if (vulkan == nullptr)
+            return {};
+        std::vector<uint8_t> data = vulkan->getPipelineCacheData();
+        if (data.empty() || data.size() > UINT32_MAX)
+            return {};
+        PipelineCacheHeader header = PipelineCacheIdentity(*vulkan, shaderHash);
+        header.dataSize = uint32_t(data.size());
+        header.dataHash = XXH3_64bits(data.data(), data.size());
+        std::vector<uint8_t> file(sizeof(header) + data.size());
+        memcpy(file.data(), &header, sizeof(header));
+        memcpy(file.data() + sizeof(header), data.data(), data.size());
+        return file;
     }
 
     std::unique_ptr<plume::RenderPipelineLayout> CreateLayout(plume::RenderDevice& device,

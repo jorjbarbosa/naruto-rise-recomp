@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <vector>
 
 namespace gpu
 {
@@ -39,6 +40,21 @@ namespace gpu
 
     // The shader format the device takes: DXIL on D3D12, SPIR-V on Vulkan.
     plume::RenderShaderFormat ShaderFormat(plume::RenderDevice& device);
+
+    // The pipeline cache, where the application keeps the driver's compiled pipelines between runs
+    // (Vulkan; D3D12 drivers keep their own). Its file holds the cache's data behind a header that
+    // ties it to the device, the driver and the translated shaders (shaderHash, ShaderCache::Hash),
+    // with a hash of the data.
+    bool KeepsPipelineCache(plume::RenderDevice& device);
+
+    // Starts the device's pipeline cache from a file's bytes (empty: no file). A file of another
+    // device, driver or shader set, or a damaged one, leaves the cache empty (logged). Before any
+    // pipeline is created. False when the cache starts empty.
+    bool LoadPipelineCache(plume::RenderDevice& device, const std::vector<uint8_t>& file, uint64_t shaderHash);
+
+    // The bytes of a file holding the device's pipeline cache as it is now; empty when the device has
+    // none. Any thread, also while others create pipelines.
+    std::vector<uint8_t> SavePipelineCache(plume::RenderDevice& device, uint64_t shaderHash);
 
     // Constant buffers the shaders of a pipeline read by reference, in order: the root constant
     // buffers b0, b1... of `space` on D3D12; on Vulkan, which has no root descriptors, their device
