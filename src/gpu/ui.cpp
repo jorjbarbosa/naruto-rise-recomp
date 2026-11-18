@@ -5,6 +5,7 @@
 #include "gpu/ui_updates.h"
 
 #include <algorithm>
+#include <atomic>
 #include <mutex>
 
 namespace gpu::ui
@@ -14,6 +15,7 @@ namespace gpu::ui
         std::mutex g_mutex; // the state below
         Texture g_lastTexture = kNoTexture;
         Updates g_pending;
+        std::atomic<PresentListener> g_listener{ nullptr };
     }
 
     Texture CreateTexture(TextureDesc desc)
@@ -55,5 +57,16 @@ namespace gpu::ui
     {
         std::lock_guard lock(g_mutex);
         return std::exchange(g_pending, {});
+    }
+
+    void SetPresentListener(PresentListener listener)
+    {
+        g_listener.store(listener, std::memory_order_release);
+    }
+
+    void NotifyPresented()
+    {
+        if (PresentListener listener = g_listener.load(std::memory_order_acquire))
+            listener();
     }
 }

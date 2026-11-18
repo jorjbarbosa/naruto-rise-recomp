@@ -23,6 +23,11 @@ namespace host
         return frequency;
     }
 
+    int64_t CounterTicks(double seconds)
+    {
+        return int64_t(seconds * double(CounterFrequency()));
+    }
+
     void SleepUntil(int64_t deadline)
     {
         // One timer per thread: a waitable timer set from two threads would wake only one of them.

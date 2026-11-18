@@ -6,6 +6,7 @@
 #include "host/input.h"
 #include "log.h"
 #include "settings/settings.h"
+#include "ui/ui.h"
 
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
@@ -207,6 +208,11 @@ namespace host
         return g_handle;
     }
 
+    SDL_Window* MainWindow()
+    {
+        return g_window;
+    }
+
     uint32_t DisplayRefreshMillihertz()
     {
         return g_refreshMillihertz;
@@ -215,8 +221,21 @@ namespace host
     bool RunEventLoop()
     {
         SDL_Event event;
-        while (SDL_WaitEvent(&event))
+        for (;;)
         {
+            int timeout = ui::WaitTimeoutMs();
+            if (timeout < 0 ? !SDL_WaitEvent(&event) : !SDL_WaitEventTimeout(&event, timeout))
+            {
+                if (timeout < 0)
+                    break;
+                ui::Update(); // the wait ran out
+                continue;
+            }
+            if (ui::IsWakeEvent(event))
+            {
+                ui::Update();
+                continue;
+            }
             if (event.type == SDL_EVENT_QUIT)
                 return !g_quitRequested;
             if (event.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED || event.type == SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED)
@@ -231,6 +250,7 @@ namespace host
                     SetBorderless(!g_borderless);
                 continue;
             }
+            ui::HandleEvent(event);
             HandleWindowEvent(event);
             HandleInputEvent(event);
         }

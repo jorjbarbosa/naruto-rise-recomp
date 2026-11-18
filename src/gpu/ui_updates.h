@@ -20,4 +20,6 @@ namespace gpu::ui
 
     // Everything sent since the last call. Any thread; the renderer's owner calls it at each present.
     Updates TakeUpdates();
+    // Calls the present listener (SetPresentListener), if any. The renderer's owner, after a present.
+    void NotifyPresented();
 }

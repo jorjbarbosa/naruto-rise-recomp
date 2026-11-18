@@ -91,6 +91,11 @@ namespace game::jade
     constexpr uint32_t kDisplayDestroyCount = 0x82C0EBE0; // objects JADE_DISPLAY_DESTROYS will destroy
     constexpr uint32_t kSectors = 0x8272F2B0;       // the sector manager: JADE_SECTOR_SWITCH works only when it and its +44 are set
     constexpr uint32_t kSectorsTarget = 44;
+    // The engine's input flag: while any bit is set, every script pad read and the fight's pad logic
+    // see nothing (82551C78 and its siblings). The game uses bits 4 (a movie waiting for a button), 8
+    // (the scripts, natives 7033/7034) and 0x10 (its message box); the word is zeroed once at start
+    // (82684128, from main). docs/development/plans/port-menus/game-side-findings.md section 5.
+    constexpr uint32_t kInputFlag = 0x82C0F0D8;
 
     // The D3D device lock ([kDeviceLock]), recursive per thread.
     namespace device_lock

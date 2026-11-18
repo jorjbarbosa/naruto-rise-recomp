@@ -114,6 +114,41 @@ add_ffmpeg_library(avcodec ${FFMPEG_AVCODEC_SOURCES})
 # codec_list.c and the other lists are included by allcodecs.c and its siblings, from the config dir.
 target_link_libraries(ffmpeg_avcodec PUBLIC ffmpeg_avutil ole32 user32)
 
+# zlib's inflate, for the entries of Naruto_clip.SRA (src/ui/game_archive.cpp).
+set(ZLIB_DIR "${CMAKE_SOURCE_DIR}/thirdparty/zlib")
+add_library(zlib_inflate STATIC
+    "${ZLIB_DIR}/adler32.c" "${ZLIB_DIR}/crc32.c" "${ZLIB_DIR}/inffast.c" "${ZLIB_DIR}/inflate.c"
+    "${ZLIB_DIR}/inftrees.c" "${ZLIB_DIR}/uncompr.c" "${ZLIB_DIR}/zutil.c")
+target_include_directories(zlib_inflate PUBLIC "${ZLIB_DIR}")
+target_compile_definitions(zlib_inflate PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS)
+target_compile_options(zlib_inflate PRIVATE -Wno-everything)
+
+# FreeType for RmlUi's font engine: outline fonts only, so none of its optional libraries.
+set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
+set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
+add_subdirectory("${CMAKE_SOURCE_DIR}/thirdparty/freetype" freetype EXCLUDE_FROM_ALL)
+target_compile_options(freetype PRIVATE -Wno-everything)
+# RmlUi takes any target of this name (its CMake/Dependencies.cmake checks the target).
+add_library(Freetype::Freetype ALIAS freetype)
+
+# RmlUi: the host UI's documents, style sheets and layout (src/ui).
+set(RMLUI_FONT_ENGINE "freetype" CACHE STRING "" FORCE)
+set(RMLUI_SAMPLES OFF CACHE BOOL "" FORCE)
+set(RMLUI_LUA_BINDINGS OFF CACHE BOOL "" FORCE)
+set(RMLUI_LOTTIE_PLUGIN OFF CACHE BOOL "" FORCE)
+set(RMLUI_SVG_PLUGIN OFF CACHE BOOL "" FORCE)
+set(RMLUI_TRACY_PROFILING OFF CACHE BOOL "" FORCE)
+set(RMLUI_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
+set(RMLUI_COMPILER_OPTIONS OFF CACHE BOOL "" FORCE)
+set(RMLUI_INSTALL_TARGETS_DIR "" CACHE STRING "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+add_subdirectory("${CMAKE_SOURCE_DIR}/thirdparty/RmlUi" rmlui EXCLUDE_FROM_ALL)
+target_compile_options(rmlui_core PRIVATE -Wno-everything)
+
 # Every kernel/XAM import of the recompiled modules gets a weak logging stub (src/kernel/stubs.cpp);
 # the runtime overrides the implemented ones. The list comes from the generated headers.
 set(IMPORT_NAMES "")
@@ -167,7 +202,11 @@ add_executable(roan-xenon ${SOURCES} ${GPU_SHADER_HEADERS} ${PPC_MODULE_OBJECTS}
 target_include_directories(roan-xenon PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_BINARY_DIR}/generated"
     "${PPC_OUTPUT_DIR}" "${XENOS_THIRDPARTY_DIR}/xxHash")
 target_link_libraries(roan-xenon PRIVATE ppc_common XenonUtils plume zstd_decompress SDL3::SDL3-static ffmpeg_avcodec
-    tomlplusplus::tomlplusplus dbghelp)
+    tomlplusplus::tomlplusplus RmlUi::Core zlib_inflate dbghelp)
 target_compile_options(roan-xenon PRIVATE /EHsc /Z7 -Wno-unused-parameter -Wno-null-arithmetic)
 target_link_options(roan-xenon PRIVATE /DEBUG /STACK:16777216)
 set_target_properties(roan-xenon PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+# The UI's own files (fonts, and the documents from phase 6 on) beside the executable, in data/ui.
+add_custom_command(TARGET roan-xenon POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${CMAKE_SOURCE_DIR}/data/ui" "${CMAKE_BINARY_DIR}/data/ui"
+    VERBATIM)

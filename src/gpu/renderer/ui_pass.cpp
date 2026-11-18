@@ -263,6 +263,8 @@ namespace gpu
             }
             return true;
         });
+        if (frame_ && (!frame_->draws.empty() || frame_->blur > 0.0f))
+            ui::NotifyPresented();
     }
 
     float UiPass::Blur() const

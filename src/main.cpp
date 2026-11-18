@@ -10,6 +10,7 @@
 #include "kernel/kernel.h"
 #include "loader.h"
 #include "settings/settings.h"
+#include "ui/ui.h"
 
 #include <filesystem>
 #include <windows.h>
@@ -121,6 +122,8 @@ int main(int argc, char** argv)
     if (!host::CreateMainWindow("roan-xenon"))
         return 1;
     settings::SetDisplayRefreshSource(host::DisplayRefreshMillihertz);
+    // Without it the game runs with no menus of the port's (logged).
+    ui::Initialize(host::MainWindow(), exeDir / "data" / "ui", gameDir);
 
     // Recompiled code recurses deeply on the host stack: same reservation as the other guest threads.
     HANDLE guest = CreateThread(nullptr, 16 * 1024 * 1024, GuestMain, nullptr, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);

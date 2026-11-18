@@ -17,7 +17,8 @@ namespace gpu
     // The host UI's textures and frames on the GPU (gpu/ui.h). Owner thread only.
     //
     // Each present takes what the UI sent with BeginPresent (the creates are recorded, the newest
-    // frame kept), draws the frame with Draw, and ends with EndPresent (the releases).
+    // frame kept), draws the frame with Draw, and ends with EndPresent (the releases, then the UI's
+    // present listener while the frame shows anything).
     class UiPass
     {
     public:

@@ -14,3 +14,12 @@
 	shallow = true
 	path = thirdparty/ffmpeg
 	url = https://github.com/FFmpeg/FFmpeg.git
+[submodule "thirdparty/RmlUi"]
+	path = thirdparty/RmlUi
+	url = https://github.com/mikke89/RmlUi.git
+[submodule "thirdparty/freetype"]
+	path = thirdparty/freetype
+	url = https://github.com/freetype/freetype.git
+[submodule "thirdparty/zlib"]
+	path = thirdparty/zlib
+	url = https://github.com/madler/zlib.git

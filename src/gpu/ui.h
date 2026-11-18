@@ -88,4 +88,10 @@ namespace gpu::ui
     // The frame every present draws until the next one. A frame with no draws and no blur is the UI
     // hidden.
     void Submit(Frame frame);
+
+    // Called on the renderer's owner thread after each present whose frame is not the UI hidden
+    // (minimized ones included), so the UI can build its next frame. Null: none. Keep it short: the
+    // present waits for it.
+    using PresentListener = void (*)();
+    void SetPresentListener(PresentListener listener);
 }
