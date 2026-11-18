@@ -1,0 +1,23 @@
+diff --git a/plume_vulkan.cpp b/plume_vulkan.cpp
+index 4209283..89fd341 100644
+--- a/plume_vulkan.cpp
++++ b/plume_vulkan.cpp
+@@ -850,13 +850,18 @@ namespace plume {
+             bufferInfo.usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+             createInfo.preferredFlags |= VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+             break;
++        // map() and unmap() neither flush nor invalidate, and a mapping may be kept while the GPU
++        // reads or writes the buffer, so upload and readback buffers take coherent memory (Vulkan
++        // guarantees a host-visible type that is).
+         case RenderHeapType::UPLOAD:
+             bufferInfo.usage |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+             createInfo.flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
++            createInfo.requiredFlags |= VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+             break;
+         case RenderHeapType::READBACK:
+             bufferInfo.usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+             createInfo.flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
++            createInfo.requiredFlags |= VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+             break;
+         case RenderHeapType::GPU_UPLOAD:
+             bufferInfo.usage |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;

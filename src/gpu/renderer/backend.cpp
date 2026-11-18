@@ -4,6 +4,8 @@
 #include "gpu/renderer/backend.h"
 
 #include "gpu/renderer/descriptors.h"
+#include "gpu/renderer/targets.h"
+#include "gpu/textures/formats.h"
 #include "log.h"
 
 #include <plume_d3d12.h>
@@ -16,6 +18,8 @@
 namespace plume
 {
     std::unique_ptr<RenderInterface> CreateD3D12Interface();
+    // Plume's own mapping of its formats, defined in plume_vulkan.cpp.
+    VkFormat toVk(RenderFormat format);
 }
 
 namespace gpu
@@ -174,6 +178,40 @@ namespace gpu
                 "maxDescriptorSetUpdateAfterBindSamplers");
             atLeast(indexingLimits.maxPerStageUpdateAfterBindResources, textures + samplers,
                 "maxPerStageUpdateAfterBindResources");
+
+            // Formats: the guest textures are uploaded and sampled with the guest's filter; the
+            // surfaces are drawn into (blended), resolved, copied and sampled by the resolve pass.
+            auto format = [&](plume::RenderFormat renderFormat, VkFormatFeatureFlags needed) {
+                VkFormatProperties formatProperties = {};
+                vkGetPhysicalDeviceFormatProperties(vulkan.physicalDevice, plume::toVk(renderFormat), &formatProperties);
+                VkFormatFeatureFlags missing = needed & ~formatProperties.optimalTilingFeatures;
+                if (missing == 0)
+                    return;
+                Log("gpu: error: the Vulkan device lacks features %08X of format %d", missing, int(renderFormat));
+                ok = false;
+            };
+            constexpr VkFormatFeatureFlags kSampled = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+            constexpr VkFormatFeatureFlags kCopied = VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+            for (plume::RenderFormat texture : textures::HostFormats())
+                format(texture, kSampled | VK_FORMAT_FEATURE_TRANSFER_DST_BIT);
+            format(Targets::kColorFormat, kSampled | kCopied | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT);
+            format(Targets::kResolvedDepthFormat, kSampled | kCopied | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT);
+            format(Targets::kDepthFormat, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
+            for (uint32_t samples : Targets::kMultisampleCounts)
+            {
+                auto sampleCount = [&](VkSampleCountFlags counts, const char* name) {
+                    if ((counts & samples) != 0)
+                        return;
+                    Log("gpu: error: the Vulkan device has no %ux in %s", samples, name);
+                    ok = false;
+                };
+                sampleCount(limits.framebufferColorSampleCounts, "framebufferColorSampleCounts");
+                sampleCount(limits.framebufferDepthSampleCounts, "framebufferDepthSampleCounts");
+                sampleCount(limits.framebufferStencilSampleCounts, "framebufferStencilSampleCounts");
+                sampleCount(limits.sampledImageColorSampleCounts, "sampledImageColorSampleCounts");
+                sampleCount(limits.sampledImageDepthSampleCounts, "sampledImageDepthSampleCounts");
+            }
 
             Log("gpu: present wait %s", capabilities.presentWait ? "available" : "unavailable");
             return ok;

@@ -2,8 +2,10 @@
 
 #include "gpu/textures/formats.h"
 
+#include <algorithm>
 #include <bit>
 #include <cstring>
+#include <span>
 #include <utility>
 
 namespace gpu::textures
@@ -259,6 +261,16 @@ namespace gpu::textures
             if (entry.guest == format)
                 return &entry;
         return nullptr;
+    }
+
+    std::vector<plume::RenderFormat> HostFormats()
+    {
+        std::vector<plume::RenderFormat> formats;
+        for (const auto& table : { std::span<const Format>(kFormats), std::span<const Format>(kDecompressedFormats) })
+            for (const Format& entry : table)
+                if (std::find(formats.begin(), formats.end(), entry.host) == formats.end())
+                    formats.push_back(entry.host);
+        return formats;
     }
 
     uint32_t TiledOffset2D(uint32_t x, uint32_t y, uint32_t pitchBlocks, uint32_t log2Bytes)

@@ -13,8 +13,6 @@ namespace gpu
 {
     namespace
     {
-        constexpr plume::RenderFormat kResolvedDepthFormat = plume::RenderFormat::R32_FLOAT;
-
         plume::RenderMultisampling Multisampling(uint32_t samples)
         {
             plume::RenderMultisampling multisampling;

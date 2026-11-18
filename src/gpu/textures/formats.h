@@ -54,6 +54,9 @@ namespace gpu::textures
     // of a block-compressed texture whose base is not a multiple of 4 texels (the host needs it).
     const Format* FindFormat(uint32_t format, bool decompressed = false);
 
+    // Every host format FindFormat can give, once each: what the device must sample.
+    std::vector<plume::RenderFormat> HostFormats();
+
     // The Xenos 2D tiled address: 32x32-block macro tiles. The byte offset of block (x, y) of a
     // surface whose pitch is pitchBlocks (a multiple of 32), for 2^log2Bytes bytes per block.
     uint32_t TiledOffset2D(uint32_t x, uint32_t y, uint32_t pitchBlocks, uint32_t log2Bytes);

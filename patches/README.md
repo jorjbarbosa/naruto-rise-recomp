@@ -240,6 +240,16 @@ Not a bug, checked along the way: the depth-stencil attachment views of a frameb
 aspect, which the spec allows (an attachment view of a depth/stencil image uses both aspects whatever its
 aspect mask says).
 
+### 0006: Vulkan coherent upload and readback memory
+
+`VulkanBuffer::map()` and `unmap()` neither flush nor invalidate, and VMA, asked only for host access,
+may place an upload or readback buffer in host-visible memory that is not coherent. The renderer keeps
+its upload chunks mapped for their whole life and writes them every frame, and reads the readback of
+the save thumbnail right after the copy, so on such memory the GPU could read stale constants and
+vertices and the host a stale thumbnail. `UPLOAD` and `READBACK` buffers now require
+`VK_MEMORY_PROPERTY_HOST_COHERENT_BIT`; Vulkan guarantees a host-visible memory type that has it.
+Desktop drivers give coherent memory already, so nothing changes there.
+
 ## XenosRecomp
 
 Findings from the shaders of Naruto: Rise of a Ninja (`game/xeshader.sdb`: 4,467 containers, 3,322 unique,

@@ -25,8 +25,8 @@ namespace gpu
     std::unique_ptr<plume::RenderInterface> CreateInterface(const Settings& settings);
 
     // Readies a new device for the renderer and logs what it reports. On Vulkan it checks every
-    // feature and limit the translated shaders and the renderer rely on, since Plume enables what the
-    // device has but requires none of it. False when the device cannot run the renderer (each missing
+    // feature, limit, format feature and sample count the translated shaders and the renderer rely
+    // on, since Plume enables what the device has but requires none of it. False when the device cannot run the renderer (each missing
     // item logged).
     bool PrepareDevice(plume::RenderDevice& device, const Settings& settings);
 

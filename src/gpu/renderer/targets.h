@@ -47,6 +47,10 @@ namespace gpu
         static constexpr plume::RenderFormat kColorFormat = plume::RenderFormat::R8G8B8A8_UNORM;
         static constexpr uint32_t kColorBytes = 4;
         static constexpr plume::RenderFormat kDepthFormat = plume::RenderFormat::D32_FLOAT_S8_UINT;
+        // Host format of the textures resolved from depth surfaces (a render target of the resolve pass).
+        static constexpr plume::RenderFormat kResolvedDepthFormat = plume::RenderFormat::R32_FLOAT;
+        // Sample counts of the guest surfaces besides 1 (the Xenos has 2x and 4x MSAA).
+        static constexpr uint32_t kMultisampleCounts[] = { 2, 4 };
 
         Targets(Context& context, const Passes& passes, Descriptors& descriptors)
             : context_(context), passes_(passes), descriptors_(descriptors) {}
