@@ -1,4 +1,4 @@
-// The present and resolve passes: pipelines over the shaders compiled at build time.
+// The present, resolve, copy and blur passes: pipelines over the shaders compiled at build time.
 
 #include "gpu/renderer/passes.h"
 
@@ -6,6 +6,8 @@
 
 #include <plume_d3d12.h>
 
+#include "shaders/blur_ps.h"
+#include "shaders/copy_ps.h"
 #include "shaders/fullscreen_vs.h"
 #include "shaders/present_ps.h"
 #include "shaders/resolve_color_ms_ps.h"
@@ -28,6 +30,15 @@ namespace gpu
             uint32_t sample;
         };
 
+        // Root constants of the copy and blur passes (copy_ps.hlsl, blur_ps.hlsl): the copy reads
+        // the alpha, the blur the direction.
+        struct FilterConstants
+        {
+            float alpha;
+            int32_t directionX;
+            int32_t directionY;
+        };
+
         const plume::RenderDescriptorRange kTextureRange(plume::RenderDescriptorRangeType::TEXTURE, 0, 1);
         const plume::RenderDescriptorSetDesc kTextureSet(&kTextureRange, 1);
 
@@ -38,14 +49,15 @@ namespace gpu
         }
 
         std::unique_ptr<plume::RenderPipeline> Pipeline(plume::RenderDevice& device, const plume::RenderPipelineLayout& layout,
-            const plume::RenderShader& vertex, const plume::RenderShader& pixel, plume::RenderFormat format, const char* name)
+            const plume::RenderShader& vertex, const plume::RenderShader& pixel, plume::RenderFormat format, const char* name,
+            const plume::RenderBlendDesc& blend = plume::RenderBlendDesc::Copy())
         {
             plume::RenderGraphicsPipelineDesc desc;
             desc.pipelineLayout = &layout;
             desc.vertexShader = &vertex;
             desc.pixelShader = &pixel;
             desc.renderTargetFormat[0] = format;
-            desc.renderTargetBlend[0] = plume::RenderBlendDesc::Copy();
+            desc.renderTargetBlend[0] = blend;
             desc.renderTargetCount = 1;
             std::unique_ptr<plume::RenderPipeline> pipeline = device.createGraphicsPipeline(desc);
             if (static_cast<plume::D3D12GraphicsPipeline*>(pipeline.get())->d3d == nullptr)
@@ -81,6 +93,11 @@ namespace gpu
         const plume::RenderPushConstantRange constants(0, 0, 0, sizeof(ResolveConstants), plume::RenderShaderStageFlag::PIXEL);
         resolveLayout_ = device.createPipelineLayout(plume::RenderPipelineLayoutDesc(&constants, 1, &kTextureSet, 1));
 
+        // Copy and blur: the constants, the source in set 0, the sampler in set 1 (the copy's).
+        const plume::RenderPushConstantRange filterConstants(0, 0, 0, sizeof(FilterConstants),
+            plume::RenderShaderStageFlag::PIXEL);
+        filterLayout_ = device.createPipelineLayout(plume::RenderPipelineLayoutDesc(&filterConstants, 1, presentSets, 2));
+
         auto fullscreen = Shader(device, kFullscreenVs);
         present_ = Pipeline(device, *presentLayout_, *fullscreen, *Shader(device, kPresentPs), presentFormat, "present");
         colorSample_ = Pipeline(device, *resolveLayout_, *fullscreen, *Shader(device, kResolveColorMsPs),
@@ -89,6 +106,14 @@ namespace gpu
             plume::RenderFormat::R32_FLOAT, "depth resolve");
         depthMultisample_ = Pipeline(device, *resolveLayout_, *fullscreen, *Shader(device, kResolveDepthMsPs),
             plume::RenderFormat::R32_FLOAT, "multisampled depth resolve");
+        copy_ = Pipeline(device, *filterLayout_, *fullscreen, *Shader(device, kCopyPs), presentFormat, "copy",
+            plume::RenderBlendDesc::AlphaBlend());
+        blur_ = Pipeline(device, *filterLayout_, *fullscreen, *Shader(device, kBlurPs), presentFormat, "blur");
+    }
+
+    const plume::RenderDescriptorSetDesc& Passes::TextureSetDesc()
+    {
+        return kTextureSet;
     }
 
     std::unique_ptr<plume::RenderDescriptorSet> Passes::CreateTextureSet(const plume::RenderTexture& texture,
@@ -119,6 +144,28 @@ namespace gpu
         list.setGraphicsPipelineLayout(resolveLayout_.get());
         list.setPipeline(pipeline);
         list.setGraphicsPushConstants(0, &constants, 0, sizeof(constants));
+        list.setGraphicsDescriptorSet(&source, 0);
+        list.drawInstanced(3, 1, 0, 0);
+    }
+
+    void Passes::DrawCopy(plume::RenderCommandList& list, plume::RenderDescriptorSet& source, float alpha) const
+    {
+        const FilterConstants constants{ alpha, 0, 0 };
+        DrawFilter(list, *copy_, source, &constants, sizeof(constants));
+    }
+
+    void Passes::DrawBlur(plume::RenderCommandList& list, plume::RenderDescriptorSet& source, bool vertical) const
+    {
+        const FilterConstants constants{ 1.0f, vertical ? 0 : 1, vertical ? 1 : 0 };
+        DrawFilter(list, *blur_, source, &constants, sizeof(constants));
+    }
+
+    void Passes::DrawFilter(plume::RenderCommandList& list, const plume::RenderPipeline& pipeline,
+        plume::RenderDescriptorSet& source, const void* constants, uint32_t size) const
+    {
+        list.setGraphicsPipelineLayout(filterLayout_.get());
+        list.setPipeline(&pipeline);
+        list.setGraphicsPushConstants(0, constants, 0, size);
         list.setGraphicsDescriptorSet(&source, 0);
         list.drawInstanced(3, 1, 0, 0);
     }

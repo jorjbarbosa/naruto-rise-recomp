@@ -11,6 +11,7 @@
 #include "gpu/renderer/presenter.h"
 #include "gpu/renderer/targets.h"
 #include "gpu/renderer/textures.h"
+#include "gpu/renderer/ui_pass.h"
 #include "gpu/settings.h"
 #include "log.h"
 
@@ -167,6 +168,7 @@ namespace gpu
         std::unique_ptr<Textures> textures;
         std::unique_ptr<Buffers> buffers;
         std::unique_ptr<Draws> draws;
+        std::unique_ptr<UiPass> ui;
         std::unique_ptr<Presenter> presenter;
         Renderer::BeforePost beforePost;
 
@@ -305,6 +307,7 @@ namespace gpu
             return nullptr;
         impl->descriptors = std::make_unique<Descriptors>(impl->context->Device());
         impl->passes = std::make_unique<Passes>(impl->context->Device(), Presenter::kFormat);
+        impl->ui = std::make_unique<UiPass>(*impl->context, *impl->passes, Presenter::kFormat);
         impl->targets = std::make_unique<Targets>(*impl->context, *impl->passes, *impl->descriptors);
         impl->textures = std::make_unique<Textures>(*impl->context, *impl->targets, *impl->descriptors);
         impl->buffers = std::make_unique<Buffers>(*impl->context);
@@ -410,7 +413,9 @@ namespace gpu
     {
         uint64_t present = impl_->presentsPosted.fetch_add(1) + 1;
         if (!impl_->Post([impl = impl_.get(), frontAddress, vblanks, refreshMillihertz, present] {
-                impl->presenter->Present(*impl->passes, impl->targets->Resolved(frontAddress), vblanks, refreshMillihertz,
+                impl->ui->BeginPresent();
+                impl->presenter->Present(*impl->passes, *impl->ui, impl->targets->Resolved(frontAddress), vblanks,
+                    refreshMillihertz,
                     [&](bool paced) {
                         impl->displayPaces = paced;
                         {
@@ -423,6 +428,7 @@ namespace gpu
                         }
                         impl->presentDone.notify_all();
                     });
+                impl->ui->EndPresent();
             }))
             return 0;
         return present;

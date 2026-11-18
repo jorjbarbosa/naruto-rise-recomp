@@ -153,6 +153,10 @@ add_gpu_shader(present_ps kPresentPs present_ps.hlsl ps_6_0)
 add_gpu_shader(resolve_color_ms_ps kResolveColorMsPs resolve_ps.hlsl ps_6_0 -DMULTISAMPLE=1)
 add_gpu_shader(resolve_depth_ps kResolveDepthPs resolve_ps.hlsl ps_6_0 -DDEPTH=1)
 add_gpu_shader(resolve_depth_ms_ps kResolveDepthMsPs resolve_ps.hlsl ps_6_0 -DDEPTH=1 -DMULTISAMPLE=1)
+add_gpu_shader(copy_ps kCopyPs copy_ps.hlsl ps_6_0)
+add_gpu_shader(blur_ps kBlurPs blur_ps.hlsl ps_6_0)
+add_gpu_shader(ui_vs kUiVs ui_vs.hlsl vs_6_0)
+add_gpu_shader(ui_ps kUiPs ui_ps.hlsl ps_6_0)
 
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/*.cpp"

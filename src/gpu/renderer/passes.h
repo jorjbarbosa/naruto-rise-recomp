@@ -7,8 +7,9 @@
 
 namespace gpu
 {
-    // The renderer's own full-screen passes: the present and the resolves a copy cannot do. Their
-    // shaders are compiled at build time (src/gpu/renderer/shaders).
+    // The renderer's own full-screen passes: the present, the resolves a copy cannot do, and the
+    // copy and blur of the backdrop. Their shaders are compiled at build time
+    // (src/gpu/renderer/shaders).
     class Passes
     {
     public:
@@ -21,7 +22,10 @@ namespace gpu
 
         Passes(plume::RenderDevice& device, plume::RenderFormat presentFormat);
 
-        // A descriptor set with one texture (its view: null for the default one) for the passes.
+        // The layout of a descriptor set with one texture, which the passes (and the UI pass) read
+        // their texture through.
+        static const plume::RenderDescriptorSetDesc& TextureSetDesc();
+        // A descriptor set of that layout with the texture (its view: null for the default one).
         std::unique_ptr<plume::RenderDescriptorSet> CreateTextureSet(const plume::RenderTexture& texture,
             const plume::RenderTextureView* view) const;
 
@@ -37,15 +41,27 @@ namespace gpu
         // plus the offset.
         void DrawResolve(plume::RenderCommandList& list, Resolve kind, plume::RenderDescriptorSet& source,
             int32_t offsetX, int32_t offsetY, uint32_t sample) const;
+        // Draws the source over the bound framebuffer's viewport, filtered bilinearly, blended over
+        // it with the alpha (1: a copy). The framebuffer has the present's format.
+        void DrawCopy(plume::RenderCommandList& list, plume::RenderDescriptorSet& source, float alpha) const;
+        // Draws one direction of a Gaussian blur of the source over the bound framebuffer's
+        // viewport, which has the source's size and the present's format.
+        void DrawBlur(plume::RenderCommandList& list, plume::RenderDescriptorSet& source, bool vertical) const;
 
     private:
+        void DrawFilter(plume::RenderCommandList& list, const plume::RenderPipeline& pipeline,
+            plume::RenderDescriptorSet& source, const void* constants, uint32_t size) const;
+
         plume::RenderDevice& device_;
         std::unique_ptr<plume::RenderSampler> sampler_;
         std::unique_ptr<plume::RenderPipelineLayout> presentLayout_;
         std::unique_ptr<plume::RenderPipelineLayout> resolveLayout_;
+        std::unique_ptr<plume::RenderPipelineLayout> filterLayout_;
         std::unique_ptr<plume::RenderPipeline> present_;
         std::unique_ptr<plume::RenderPipeline> colorSample_;
         std::unique_ptr<plume::RenderPipeline> depth_;
         std::unique_ptr<plume::RenderPipeline> depthMultisample_;
+        std::unique_ptr<plume::RenderPipeline> copy_;
+        std::unique_ptr<plume::RenderPipeline> blur_;
     };
 }

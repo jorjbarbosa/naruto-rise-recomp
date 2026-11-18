@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gpu/renderer/backdrop.h"
+#include "gpu/renderer/context.h"
 #include "gpu/renderer/renderer.h"
 
 #include <plume_render_interface.h>
@@ -12,10 +14,10 @@
 
 namespace gpu
 {
-    class Context;
     class Passes;
     struct ResolvedTexture;
     struct Settings;
+    class UiPass;
 
     // The swap chain of the game window. Owner thread only.
     class Presenter
@@ -30,7 +32,8 @@ namespace gpu
         void SetGammaRamp(const GammaRamp& ramp);
 
         // Submits the work recorded so far and presents the image, mapped through the gamma ramp,
-        // fitted to the window, centered with black bars; black without an image.
+        // fitted to the window, centered with black bars; black without an image. The UI's frame is
+        // drawn over it, and over the image the blur it asks for.
         // When the display can pace (vsync on, a window with an area, refreshMillihertz within 1 Hz of
         // a multiple k of 60 Hz) and vblanks != 0, the presents ask for vblanks x k refreshes since the
         // previous image (split into presents of at most four), so that while the interval stays the
@@ -38,20 +41,25 @@ namespace gpu
         // screen first. Otherwise the image is presented at once (at the next vertical blank with
         // vsync). shown(paced) runs once the first present is submitted, or at once when nothing could
         // be presented; paced tells whether the display paced it.
-        void Present(const Passes& passes, const ResolvedTexture* image, uint32_t vblanks, uint32_t refreshMillihertz,
-            const std::function<void(bool paced)>& shown);
+        void Present(const Passes& passes, UiPass& ui, const ResolvedTexture* image, uint32_t vblanks,
+            uint32_t refreshMillihertz, const std::function<void(bool paced)>& shown);
 
     private:
         explicit Presenter(Context& context, bool vsync);
         void CreateFramebuffers();
         uint32_t RefreshMultiple(uint32_t refreshMillihertz);
         void WaitForRoom();
-        void Submit(const Passes& passes, const ResolvedTexture* image, uint32_t syncInterval);
+        // The gamma ramp in upload memory for the open command list.
+        Context::Upload UploadRamp();
+        // blur: the backdrop's alpha over the image, prepared by Present when above 0.
+        void Submit(const Passes& passes, UiPass& ui, const ResolvedTexture* image, float blur,
+            uint32_t syncInterval);
 
         Context& context_;
         bool vsync_;
         std::unique_ptr<plume::RenderSwapChain> swapChain_;
         std::vector<std::unique_ptr<plume::RenderFramebuffer>> framebuffers_;
+        Backdrop backdrop_;
         bool presentFailed_ = false;
         bool roomTimedOut_ = false;
         // Presents not yet matched by a wait on the frame latency object. The object starts with one
