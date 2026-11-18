@@ -250,6 +250,26 @@ vertices and the host a stale thumbnail. `UPLOAD` and `READBACK` buffers now req
 `VK_MEMORY_PROPERTY_HOST_COHERENT_BIT`; Vulkan guarantees a host-visible memory type that has it.
 Desktop drivers give coherent memory already, so nothing changes there.
 
+### 0007: Vulkan render pass reuse
+
+Upstream ends the active render pass on every `setFramebuffer`, even for the framebuffer it is already
+drawing into, and on every `barriers` call, even one that changes no layout. The renderer binds the
+draw's targets before each draw (a barrier to the target's write layout, then `setFramebuffer`), as
+D3D12 needs, so on Vulkan every draw ended the pass, put a full pipeline barrier, and began the pass
+again with LOAD and STORE: in the village scene the GPU was busy 76-84% of the time, against 8% on
+D3D12.
+
+- `setFramebuffer` with the framebuffer of the active render pass keeps the pass.
+- A `barriers` call made only of texture barriers that keep attachments of the active pass in the
+  layout the pass uses (color in `COLOR_WRITE`, depth in `DEPTH_WRITE`, or `DEPTH_READ` for a read-only
+  depth attachment) does not end the pass: the pass orders its own attachment writes. The barriers are
+  held (one per texture) and recorded right after the pass ends, whatever ends it, so the writes of the
+  pass are still ordered before what follows (another pass on the same texture, a copy, a read).
+- Any other barrier ends the pass as before.
+
+Result in the village scene of Player Save 2 (paced at 30 frames a second): GPU busy 8.3% of the time
+(D3D12 7.8%), 2.75 ms of GPU work a frame instead of 25-28 ms; synchronization validation stays clean.
+
 ## XenosRecomp
 
 Findings from the shaders of Naruto: Rise of a Ninja (`game/xeshader.sdb`: 4,467 containers, 3,322 unique,

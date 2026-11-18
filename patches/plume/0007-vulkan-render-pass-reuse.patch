@@ -1,0 +1,127 @@
+diff --git a/plume_vulkan.cpp b/plume_vulkan.cpp
+index 89fd341..1d108f7 100644
+--- a/plume_vulkan.cpp
++++ b/plume_vulkan.cpp
+@@ -2868,10 +2868,52 @@ namespace plume {
+             return;
+         }
+ 
+-        endActiveRenderPass();
+-
+         const bool geometryEnabled = queue->device->capabilities.geometryShader;
+         const bool rtEnabled = queue->device->capabilities.raytracing;
++
++        // Barriers that keep attachments of the active render pass in their layout do not end it:
++        // the pass orders its own attachment writes. They are held until the pass ends, when they
++        // order its writes before what comes after.
++        bool attachmentsOnly = (activeRenderPass != VK_NULL_HANDLE) && (bufferBarriersCount == 0);
++        for (uint32_t i = 0; attachmentsOnly && (i < textureBarriersCount); i++) {
++            attachmentsOnly = isActiveAttachmentInLayout(static_cast<const VulkanTexture *>(textureBarriers[i].texture), textureBarriers[i].layout);
++        }
++
++        if (attachmentsOnly) {
++            for (uint32_t i = 0; i < textureBarriersCount; i++) {
++                VulkanTexture *interfaceTexture = static_cast<VulkanTexture *>(textureBarriers[i].texture);
++                pendingSrcStageMask |= toStageFlags(interfaceTexture->barrierStages, geometryEnabled, rtEnabled);
++                pendingDstStageMask |= VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT | toStageFlags(stages, geometryEnabled, rtEnabled);
++                interfaceTexture->barrierStages = stages;
++
++                bool pending = false;
++                for (const VkImageMemoryBarrier &barrier : pendingAttachmentBarriers) {
++                    pending = pending || (barrier.image == interfaceTexture->vk);
++                }
++
++                if (pending) {
++                    continue;
++                }
++
++                VkImageMemoryBarrier imageMemoryBarrier = {};
++                imageMemoryBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
++                imageMemoryBarrier.image = interfaceTexture->vk;
++                imageMemoryBarrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
++                imageMemoryBarrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
++                imageMemoryBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++                imageMemoryBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++                imageMemoryBarrier.oldLayout = toImageLayout(interfaceTexture->textureLayout);
++                imageMemoryBarrier.newLayout = imageMemoryBarrier.oldLayout;
++                imageMemoryBarrier.subresourceRange.levelCount = interfaceTexture->desc.mipLevels;
++                imageMemoryBarrier.subresourceRange.layerCount = interfaceTexture->desc.arraySize;
++                imageMemoryBarrier.subresourceRange.aspectMask = toAspectFlags(interfaceTexture->desc.format, interfaceTexture->desc.flags);
++                pendingAttachmentBarriers.emplace_back(imageMemoryBarrier);
++            }
++
++            return;
++        }
++
++        endActiveRenderPass();
+         VkPipelineStageFlags srcStageMask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+         VkPipelineStageFlags dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT | toStageFlags(stages, geometryEnabled, rtEnabled);
+         thread_local std::vector<VkBufferMemoryBarrier> bufferMemoryBarriers;
+@@ -3136,6 +3178,11 @@ namespace plume {
+     }
+ 
+     void VulkanCommandList::setFramebuffer(const RenderFramebuffer *framebuffer) {
++        // The same framebuffer again keeps its render pass open.
++        if ((activeRenderPass != VK_NULL_HANDLE) && (framebuffer == targetFramebuffer)) {
++            return;
++        }
++
+         endActiveRenderPass();
+ 
+         if (framebuffer != nullptr) {
+@@ -3560,6 +3607,31 @@ namespace plume {
+             vkCmdEndRenderPass(vk);
+             activeRenderPass = VK_NULL_HANDLE;
+         }
++
++        if (!pendingAttachmentBarriers.empty()) {
++            vkCmdPipelineBarrier(vk, pendingSrcStageMask, pendingDstStageMask, 0, 0, nullptr, 0, nullptr, uint32_t(pendingAttachmentBarriers.size()), pendingAttachmentBarriers.data());
++            pendingAttachmentBarriers.clear();
++            pendingSrcStageMask = 0;
++            pendingDstStageMask = 0;
++        }
++    }
++
++    bool VulkanCommandList::isActiveAttachmentInLayout(const VulkanTexture *texture, RenderTextureLayout layout) const {
++        if ((activeRenderPass == VK_NULL_HANDLE) || (targetFramebuffer == nullptr) || (texture->textureLayout != layout)) {
++            return false;
++        }
++
++        if (texture == targetFramebuffer->depthAttachment) {
++            return layout == (targetFramebuffer->depthAttachmentReadOnly ? RenderTextureLayout::DEPTH_READ : RenderTextureLayout::DEPTH_WRITE);
++        }
++
++        for (const VulkanTexture *colorAttachment : targetFramebuffer->colorAttachments) {
++            if (texture == colorAttachment) {
++                return layout == RenderTextureLayout::COLOR_WRITE;
++            }
++        }
++
++        return false;
+     }
+ 
+     void VulkanCommandList::setDescriptorSet(VkPipelineBindPoint bindPoint, const VulkanPipelineLayout *pipelineLayout, const RenderDescriptorSet *descriptorSet, uint32_t setIndex) {
+diff --git a/plume_vulkan.h b/plume_vulkan.h
+index 53496b7..e05e4b0 100644
+--- a/plume_vulkan.h
++++ b/plume_vulkan.h
+@@ -321,6 +321,11 @@ namespace plume {
+         const VulkanPipelineLayout *activeGraphicsPipelineLayout = nullptr;
+         const VulkanPipelineLayout *activeRaytracingPipelineLayout = nullptr;
+         VkRenderPass activeRenderPass = VK_NULL_HANDLE;
++        // Barriers that only restate the layout of an attachment of the active render pass: the
++        // writes of the pass are ordered without them, so they are recorded once the pass ends.
++        std::vector<VkImageMemoryBarrier> pendingAttachmentBarriers;
++        VkPipelineStageFlags pendingSrcStageMask = 0;
++        VkPipelineStageFlags pendingDstStageMask = 0;
+ 
+         VulkanCommandList(VulkanCommandQueue *queue);
+         ~VulkanCommandList() override;
+@@ -367,6 +372,7 @@ namespace plume {
+         void writeTimestamp(const RenderQueryPool *queryPool, uint32_t queryIndex) override;
+         void checkActiveRenderPass();
+         void endActiveRenderPass();
++        bool isActiveAttachmentInLayout(const VulkanTexture *texture, RenderTextureLayout layout) const;
+         void setDescriptorSet(VkPipelineBindPoint bindPoint, const VulkanPipelineLayout *pipelineLayout, const RenderDescriptorSet *descriptorSet, uint32_t setIndex);
+     };
+ 
