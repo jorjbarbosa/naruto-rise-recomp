@@ -1,72 +1,32 @@
-#include "memory.h"
-#include "log.h"
+// Guest memory: the reservation of the guest space, its heaps and atomic access (memory.h).
 
-#include <algorithm>
+#include "memory.h"
+
+#include "host/address_space.h"
+
 #include <atomic>
 #include <map>
 #include <mutex>
 #include <vector>
-#include <windows.h>
 
 namespace mem
 {
-    // Commits guest pages on first touch, 64 KB at a time.
-    static LONG CALLBACK CommitOnTouch(EXCEPTION_POINTERS* info)
-    {
-        if (info->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION)
-            return EXCEPTION_CONTINUE_SEARCH;
-
-        auto* address = reinterpret_cast<uint8_t*>(info->ExceptionRecord->ExceptionInformation[1]);
-        if (!IsHostInGuest(address))
-            return EXCEPTION_CONTINUE_SEARCH;
-
-        auto* page = reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(address) & ~uintptr_t(0xFFFF));
-        if (VirtualAlloc(page, 0x10000, MEM_COMMIT, PAGE_READWRITE) == nullptr)
-            return EXCEPTION_CONTINUE_SEARCH;
-        return EXCEPTION_CONTINUE_EXECUTION;
-    }
+    static_assert(kPageSize == host::kWritePageSize, "the guest's write watch pages are the host's");
 
     bool Init()
     {
-        // MEM_WRITE_WATCH makes the OS record which pages are written (TakeWrittenPages).
-        g_base = static_cast<uint8_t*>(VirtualAlloc(nullptr, kSize, MEM_RESERVE | MEM_WRITE_WATCH, PAGE_READWRITE));
-        if (g_base == nullptr)
-            return false;
-        AddVectoredExceptionHandler(1, CommitOnTouch);
-        return true;
+        g_base = host::ReserveAddressSpace(kSize);
+        return g_base != nullptr;
     }
 
     void Commit(uint32_t address, uint32_t size)
     {
-        if (size == 0)
-            return;
-        uint64_t begin = address & ~uint64_t(0xFFFF);
-        uint64_t end = std::min<uint64_t>((uint64_t(address) + size + 0xFFFF) & ~uint64_t(0xFFFF), kSize);
-        VirtualAlloc(g_base + begin, size_t(end - begin), MEM_COMMIT, PAGE_READWRITE);
+        host::CommitAddressSpace(address, size);
     }
 
     bool TakeWrittenPages(uint32_t address, uint32_t size, std::vector<uint32_t>& pages)
     {
-        if (size == 0)
-            return true;
-        uint64_t begin = address & ~uint64_t(kPageSize - 1);
-        uint64_t end = std::min<uint64_t>((uint64_t(address) + size + kPageSize - 1) & ~uint64_t(kPageSize - 1), kSize);
-        // One entry per page of the range is always enough. The buffer only grows: a resize back up
-        // would zero it again on every large query.
-        thread_local std::vector<void*> written;
-        ULONG_PTR count = ULONG_PTR((end - begin) / kPageSize);
-        if (written.size() < count)
-            written.resize(count);
-        ULONG granularity = 0;
-        if (GetWriteWatch(WRITE_WATCH_FLAG_RESET, g_base + begin, SIZE_T(end - begin), written.data(), &count,
-                &granularity) != 0)
-        {
-            LOG_ONCE("memory: GetWriteWatch failed (error %lu); ranges count as written", GetLastError());
-            return false;
-        }
-        for (ULONG_PTR i = 0; i < count; i++)
-            pages.push_back(uint32_t(static_cast<uint8_t*>(written[i]) - g_base));
-        return true;
+        return host::TakeWrittenPages(address, size, pages);
     }
 
     uint32_t AtomicLoad32(uint32_t a)

@@ -33,8 +33,8 @@ namespace mem
     bool Init();
 
     // Commits the pages of a guest range. Guest pages are otherwise committed on first touch through
-    // an access violation, but host OS calls (ReadFile, WriteFile...) fail with ERROR_NOACCESS on
-    // reserved pages instead of faulting, so call this before handing them guest memory.
+    // a fault, but host OS calls (file reads and writes) fail on reserved pages instead of faulting,
+    // so call this before handing them guest memory.
     void Commit(uint32_t address, uint32_t size);
 
     // The page size of the write watch.
@@ -42,14 +42,13 @@ namespace mem
 
     // Write watch: appends the guest address of every page of the range written since the last call
     // that covered it, and resets those pages. Every write counts: guest code, host code and the host
-    // OS (ReadFile into guest memory, which the runtime does with buffered, synchronous reads).
+    // OS (file reads into guest memory, which the runtime does with buffered, synchronous reads).
     // Thread-safe, but a page is reported to one caller only, so callers that share pages must share
     // what they take. False when the OS refuses the query (logged once): the caller then has to treat
     // the whole range as written.
     bool TakeWrittenPages(uint32_t address, uint32_t size, std::vector<uint32_t>& pages);
 
     inline uint8_t* Ptr(uint32_t address) { return g_base + address; }
-    inline bool IsHostInGuest(const void* p) { return p >= g_base && p < g_base + kSize; }
 
     inline uint8_t Load8(uint32_t a) { return g_base[a]; }
     inline uint16_t Load16(uint32_t a) { uint16_t v; memcpy(&v, g_base + a, 2); return __builtin_bswap16(v); }
