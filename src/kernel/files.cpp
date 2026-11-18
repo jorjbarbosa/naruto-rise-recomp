@@ -2,6 +2,8 @@
 
 #include "kernel/kernel.h"
 
+#include "host/timing.h"
+
 #include <algorithm>
 #include <filesystem>
 #include <mutex>
@@ -539,7 +541,7 @@ GUEST_FUNC(NtQueryVolumeInformationFile)
     switch (ctx.r7.u32)
     {
     case 1: // FileFsVolumeInformation
-        mem::Store64(info + 0, SystemTime());
+        mem::Store64(info + 0, host::SystemTime());
         mem::Store32(info + 8, 0x12345678);
         mem::Store32(info + 12, 0);
         mem::Store8(info + 16, 0);

@@ -21,7 +21,6 @@
 #include "kernel/kernel.h"
 
 #include <atomic>
-#include <windows.h>
 
 namespace gpu
 {

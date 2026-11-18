@@ -2,6 +2,8 @@
 
 #include "kernel/kernel.h"
 
+#include "host/timing.h"
+
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -264,7 +266,7 @@ namespace kernel
 
         int64_t timeout = LoadLargeInteger(timeoutAddress);
         if (timeout > 0) // absolute system time
-            timeout = std::max<int64_t>(0, timeout - int64_t(SystemTime()));
+            timeout = std::max<int64_t>(0, timeout - int64_t(host::SystemTime()));
         else
             timeout = -timeout;
         return WaitTimeout(objects, count, waitAll, timeout, false);

@@ -85,9 +85,6 @@ namespace kernel
     // Reads the guest ANSI_STRING at address.
     std::string LoadAnsiString(uint32_t address);
 
-    // Current time as a FILETIME (100 ns units since 1601).
-    uint64_t SystemTime();
-
     // Host frequency of __rdtsc(), which the recompiled mftb uses as the time base.
     uint64_t TimeBaseFrequency();
 

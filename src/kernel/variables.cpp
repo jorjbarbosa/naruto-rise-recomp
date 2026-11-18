@@ -2,35 +2,29 @@
 
 #include "kernel/kernel.h"
 
+#include "host/timing.h"
+
+#include <chrono>
 #include <cstring>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
-#include <windows.h>
+#include <x86intrin.h>
 
 namespace kernel
 {
     ModuleInfo g_module;
 
-    uint64_t SystemTime()
-    {
-        FILETIME time;
-        GetSystemTimePreciseAsFileTime(&time);
-        return (uint64_t(time.dwHighDateTime) << 32) | time.dwLowDateTime;
-    }
-
     uint64_t TimeBaseFrequency()
     {
         static const uint64_t frequency = [] {
-            LARGE_INTEGER qpcFrequency, qpcStart, qpcEnd;
-            QueryPerformanceFrequency(&qpcFrequency);
-            QueryPerformanceCounter(&qpcStart);
+            int64_t counterStart = host::Counter();
             uint64_t tscStart = __rdtsc();
-            Sleep(50);
-            QueryPerformanceCounter(&qpcEnd);
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            int64_t counterEnd = host::Counter();
             uint64_t tscEnd = __rdtsc();
-            double seconds = double(qpcEnd.QuadPart - qpcStart.QuadPart) / double(qpcFrequency.QuadPart);
+            double seconds = double(counterEnd - counterStart) / double(host::CounterFrequency());
             return uint64_t(double(tscEnd - tscStart) / seconds);
         }();
         return frequency;
@@ -132,7 +126,7 @@ namespace kernel
                 auto elapsed = std::chrono::steady_clock::now() - start;
                 uint64_t interrupt = std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count() / 100;
                 mem::Store64(g_timeStampBundle + 0, interrupt);
-                mem::Store64(g_timeStampBundle + 8, SystemTime());
+                mem::Store64(g_timeStampBundle + 8, host::SystemTime());
                 mem::Store32(g_timeStampBundle + 16, uint32_t(interrupt / 10000));
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
@@ -150,5 +144,5 @@ GUEST_FUNC(KeQueryPerformanceFrequency)
 GUEST_FUNC(KeQuerySystemTime)
 {
     if (ctx.r3.u32 != 0)
-        mem::Store64(ctx.r3.u32, SystemTime());
+        mem::Store64(ctx.r3.u32, host::SystemTime());
 }

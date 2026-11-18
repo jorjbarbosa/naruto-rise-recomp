@@ -2,6 +2,7 @@
 
 #include "host/audio.h"
 
+#include "host/timing.h"
 #include "log.h"
 
 #include <SDL3/SDL.h>
@@ -11,7 +12,6 @@
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
-#include <windows.h>
 
 namespace host
 {
@@ -38,22 +38,13 @@ namespace host
 
         // Clock used without a working device: when the frames queued so far would have finished
         // playing.
-        int64_t g_frequency = 0;
         int64_t g_clockEnd = 0;
-        HANDLE g_timer = nullptr;
         // When the device was found stalled (0: it plays). Producer thread only.
         int64_t g_stalledSince = 0;
 
-        int64_t Now()
-        {
-            LARGE_INTEGER counter;
-            QueryPerformanceCounter(&counter);
-            return counter.QuadPart;
-        }
-
         int64_t FramesToTicks(uint32_t frames)
         {
-            return int64_t(frames) * g_frequency / kAudioRate;
+            return int64_t(frames) * CounterFrequency() / kAudioRate;
         }
 
         // SDL calls this on every pull of the device, whether or not the queue has enough.
@@ -62,7 +53,7 @@ namespace host
             {
                 std::lock_guard lock(g_mutex);
                 g_pulls++;
-                g_lastPull = Now();
+                g_lastPull = Counter();
             }
             g_pulled.notify_one();
         }
@@ -72,25 +63,10 @@ namespace host
             int bytes = SDL_GetAudioStreamQueued(g_stream);
             return bytes > 0 ? uint32_t(bytes) / kFrameBytes : 0;
         }
-
-        void SleepTicks(int64_t ticks)
-        {
-            LARGE_INTEGER due;
-            due.QuadPart = -std::max<int64_t>(ticks * 10'000'000 / g_frequency, 1);
-            if (g_timer != nullptr && SetWaitableTimer(g_timer, &due, 0, nullptr, nullptr, FALSE))
-                WaitForSingleObject(g_timer, INFINITE);
-            else
-                Sleep(1);
-        }
     }
 
     void OpenAudio()
     {
-        LARGE_INTEGER frequency;
-        QueryPerformanceFrequency(&frequency);
-        g_frequency = frequency.QuadPart;
-        g_timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-
         if (SDL_WasInit(SDL_INIT_AUDIO) == 0)
         {
             Log("audio: no audio subsystem, running silent");
@@ -119,7 +95,7 @@ namespace host
 
         {
             std::lock_guard lock(g_mutex);
-            g_lastPull = Now();
+            g_lastPull = Counter();
         }
         if (!SDL_ResumeAudioStreamDevice(g_stream))
             Log("error: SDL_ResumeAudioStreamDevice failed: %s", SDL_GetError());
@@ -131,7 +107,7 @@ namespace host
             LOG_ONCE("error: SDL_PutAudioStreamData failed: %s", SDL_GetError());
         // The clock runs along, ready for when there is no working device. A late producer starts
         // a new phase instead of catching up.
-        g_clockEnd = std::max(g_clockEnd, Now()) + FramesToTicks(frames);
+        g_clockEnd = std::max(g_clockEnd, Counter()) + FramesToTicks(frames);
     }
 
     void WaitForAudioRoom()
@@ -160,10 +136,10 @@ namespace host
                 }
                 if (QueuedFrames() < g_targetFrames)
                     return;
-                if (Now() - lastPull > kDeviceStallMs * g_frequency / 1000)
+                if (Counter() - lastPull > kDeviceStallMs * CounterFrequency() / 1000)
                 {
                     LOG_ONCE("audio: the device stopped playing, keeping time without it");
-                    g_stalledSince = Now();
+                    g_stalledSince = Counter();
                     continue;
                 }
                 std::unique_lock lock(g_mutex);
@@ -171,7 +147,7 @@ namespace host
             }
         }
         int64_t target = FramesToTicks(g_targetFrames);
-        for (int64_t ahead = g_clockEnd - Now(); ahead >= target; ahead = g_clockEnd - Now())
-            SleepTicks(ahead - target + 1);
+        for (int64_t ahead = g_clockEnd - Counter(); ahead >= target; ahead = g_clockEnd - Counter())
+            SleepFor(ahead - target + 1);
     }
 }

@@ -2,6 +2,8 @@
 
 #include "kernel/kernel.h"
 
+#include "host/timing.h"
+
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
@@ -242,7 +244,7 @@ GUEST_FUNC(NtSetTimerEx)
     }
     int64_t due = LoadLargeInteger(ctx.r4.u32);
     if (due > 0)
-        due = std::max<int64_t>(0, due - int64_t(SystemTime()));
+        due = std::max<int64_t>(0, due - int64_t(host::SystemTime()));
     else
         due = -due;
     uint32_t period = ctx.r10.u32; // milliseconds

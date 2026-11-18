@@ -3,6 +3,7 @@
 #include "kernel/kernel.h"
 
 #include "host/input.h"
+#include "host/timing.h"
 #include "loader.h"
 
 #include <atomic>
@@ -322,7 +323,7 @@ GUEST_FUNC(KeDelayExecutionThread)
 {
     int64_t interval = LoadLargeInteger(ctx.r5.u32);
     if (interval > 0)
-        interval = std::max<int64_t>(0, interval - int64_t(SystemTime()));
+        interval = std::max<int64_t>(0, interval - int64_t(host::SystemTime()));
     else
         interval = -interval;
 

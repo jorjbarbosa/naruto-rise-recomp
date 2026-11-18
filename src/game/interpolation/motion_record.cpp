@@ -8,12 +8,12 @@
 #include "game/interpolation/transforms.h"
 #include "game/interpolation/view_clock.h"
 #include "game/interpolation/world.h"
+#include "host/timing.h"
 #include "log.h"
 
 #include <cmath>
 #include <cstdio>
 #include <vector>
-#include <windows.h>
 
 namespace game::interpolation::motion
 {
@@ -56,8 +56,7 @@ namespace game::interpolation::motion
         // Main thread state.
         int g_enabled = -1;
         std::FILE* g_file = nullptr;
-        LARGE_INTEGER g_frequency{};
-        LARGE_INTEGER g_start{};
+        int64_t g_start = 0;
         uint64_t g_iteration = 0;
         bool g_tick = true;
         float g_alpha = 0.0f;
@@ -88,9 +87,7 @@ namespace game::interpolation::motion
 
         int64_t Microseconds()
         {
-            LARGE_INTEGER now;
-            QueryPerformanceCounter(&now);
-            return (now.QuadPart - g_start.QuadPart) * 1000000 / g_frequency.QuadPart;
+            return (host::Counter() - g_start) * 1000000 / host::CounterFrequency();
         }
 
         float Finite(float value)
@@ -161,8 +158,7 @@ namespace game::interpolation::motion
                 if (g_file != nullptr)
                 {
                     std::fputs("display,us,iteration,tick,alpha,cut,kind,id,x,y,z,a,b,c,d\n", g_file);
-                    QueryPerformanceFrequency(&g_frequency);
-                    QueryPerformanceCounter(&g_start);
+                    g_start = host::Counter();
                     g_enabled = 1;
                 }
             }

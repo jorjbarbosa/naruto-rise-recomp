@@ -5,9 +5,10 @@
 #include "host/input.h"
 #include "loader.h"
 
+#include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <cwctype>
-#include <windows.h>
 
 namespace kernel
 {
@@ -362,43 +363,64 @@ GUEST_FUNC(RtlNtStatusToDosError)
 
 // ---- Time ----
 
-// RtlTimeToTimeFields(time*, TIME_FIELDS*)
+namespace
+{
+    // System times count 100 ns intervals from the first day of 1601 (UTC).
+    constexpr uint64_t kTicksPerMillisecond = 10'000;
+    constexpr uint64_t kMillisecondsPerDay = 86'400'000;
+    constexpr uint64_t kTicksPerDay = kMillisecondsPerDay * kTicksPerMillisecond;
+    constexpr std::chrono::sys_days kFirstDay{ std::chrono::year(1601) / std::chrono::January / 1 };
+    // The last year a set of fields may give, as in SystemTimeToFileTime.
+    constexpr uint32_t kLastYear = 30827;
+}
+
+// RtlTimeToTimeFields(time*, TIME_FIELDS*): TIME_FIELDS is eight 16-bit fields, year, month, day,
+// hour, minute, second, milliseconds and weekday (0 is Sunday).
 GUEST_FUNC(RtlTimeToTimeFields)
 {
     uint64_t time = mem::Load64(ctx.r3.u32);
-    FILETIME fileTime{ DWORD(time), DWORD(time >> 32) };
-    SYSTEMTIME system{};
-    FileTimeToSystemTime(&fileTime, &system);
-    uint32_t fields = ctx.r4.u32;
-    mem::Store16(fields + 0, system.wYear);
-    mem::Store16(fields + 2, system.wMonth);
-    mem::Store16(fields + 4, system.wDay);
-    mem::Store16(fields + 6, system.wHour);
-    mem::Store16(fields + 8, system.wMinute);
-    mem::Store16(fields + 10, system.wSecond);
-    mem::Store16(fields + 12, system.wMilliseconds);
-    mem::Store16(fields + 14, system.wDayOfWeek);
+    uint16_t values[8] = {};
+    // Times from 2^63 on are negative as the kernel's LARGE_INTEGER: their fields are left zero.
+    if (time < (uint64_t(1) << 63))
+    {
+        std::chrono::sys_days day = kFirstDay + std::chrono::days(time / kTicksPerDay);
+        std::chrono::year_month_day date(day);
+        uint64_t milliseconds = time % kTicksPerDay / kTicksPerMillisecond;
+        values[0] = uint16_t(int(date.year()));
+        values[1] = uint16_t(unsigned(date.month()));
+        values[2] = uint16_t(unsigned(date.day()));
+        values[3] = uint16_t(milliseconds / 3'600'000);
+        values[4] = uint16_t(milliseconds / 60'000 % 60);
+        values[5] = uint16_t(milliseconds / 1'000 % 60);
+        values[6] = uint16_t(milliseconds % 1'000);
+        values[7] = uint16_t(std::chrono::weekday(day).c_encoding());
+    }
+    for (uint32_t i = 0; i < 8; i++)
+        mem::Store16(ctx.r4.u32 + 2 * i, values[i]);
 }
 
-// RtlTimeFieldsToTime(TIME_FIELDS*, time*) -> success
+// RtlTimeFieldsToTime(TIME_FIELDS*, time*) -> success: fails, writing nothing, on a field out of its
+// range (the weekday is not read).
 GUEST_FUNC(RtlTimeFieldsToTime)
 {
     uint32_t fields = ctx.r3.u32;
-    SYSTEMTIME system{};
-    system.wYear = mem::Load16(fields + 0);
-    system.wMonth = mem::Load16(fields + 2);
-    system.wDay = mem::Load16(fields + 4);
-    system.wHour = mem::Load16(fields + 6);
-    system.wMinute = mem::Load16(fields + 8);
-    system.wSecond = mem::Load16(fields + 10);
-    system.wMilliseconds = mem::Load16(fields + 12);
-    FILETIME fileTime;
-    if (!SystemTimeToFileTime(&system, &fileTime))
-    {
-        ctx.r3.u64 = 0;
+    uint32_t year = mem::Load16(fields + 0);
+    uint32_t month = mem::Load16(fields + 2);
+    uint32_t day = mem::Load16(fields + 4);
+    uint32_t hour = mem::Load16(fields + 6);
+    uint32_t minute = mem::Load16(fields + 8);
+    uint32_t second = mem::Load16(fields + 10);
+    uint32_t milliseconds = mem::Load16(fields + 12);
+    ctx.r3.u64 = 0;
+    if (year < 1601 || year > kLastYear || hour > 23 || minute > 59 || second > 59 || milliseconds > 999)
         return;
-    }
-    mem::Store64(ctx.r4.u32, (uint64_t(fileTime.dwHighDateTime) << 32) | fileTime.dwLowDateTime);
+    std::chrono::year_month_day date{ std::chrono::year(int(year)), std::chrono::month(month),
+                                      std::chrono::day(day) };
+    if (!date.ok())
+        return;
+    uint64_t days = uint64_t((std::chrono::sys_days(date) - kFirstDay).count());
+    uint64_t dayMilliseconds = ((hour * 60 + minute) * 60 + second) * 1'000 + milliseconds;
+    mem::Store64(ctx.r4.u32, days * kTicksPerDay + dayMilliseconds * kTicksPerMillisecond);
     ctx.r3.u64 = 1;
 }
 
