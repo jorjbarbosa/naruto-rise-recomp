@@ -10,6 +10,7 @@
 #include <cstring>
 #include <filesystem>
 #include <mutex>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -54,6 +55,51 @@ namespace
         size_t nextEntry = 0;
         bool enumerated = false;
     };
+
+    // Whether a host file name (in the system's own units, so no conversion can throw) is name with
+    // A-Z and a-z taken as the same; every other unit must be the same.
+    bool SameNameNoCase(const fs::path::string_type& host, const std::string& name)
+    {
+        if (host.size() != name.size())
+            return false;
+        for (size_t i = 0; i < name.size(); i++)
+        {
+            auto unit = static_cast<std::make_unsigned_t<fs::path::value_type>>(host[i]);
+            auto byte = static_cast<unsigned char>(name[i]);
+            if (unit != byte && (unit > 0x7F || ascii::ToLower(char(unit)) != ascii::ToLower(char(byte))))
+                return false;
+        }
+        return true;
+    }
+
+    // dir followed by the guest's relative path rest, whose separator is '\' on every host, each name
+    // matched to an existing entry by FindEntry. From the first name that matches nothing on, the
+    // names are kept as given: a file or folder to create, or one that does not exist.
+    fs::path AppendGuestPath(fs::path dir, const std::string& rest)
+    {
+        bool exists = true;
+        size_t begin = 0;
+        while (begin < rest.size())
+        {
+            size_t end = std::min(rest.find('\\', begin), rest.size());
+            if (end > begin)
+            {
+                std::string name = rest.substr(begin, end - begin);
+                if (exists)
+                {
+                    fs::path entry;
+                    exists = FindEntry(dir, name, entry);
+                    dir = std::move(entry);
+                }
+                else
+                {
+                    dir /= name;
+                }
+            }
+            begin = end + 1;
+        }
+        return dir;
+    }
 
     // Splits "game:\a\b", "\Device\Cdrom0\a\b" or "\??\game:\a\b" into device and relative path,
     // following the symbolic links the game created.
@@ -113,26 +159,29 @@ namespace
         while (!rest.empty() && rest.front() == '\\')
             rest.erase(rest.begin());
 
+        // The lookup reads folders, so it runs after the mount lock is let go.
+        fs::path mounted;
         {
             std::lock_guard lock(g_mountMutex);
             auto mount = g_mounts.find(device);
             if (mount != g_mounts.end())
-            {
-                hostPath = mount->second / rest;
-                readOnly = false;
-                return true;
-            }
+                mounted = mount->second;
         }
 
-        if (device == "game" || device == "d" || device == "cdrom0" || device == "media")
+        if (!mounted.empty())
         {
-            hostPath = g_gameDir / rest;
+            hostPath = AppendGuestPath(mounted, rest);
+            readOnly = false;
+        }
+        else if (device == "game" || device == "d" || device == "cdrom0" || device == "media")
+        {
+            hostPath = AppendGuestPath(g_gameDir, rest);
             readOnly = true;
         }
         else
         {
             std::replace(device.begin(), device.end(), '\\', '_');
-            hostPath = g_userDir / device / rest;
+            hostPath = AppendGuestPath(g_userDir / device, rest);
             readOnly = false;
         }
         return true;
@@ -283,6 +332,26 @@ namespace kernel
         bool readOnly;
         ResolvePath(guestPath, hostPath, readOnly);
         return hostPath;
+    }
+
+    bool FindEntry(const std::filesystem::path& dir, const std::string& name, std::filesystem::path& entry)
+    {
+        std::error_code error;
+        entry = dir / name;
+        if (fs::exists(entry, error))
+            return true;
+        bool found = false;
+        fs::directory_iterator it(dir, error);
+        for (; !error && it != fs::directory_iterator(); it.increment(error))
+        {
+            const fs::path& candidate = it->path();
+            if (SameNameNoCase(candidate.filename().native(), name) && (!found || candidate < entry))
+            {
+                entry = candidate;
+                found = true;
+            }
+        }
+        return found;
     }
 
     const std::filesystem::path& UserDir()

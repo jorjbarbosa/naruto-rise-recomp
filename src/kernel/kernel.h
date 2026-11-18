@@ -217,8 +217,16 @@ namespace kernel
     // Game folder on the host and the folder for data the game writes.
     void SetPaths(const std::string& gameDir, const std::string& userDir);
 
-    // Host path of a guest path ("D:\AI2C.DLL", "game:\...", symbolic links the game created).
+    // Host path of a guest path ("D:\AI2C.DLL", "game:\...", symbolic links the game created). Each
+    // name is matched to an existing entry by FindEntry.
     std::filesystem::path HostPath(const std::string& guestPath);
+
+    // Sets entry to the entry of the host folder dir called name, matched as the guest's file systems
+    // match names, regardless of ASCII case: the game asks for "naruto.BF" where the disc holds
+    // "naruto.bf". The exact name when it exists (all a case-insensitive host file system needs), else
+    // the folder's name that equals it but for case, the lowest when there are several so that the
+    // choice never changes. False, with entry dir / name, when there is none. Any thread.
+    bool FindEntry(const std::filesystem::path& dir, const std::string& name, std::filesystem::path& entry);
 
     // The folder for data the game writes (profile, saves, other writable devices).
     const std::filesystem::path& UserDir();

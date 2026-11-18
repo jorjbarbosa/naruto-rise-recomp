@@ -86,15 +86,31 @@ namespace
         return name;
     }
 
-    // A package named by an XCONTENT_DATA.
+    // A package named by an XCONTENT_DATA. Its folder is matched by FindEntry, as the console matches
+    // content names (the game opens "autosave.ninjasave" that it created as "Autosave.ninjasave"),
+    // and the header and thumbnail files are named after the folder found.
     struct Package
     {
         uint32_t type = 0;
         std::string fileName;
-        fs::path dir;
+        fs::path dir; // the folder as named, until Find
 
-        fs::path Header() const { return dir.parent_path() / (fileName + ".header"); }
-        fs::path Thumbnail() const { return dir.parent_path() / (fileName + ".thumbnail"); }
+        // Sets dir to the package's folder on the disk, or to the folder as named when there is none.
+        // Reads the folder of the type, so call it under g_contentMutex, with the checks that use dir.
+        void Find()
+        {
+            FindEntry(TypeDir(type), fileName, dir);
+        }
+
+        fs::path Header() const { return Beside(".header"); }
+        fs::path Thumbnail() const { return Beside(".thumbnail"); }
+
+    private:
+        fs::path Beside(const char* extension) const
+        {
+            fs::path path = dir;
+            return path += extension;
+        }
     };
 
     // A file name is one folder name: no separators, no device colon, no dot-only names.
@@ -143,7 +159,8 @@ namespace
         uint32_t typeValue = __builtin_bswap32(type);
         memcpy(data.data() + 0, &device, 4);
         memcpy(data.data() + 4, &typeValue, 4);
-        std::ifstream header(TypeDir(type) / (fileName + ".header"), std::ios::binary);
+        Package package{ type, fileName, TypeDir(type) / fileName };
+        std::ifstream header(package.Header(), std::ios::binary);
         header.read(reinterpret_cast<char*>(data.data() + kDisplayNameOffset), kDisplayNameSize);
         memcpy(data.data() + kFileNameOffset, fileName.data(), std::min<size_t>(fileName.size(), kFileNameSize - 1));
         return data;
@@ -179,6 +196,7 @@ namespace
             return X_ERROR_ALREADY_EXISTS;
         }
 
+        package.Find();
         std::error_code fsError;
         bool exists = fs::is_directory(package.dir, fsError);
         uint32_t disposition = kOpenedExisting;
@@ -327,6 +345,7 @@ GUEST_FUNC(XamContentDelete)
     if (result == X_ERROR_SUCCESS)
     {
         std::lock_guard lock(g_contentMutex);
+        package.Find();
         std::error_code error;
         if (!fs::is_directory(package.dir, error))
         {
@@ -352,9 +371,14 @@ GUEST_FUNC(XamContentGetCreator)
     uint32_t overlapped = ctx.r7.u32;
     Package package;
     uint32_t result = IsSignedIn(ctx.r3.u32) ? LoadPackage(ctx.r4.u32, package) : X_ERROR_NO_SUCH_USER;
-    std::error_code error;
-    if (result == X_ERROR_SUCCESS && !fs::is_directory(package.dir, error))
-        result = X_ERROR_FILE_NOT_FOUND;
+    if (result == X_ERROR_SUCCESS)
+    {
+        std::lock_guard lock(g_contentMutex);
+        package.Find();
+        std::error_code error;
+        if (!fs::is_directory(package.dir, error))
+            result = X_ERROR_FILE_NOT_FOUND;
+    }
     if (result == X_ERROR_SUCCESS)
     {
         if (isCreatorOut != 0)
@@ -378,6 +402,7 @@ GUEST_FUNC(XamContentSetThumbnail)
     if (result == X_ERROR_SUCCESS)
     {
         std::lock_guard lock(g_contentMutex);
+        package.Find();
         std::error_code error;
         if (!fs::is_directory(package.dir, error))
         {
