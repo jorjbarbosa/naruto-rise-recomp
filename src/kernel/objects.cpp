@@ -2,8 +2,10 @@
 
 #include "kernel/kernel.h"
 
+#include "ascii.h"
 #include "host/timing.h"
 
+#include <algorithm>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -157,7 +159,7 @@ namespace kernel
             return create();
 
         std::string key = name;
-        std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return char(tolower(c)); });
+        std::transform(key.begin(), key.end(), key.begin(), ascii::ToLower);
 
         // Held across lookup and creation, so two threads creating the same name share one object.
         std::lock_guard lock(g_namedMutex);

@@ -3,12 +3,14 @@
 #include "kernel/kernel.h"
 #include "kernel/xam.h"
 
+#include "host/paths.h"
+
 #include <array>
 #include <cstdio>
 #include <fstream>
 #include <mutex>
+#include <type_traits>
 #include <vector>
-#include <windows.h>
 
 namespace fs = std::filesystem;
 using namespace kernel;
@@ -36,8 +38,13 @@ namespace
     constexpr uint32_t kDeviceDataSize = 80;
     constexpr uint32_t kDeviceNameLength = 27;
 
-    // Creation dispositions (XCONTENTFLAG_CREATENEW... are the CreateFile ones) and results.
+    // Creation dispositions (XCONTENTFLAG_CREATENEW..., the values of CreateFile's) and results.
     constexpr uint32_t kDispositionMask = 0xF;
+    constexpr uint32_t kCreateNew = 1;        // XCONTENTFLAG_CREATENEW
+    constexpr uint32_t kCreateAlways = 2;     // XCONTENTFLAG_CREATEALWAYS
+    constexpr uint32_t kOpenExisting = 3;     // XCONTENTFLAG_OPENEXISTING
+    constexpr uint32_t kOpenAlways = 4;       // XCONTENTFLAG_OPENALWAYS
+    constexpr uint32_t kTruncateExisting = 5; // XCONTENTFLAG_TRUNCATEEXISTING
     constexpr uint32_t kCreatedNew = 1;      // XCONTENT_CREATED_NEW
     constexpr uint32_t kOpenedExisting = 2;  // XCONTENT_OPENED_EXISTING
 
@@ -63,16 +70,18 @@ namespace
     }
 
     // The name of a package folder: printable ASCII only, so it fits the char file name of
-    // XCONTENT_DATA (and converting it cannot throw). Empty for any other name.
+    // XCONTENT_DATA. Read from the OS's own encoding, so no conversion can throw. Empty for any
+    // other name.
     std::string PackageName(const fs::path& path)
     {
-        std::wstring wide = path.filename().wstring();
         std::string name;
-        for (wchar_t c : wide)
+        for (fs::path::value_type c : path.filename().native())
         {
-            if (c < 0x20 || c > 0x7E)
+            // Unsigned, so the bytes of a multibyte character fall outside the range.
+            auto unit = static_cast<std::make_unsigned_t<fs::path::value_type>>(c);
+            if (unit < 0x20 || unit > 0x7E)
                 return {};
-            name += char(c);
+            name += char(unit);
         }
         return name;
     }
@@ -176,24 +185,24 @@ namespace
         bool clear = false;
         switch (flags & kDispositionMask)
         {
-        case CREATE_NEW:
+        case kCreateNew:
             if (exists)
                 return X_ERROR_ALREADY_EXISTS;
             disposition = kCreatedNew;
             break;
-        case CREATE_ALWAYS:
+        case kCreateAlways:
             // An existing package is replaced by an empty one.
             clear = exists;
             disposition = kCreatedNew;
             break;
-        case OPEN_EXISTING:
+        case kOpenExisting:
             if (!exists)
                 return X_ERROR_FILE_NOT_FOUND;
             break;
-        case OPEN_ALWAYS:
+        case kOpenAlways:
             disposition = exists ? kOpenedExisting : kCreatedNew;
             break;
-        case TRUNCATE_EXISTING:
+        case kTruncateExisting:
             if (!exists)
                 return X_ERROR_FILE_NOT_FOUND;
             clear = true;
@@ -251,16 +260,19 @@ GUEST_FUNC(XamContentGetDeviceData)
     }
     std::error_code error;
     fs::create_directories(UserDir(), error);
-    ULARGE_INTEGER freeBytes{};
-    ULARGE_INTEGER totalBytes{};
-    if (!GetDiskFreeSpaceExW(UserDir().c_str(), &freeBytes, &totalBytes, nullptr))
-        LOG_ONCE("warning: free space of %s unknown (%lu)", UserDir().string().c_str(), GetLastError());
+    // The space this process may use, as the Xbox reports it for the user; zero when unknown.
+    fs::space_info space = fs::space(UserDir(), error);
+    if (error)
+    {
+        LOG_ONCE("warning: free space of %s unknown (%s)", host::PathText(UserDir()).c_str(), error.message().c_str());
+        space = {};
+    }
 
     memset(mem::Ptr(out), 0, kDeviceDataSize);
     mem::Store32(out + 0, kDeviceId);
     mem::Store32(out + 4, kDeviceTypeHdd);
-    mem::Store64(out + 8, totalBytes.QuadPart);
-    mem::Store64(out + 16, freeBytes.QuadPart);
+    mem::Store64(out + 8, space.capacity);
+    mem::Store64(out + 16, space.available);
     const char* name = "Hard Drive";
     for (uint32_t i = 0; name[i] != 0 && i < kDeviceNameLength - 1; i++)
         mem::Store16(out + 24 + i * 2, uint16_t(name[i]));

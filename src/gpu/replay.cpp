@@ -6,6 +6,7 @@
 #include "gpu/renderer/recording.h"
 #include "gpu/renderer/renderer.h"
 #include "gpu/settings.h"
+#include "host/files.h"
 #include "host/paths.h"
 #include "host/window.h"
 #include "log.h"
@@ -23,7 +24,7 @@ namespace gpu
         // A binary PPM of the image's RGB.
         bool WritePpm(const std::filesystem::path& path, const ResolvedImage& image)
         {
-            std::FILE* file = _wfopen(path.c_str(), L"wb");
+            std::FILE* file = host::OpenFile(path, "wb");
             if (file == nullptr)
                 return false;
             std::fprintf(file, "P6\n%u %u\n255\n", image.width, image.height);

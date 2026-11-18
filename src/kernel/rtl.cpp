@@ -2,6 +2,7 @@
 
 #include "kernel/kernel.h"
 
+#include "ascii.h"
 #include "host/input.h"
 #include "loader.h"
 
@@ -285,7 +286,7 @@ GUEST_FUNC(RtlCompareStringN)
     uint32_t lengthA = ctx.r4.u32 == 0xFFFFFFFF ? uint32_t(strlen(a)) : ctx.r4.u32;
     uint32_t lengthB = ctx.r6.u32 == 0xFFFFFFFF ? uint32_t(strlen(b)) : ctx.r6.u32;
     uint32_t length = std::min(lengthA, lengthB);
-    int result = ctx.r7.u32 ? _strnicmp(a, b, length) : strncmp(a, b, length);
+    int result = ctx.r7.u32 ? ascii::CompareNoCase(a, b, length) : strncmp(a, b, length);
     ctx.r3.s64 = result != 0 ? result : int32_t(lengthA) - int32_t(lengthB);
 }
 
@@ -507,11 +508,11 @@ GUEST_FUNC(XexGetModuleHandle)
     static uint32_t kernelHandle = 0;
     std::string name = ctx.r3.u32 != 0 ? mem::String(ctx.r3.u32) : "";
     uint32_t handle = 0;
-    if (name.empty() || _stricmp(name.c_str(), "default.xex") == 0)
+    if (name.empty() || ascii::EqualNoCase(name, "default.xex"))
         handle = g_module.moduleHandle;
-    else if (_stricmp(name.c_str(), "xam.xex") == 0)
+    else if (ascii::EqualNoCase(name, "xam.xex"))
         handle = xamHandle != 0 ? xamHandle : (xamHandle = mem::Alloc(mem::Heap::System, 0x100));
-    else if (_stricmp(name.c_str(), "xboxkrnl.exe") == 0)
+    else if (ascii::EqualNoCase(name, "xboxkrnl.exe"))
         handle = kernelHandle != 0 ? kernelHandle : (kernelHandle = mem::Alloc(mem::Heap::System, 0x100));
 
     TRACE("XexGetModuleHandle(\"%s\") -> %08X", name.c_str(), handle);

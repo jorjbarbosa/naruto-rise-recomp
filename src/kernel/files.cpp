@@ -2,14 +2,16 @@
 
 #include "kernel/kernel.h"
 
+#include "ascii.h"
+#include "host/files.h"
 #include "host/timing.h"
 
 #include <algorithm>
+#include <cstring>
 #include <filesystem>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
-#include <windows.h>
 
 namespace fs = std::filesystem;
 using namespace kernel;
@@ -25,26 +27,22 @@ namespace
     std::mutex g_mountMutex;
     std::unordered_map<std::string, fs::path> g_mounts; // lower-case device -> host folder
 
-    // FILE_ATTRIBUTE_* come from windows.h and have the same values on the Xbox 360.
-    constexpr uint32_t kFileDirectoryFile = 0x01; // NtCreateFile option
+    constexpr uint32_t kFileDirectoryFile = 0x01;       // NtCreateFile option
+    constexpr uint32_t kFileAttributeDirectory = 0x10;  // FILE_ATTRIBUTE_DIRECTORY
+    constexpr uint32_t kFileAttributeNormal = 0x80;     // FILE_ATTRIBUTE_NORMAL
 
     std::string Lower(std::string text)
     {
-        std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return char(tolower(c)); });
+        std::transform(text.begin(), text.end(), text.begin(), ascii::ToLower);
         return text;
     }
 
     struct FileObject : KernelObject
     {
         FileObject() : KernelObject(ObjectType::File) {}
-        ~FileObject() override
-        {
-            if (handle != INVALID_HANDLE_VALUE)
-                ::CloseHandle(handle);
-        }
 
         std::mutex mutex;
-        HANDLE handle = INVALID_HANDLE_VALUE;
+        host::File host; // closed for a directory
         fs::path path;
         std::string guestPath;
         bool directory = false;
@@ -140,23 +138,17 @@ namespace
         return true;
     }
 
-    uint64_t ToFileTime(fs::file_time_type time)
-    {
-        // file_time_type on Windows counts 100 ns ticks since 1601, like FILETIME.
-        return uint64_t(time.time_since_epoch().count());
-    }
-
     void StoreNetworkOpenInfo(uint32_t info, const fs::path& path)
     {
         std::error_code error;
         bool directory = fs::is_directory(path, error);
         uint64_t size = directory ? 0 : fs::file_size(path, error);
-        uint64_t time = ToFileTime(fs::last_write_time(path, error));
+        uint64_t time = host::FileTime(fs::last_write_time(path, error));
         for (int i = 0; i < 4; i++)
             mem::Store64(info + i * 8, time);
         mem::Store64(info + 32, (size + 4095) & ~4095ull);
         mem::Store64(info + 40, size);
-        mem::Store32(info + 48, directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL);
+        mem::Store32(info + 48, directory ? kFileAttributeDirectory : kFileAttributeNormal);
         mem::Store32(info + 52, 0);
     }
 
@@ -225,25 +217,26 @@ namespace
         }
         else
         {
-            DWORD creation;
+            // FILE_OPEN, FILE_CREATE, FILE_OPEN_IF, FILE_OVERWRITE; FILE_SUPERSEDE and
+            // FILE_OVERWRITE_IF replace the file.
+            host::Disposition creation;
             switch (disposition)
             {
-            case 1: creation = OPEN_EXISTING; break;
-            case 2: creation = CREATE_NEW; break;
-            case 3: creation = OPEN_ALWAYS; break;
-            case 4: creation = TRUNCATE_EXISTING; break;
-            default: creation = CREATE_ALWAYS; break;
+            case 1: creation = host::Disposition::OpenExisting; break;
+            case 2: creation = host::Disposition::CreateNew; break;
+            case 3: creation = host::Disposition::OpenAlways; break;
+            case 4: creation = host::Disposition::TruncateExisting; break;
+            default: creation = host::Disposition::CreateAlways; break;
             }
             bool write = !readOnly && wantsWrite;
             if (write)
                 fs::create_directories(hostPath.parent_path(), error);
-            file->handle = CreateFileW(hostPath.c_str(), GENERIC_READ | (write ? GENERIC_WRITE : 0),
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, creation, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (file->handle == INVALID_HANDLE_VALUE)
+            host::OpenError openError;
+            file->host = host::File::Open(hostPath, write, creation, openError);
+            if (!file->host.IsOpen())
             {
-                DWORD lastError = GetLastError();
-                uint32_t status = lastError == ERROR_PATH_NOT_FOUND ? X_STATUS_OBJECT_PATH_NOT_FOUND
-                    : lastError == ERROR_FILE_EXISTS ? X_STATUS_OBJECT_NAME_COLLISION
+                uint32_t status = openError == host::OpenError::PathNotFound ? X_STATUS_OBJECT_PATH_NOT_FOUND
+                    : openError == host::OpenError::Exists ? X_STATUS_OBJECT_NAME_COLLISION
                     : X_STATUS_OBJECT_NAME_NOT_FOUND;
                 Log("file: \"%s\" not found", guestPath.c_str());
                 StoreIoStatus(ioStatus, status, 0);
@@ -270,7 +263,7 @@ namespace
             return WildcardMatch(pattern + 1, text) || (*text != 0 && WildcardMatch(pattern, text + 1));
         if (*text == 0)
             return false;
-        if (*pattern == '?' || tolower((unsigned char)*pattern) == tolower((unsigned char)*text))
+        if (*pattern == '?' || ascii::ToLower(*pattern) == ascii::ToLower(*text))
             return WildcardMatch(pattern + 1, text + 1);
         return false;
     }
@@ -351,19 +344,16 @@ namespace
         if (offset == 0xFFFFFFFFFFFFFFFEull) // FILE_USE_FILE_POINTER_POSITION
             offset = file->position;
 
-        OVERLAPPED overlapped{};
-        overlapped.Offset = DWORD(offset);
-        overlapped.OffsetHigh = DWORD(offset >> 32);
-        DWORD done = 0;
+        uint32_t done = 0;
         mem::Commit(buffer, length);
-        BOOL ok = write ? WriteFile(file->handle, mem::Ptr(buffer), length, &done, &overlapped)
-                        : ReadFile(file->handle, mem::Ptr(buffer), length, &done, &overlapped);
-        if (!ok && GetLastError() != ERROR_HANDLE_EOF)
-            Log("warning: %s of \"%s\" failed (%lu)", write ? "write" : "read", file->guestPath.c_str(), GetLastError());
+        uint32_t hostError = write ? file->host.Write(offset, mem::Ptr(buffer), length, done)
+                                   : file->host.Read(offset, mem::Ptr(buffer), length, done);
+        if (hostError != 0)
+            Log("warning: %s of \"%s\" failed (%u)", write ? "write" : "read", file->guestPath.c_str(), hostError);
         file->position = offset + done;
 
         uint32_t status = (!write && done == 0 && length != 0) ? X_STATUS_END_OF_FILE : X_STATUS_SUCCESS;
-        TRACE("file: %s \"%s\" offset %llX length %X -> %lX (status %08X, event %08X)", write ? "write" : "read",
+        TRACE("file: %s \"%s\" offset %llX length %X -> %X (status %08X, event %08X)", write ? "write" : "read",
             file->guestPath.c_str(), (unsigned long long)offset, length, done, status, ctx.r4.u32);
         StoreIoStatus(ioStatus, status, done);
         if (ctx.r4.u32 != 0)
@@ -386,7 +376,7 @@ GUEST_FUNC(NtWriteFile) { TransferFile(ctx, true); }
 GUEST_FUNC(NtReadFileScatter)
 {
     auto file = FileFromHandle(ctx.r3.u32);
-    if (file == nullptr)
+    if (file == nullptr || file->directory)
     {
         ctx.r3.u64 = X_STATUS_INVALID_HANDLE;
         return;
@@ -401,12 +391,9 @@ GUEST_FUNC(NtReadFileScatter)
     {
         uint32_t page = mem::Load32(segments + i * 4);
         uint32_t chunk = std::min<uint32_t>(4096, length - total);
-        OVERLAPPED overlapped{};
-        overlapped.Offset = DWORD(offset + total);
-        overlapped.OffsetHigh = DWORD((offset + total) >> 32);
-        DWORD done = 0;
+        uint32_t done = 0;
         mem::Commit(page, chunk);
-        ReadFile(file->handle, mem::Ptr(page), chunk, &done, &overlapped);
+        file->host.Read(offset + total, mem::Ptr(page), chunk, done);
         total += done;
         if (done < chunk)
             break;
@@ -443,10 +430,10 @@ GUEST_FUNC(NtQueryInformationFile)
     {
     case 4: // FileBasicInformation
     {
-        uint64_t time = ToFileTime(fs::last_write_time(file->path, error));
+        uint64_t time = host::FileTime(fs::last_write_time(file->path, error));
         for (int i = 0; i < 4; i++)
             mem::Store64(info + i * 8, time);
-        mem::Store32(info + 32, file->directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL);
+        mem::Store32(info + 32, file->directory ? kFileAttributeDirectory : kFileAttributeNormal);
         written = 40;
         break;
     }
@@ -499,13 +486,8 @@ GUEST_FUNC(NtSetInformationFile)
         file->position = mem::Load64(info);
         break;
     case 20: // FileEndOfFileInformation
-        if (!file->readOnly)
-        {
-            LARGE_INTEGER end;
-            end.QuadPart = int64_t(mem::Load64(info));
-            SetFilePointerEx(file->handle, end, nullptr, FILE_BEGIN);
-            SetEndOfFile(file->handle);
-        }
+        if (!file->readOnly && !file->host.Resize(mem::Load64(info)))
+            Log("warning: resizing \"%s\" failed", file->guestPath.c_str());
         break;
     default:
         TRACE("NtSetInformationFile class %u ignored", ctx.r7.u32);
@@ -625,14 +607,14 @@ GUEST_FUNC(NtQueryDirectoryFile)
     std::error_code error;
     bool directory = entry.is_directory(error);
     uint64_t size = directory ? 0 : entry.file_size(error);
-    uint64_t time = ToFileTime(entry.last_write_time(error));
+    uint64_t time = host::FileTime(entry.last_write_time(error));
     mem::Store32(info + 0, 0);
     mem::Store32(info + 4, uint32_t(file->nextEntry));
     for (int i = 0; i < 4; i++)
         mem::Store64(info + 8 + i * 8, time);
     mem::Store64(info + 40, size);
     mem::Store64(info + 48, (size + 4095) & ~4095ull);
-    mem::Store32(info + 56, directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL);
+    mem::Store32(info + 56, directory ? kFileAttributeDirectory : kFileAttributeNormal);
     mem::Store32(info + 60, uint32_t(name.size()));
     memcpy(mem::Ptr(info + 64), name.data(), name.size());
 

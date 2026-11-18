@@ -1,6 +1,8 @@
 // Loading of the recompiled guest modules: default.xex at startup and AI2C.dll on XexLoadImage.
 
 #include "loader.h"
+
+#include "ascii.h"
 #include "kernel/kernel.h"
 #include "ppc/ppc_module.h"
 
@@ -148,7 +150,7 @@ namespace
     {
         for (auto& module : g_modules)
         {
-            if (_stricmp(std::string(fileName).c_str(), module.info->fileName) == 0)
+            if (ascii::EqualNoCase(fileName, module.info->fileName))
                 return &module;
         }
         return nullptr;

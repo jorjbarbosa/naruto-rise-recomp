@@ -2,6 +2,7 @@
 
 #include "game/interpolation/diagnostics.h"
 
+#include "host/files.h"
 #include "host/paths.h"
 #include "log.h"
 
@@ -20,7 +21,7 @@ namespace game::interpolation
         std::error_code error;
         std::filesystem::create_directories(folder, error);
         std::filesystem::path path = folder / name;
-        std::FILE* file = _wfopen(path.c_str(), L"w");
+        std::FILE* file = host::OpenFile(path, "w");
         Log(file != nullptr ? "diagnostics: writing %s" : "diagnostics: cannot open %s", host::PathText(path).c_str());
         return file;
     }

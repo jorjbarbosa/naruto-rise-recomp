@@ -1,8 +1,8 @@
 // Frame recordings: what the recorder keeps while the game runs, and the file format.
 
 #include "gpu/renderer/recording.h"
-#include "host/paths.h"
 
+#include "host/files.h"
 #include "log.h"
 
 #include <cstdio>
@@ -222,7 +222,7 @@ namespace gpu
 
         bool WriteFrame(const std::filesystem::path& path, const RecordedFrame& frame)
         {
-            std::FILE* file = _wfopen(path.c_str(), L"wb");
+            std::FILE* file = host::OpenFile(path, "wb");
             if (file == nullptr)
                 return false;
             Writer out(file);

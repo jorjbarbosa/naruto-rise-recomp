@@ -5,6 +5,7 @@
 
 #include "gpu/renderer/backend.h"
 #include "gpu/renderer/targets.h"
+#include "host/files.h"
 #include "host/paths.h"
 #include "host/thread.h"
 #include "log.h"
@@ -172,7 +173,7 @@ namespace gpu
 
     void Pipelines::ReadList(const std::filesystem::path& listFile)
     {
-        if (std::FILE* file = _wfopen(listFile.c_str(), L"rb"))
+        if (std::FILE* file = host::OpenFile(listFile, "rb"))
         {
             uint32_t header[2] = {};
             bool valid = std::fread(header, sizeof(header), 1, file) == 1 && header[0] == kListMagic &&
@@ -206,10 +207,10 @@ namespace gpu
         // tail, duplicates and keys the cache lost all go.
         std::error_code error;
         std::filesystem::create_directories(listFile.parent_path(), error);
-        list_ = _wfopen(listFile.c_str(), L"wb");
+        list_ = host::OpenFile(listFile, "wb");
         if (list_ == nullptr)
         {
-            Log("gpu: cannot write the pipeline list %s; pipelines are not remembered", listFile.string().c_str());
+            Log("gpu: cannot write the pipeline list %s; pipelines are not remembered", host::PathText(listFile).c_str());
             return;
         }
         const uint32_t header[2] = { kListMagic, kListVersion };
@@ -235,10 +236,10 @@ namespace gpu
             return;
         // Written beside it and renamed over it: the process may end in the middle of the write.
         std::filesystem::path temporary = cacheFile_;
-        temporary += L".tmp";
+        temporary += ".tmp";
         std::error_code error;
         std::filesystem::create_directories(cacheFile_.parent_path(), error);
-        std::FILE* stream = _wfopen(temporary.c_str(), L"wb");
+        std::FILE* stream = host::OpenFile(temporary, "wb");
         bool written = stream != nullptr && std::fwrite(file.data(), 1, file.size(), stream) == file.size();
         if (stream != nullptr)
             written = std::fclose(stream) == 0 && written;
@@ -246,7 +247,7 @@ namespace gpu
             std::filesystem::rename(temporary, cacheFile_, error);
         if (!written || error)
         {
-            Log("gpu: cannot write the pipeline cache %s", cacheFile_.string().c_str());
+            Log("gpu: cannot write the pipeline cache %s", host::PathText(cacheFile_).c_str());
             return;
         }
         Log("gpu: pipeline cache of %zu KB written", file.size() >> 10);
