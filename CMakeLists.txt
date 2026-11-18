@@ -162,7 +162,8 @@ file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
 add_executable(roan-xenon ${SOURCES} ${GPU_SHADER_HEADERS} ${PPC_MODULE_OBJECTS} $<TARGET_OBJECTS:shader_cache>)
 target_include_directories(roan-xenon PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_BINARY_DIR}/generated"
     "${PPC_OUTPUT_DIR}" "${XENOS_THIRDPARTY_DIR}/xxHash")
-target_link_libraries(roan-xenon PRIVATE ppc_common XenonUtils plume zstd_decompress SDL3::SDL3-static ffmpeg_avcodec dbghelp)
+target_link_libraries(roan-xenon PRIVATE ppc_common XenonUtils plume zstd_decompress SDL3::SDL3-static ffmpeg_avcodec
+    tomlplusplus::tomlplusplus dbghelp)
 target_compile_options(roan-xenon PRIVATE /EHsc /Z7 -Wno-unused-parameter -Wno-null-arithmetic)
 target_link_options(roan-xenon PRIVATE /DEBUG /STACK:16777216)
 set_target_properties(roan-xenon PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

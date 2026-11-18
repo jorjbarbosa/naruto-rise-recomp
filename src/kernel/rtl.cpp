@@ -4,6 +4,7 @@
 
 #include "host/input.h"
 #include "loader.h"
+#include "settings/settings.h"
 
 #include <cstdio>
 #include <cwctype>
@@ -545,7 +546,7 @@ GUEST_FUNC(ExGetXConfigSetting)
     auto set32 = [&](uint32_t v) { size = 4; value[0] = uint8_t(v >> 24); value[1] = uint8_t(v >> 16); value[2] = uint8_t(v >> 8); value[3] = uint8_t(v); };
 
     if (category == 0x0002 && setting == 0x0002) set32(0x00001000);      // AV region: NTSC-U
-    else if (category == 0x0003 && setting == 0x0009) set32(1);          // language: English
+    else if (category == 0x0003 && setting == 0x0009) set32(::settings::XdkLanguage()); // language: game.language
     else if (category == 0x0003 && setting == 0x000A) set32(0x00040000); // video flags
     else if (category == 0x0003 && setting == 0x000B) set32(0x00010001); // audio flags
     else if (category == 0x0003 && setting == 0x000C) set32(0x00000040); // retail flags

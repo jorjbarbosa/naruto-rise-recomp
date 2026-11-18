@@ -9,6 +9,7 @@
 #include "host/window.h"
 #include "kernel/kernel.h"
 #include "loader.h"
+#include "settings/settings.h"
 
 #include <filesystem>
 #include <windows.h>
@@ -108,7 +109,10 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    kernel::SetPaths(gameDir.string(), (exeDir / "data" / "user").string());
+    fs::path userDir = exeDir / "data" / "user";
+    kernel::SetPaths(gameDir.string(), userDir.string());
+    // Before the executable, the window, the renderer and the guest read any setting.
+    settings::Load(userDir / "settings.toml");
     if (!LoadExecutable(gameDir / "default.xex"))
         return 1;
     // XAudioInitialize reads the XMA context base early in the title's startup.

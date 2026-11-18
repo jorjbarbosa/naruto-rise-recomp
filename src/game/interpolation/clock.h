@@ -18,8 +18,8 @@
 // iteration is a tick: under the fixed step the limiter then paces at the tick rate (1 / period), so
 // the game keeps its speed; with a measured dt (menus) it keeps the title's presentation interval.
 //
-// ROAN_FRAME_RATE=<31..240> turns it on at that rate; unset, or 30 and below, it is off and the game
-// runs at its own rate (the hooks test one flag). Main thread only: the calls come from
+// The setting video.frame_rate (settings/settings.h; ROAN_FRAME_RATE overrides it) at 31 to 240 turns
+// it on at that rate; at "game" it is off and the game runs at its own rate (the hooks test one flag). Main thread only: the calls come from
 // engine_hooks.cpp, from the three loop functions.
 
 #include <ppc_config.h>

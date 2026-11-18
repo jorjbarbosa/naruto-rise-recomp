@@ -15,6 +15,7 @@
 #include "host/timing.h"
 #include "log.h"
 #include "memory.h"
+#include "settings/settings.h"
 
 #include <algorithm>
 #include <cmath>
@@ -24,8 +25,6 @@ namespace game::interpolation::clock
 {
     namespace
     {
-        constexpr uint32_t kMinRate = 31;
-        constexpr uint32_t kMaxRate = 240;
         // A valid fixed period, seconds.
         constexpr float kMinPeriod = 1e-4f;
         constexpr float kMaxPeriod = 0.25f;
@@ -66,7 +65,7 @@ namespace game::interpolation::clock
         };
         Window g_window;
 
-        int64_t g_rate = -1;     // ROAN_FRAME_RATE, read once; 0: off
+        int64_t g_rate = -1;     // video.frame_rate, read once; 0: off
 
         double Seconds()
         {
@@ -265,14 +264,7 @@ namespace game::interpolation::clock
     {
         if (g_rate < 0)
         {
-            const char* value = std::getenv("ROAN_FRAME_RATE");
-            int rate = value != nullptr ? std::atoi(value) : 0;
-            if (rate > int(kMaxRate))
-            {
-                Log("clock: ROAN_FRAME_RATE %d above %u, using %u", rate, kMaxRate, kMaxRate);
-                rate = int(kMaxRate);
-            }
-            g_rate = rate >= int(kMinRate) ? rate : 0;
+            g_rate = int64_t(::settings::FrameRate());
         }
         return g_rate != 0;
     }

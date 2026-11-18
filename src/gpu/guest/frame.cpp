@@ -121,7 +121,7 @@ namespace gpu
             return;
         }
         // A quad of BeginVertices still waiting for its vertices goes before anything else posted.
-        Settings settings = Settings::FromEnvironment();
+        Settings settings = Settings::FromStore();
         std::filesystem::path executable = host::ExecutableDirectory();
         if (!executable.empty())
             settings.pipelineList = executable / "cache" / "pipelines.bin";
