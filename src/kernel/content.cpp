@@ -75,7 +75,10 @@ namespace
     std::string PackageName(const fs::path& path)
     {
         std::string name;
-        for (fs::path::value_type c : path.filename().native())
+        // Held in a variable: a range-for does not keep the temporary of filename() alive while it
+        // walks the string native() returns into it.
+        fs::path fileName = path.filename();
+        for (fs::path::value_type c : fileName.native())
         {
             // Unsigned, so the bytes of a multibyte character fall outside the range.
             auto unit = static_cast<std::make_unsigned_t<fs::path::value_type>>(c);
