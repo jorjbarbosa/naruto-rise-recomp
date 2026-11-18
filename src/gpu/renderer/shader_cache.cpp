@@ -14,18 +14,39 @@
 
 namespace gpu
 {
+    namespace
+    {
+        // The generated cache of a format, compressed.
+        struct CompressedCache
+        {
+            const uint8_t* data;
+            size_t size;
+            size_t decompressedSize;
+        };
+
+        CompressedCache CacheOf(plume::RenderShaderFormat format)
+        {
+#ifdef ROAN_D3D12
+            if (format == plume::RenderShaderFormat::DXIL)
+                return { g_compressedDxilCache, g_dxilCacheCompressedSize, g_dxilCacheDecompressedSize };
+#else
+            if (format == plume::RenderShaderFormat::DXIL)
+                Fatal("gpu: this build has no DXIL shaders");
+#endif
+            return { g_compressedSpirvCache, g_spirvCacheCompressedSize, g_spirvCacheDecompressedSize };
+        }
+    }
+
     ShaderCache::ShaderCache(plume::RenderShaderFormat format) : format_(format)
     {
-        bool dxil = format == plume::RenderShaderFormat::DXIL;
-        const uint8_t* compressed = dxil ? g_compressedDxilCache : g_compressedSpirvCache;
-        size_t compressedSize = dxil ? g_dxilCacheCompressedSize : g_spirvCacheCompressedSize;
-        data_.resize(dxil ? g_dxilCacheDecompressedSize : g_spirvCacheDecompressedSize);
-        size_t size = ZSTD_decompress(data_.data(), data_.size(), compressed, compressedSize);
+        CompressedCache cache = CacheOf(format);
+        data_.resize(cache.decompressedSize);
+        size_t size = ZSTD_decompress(data_.data(), data_.size(), cache.data, cache.size);
         if (ZSTD_isError(size) || size != data_.size())
             Fatal("gpu: the shader cache does not decompress (%s)", ZSTD_isError(size) ? ZSTD_getErrorName(size) : "size");
-        hash_ = XXH3_64bits(compressed, compressedSize);
+        hash_ = XXH3_64bits(cache.data, cache.size);
         Log("gpu: shader cache with %zu shaders, %zu MB of %s", g_shaderCacheEntryCount, data_.size() >> 20,
-            dxil ? "DXIL" : "SMOL-V");
+            format == plume::RenderShaderFormat::DXIL ? "DXIL" : "SMOL-V");
     }
 
     const ShaderCacheEntry* ShaderCache::Find(uint64_t key) const

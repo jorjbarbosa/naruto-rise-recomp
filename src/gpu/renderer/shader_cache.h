@@ -11,7 +11,8 @@
 #include <vector>
 
 // An entry of the generated table, which is sorted by hash. The hash (XXH3-64 of the shader
-// container, virtual part then physical part) is the key the draws use.
+// container, virtual part then physical part) is the key the draws use. XenosRecomp makes DXIL only
+// on Windows: elsewhere the DXIL fields are zero and the DXIL cache is not declared (ROAN_D3D12).
 struct ShaderCacheEntry
 {
     uint64_t hash;
@@ -24,17 +25,19 @@ struct ShaderCacheEntry
 
 extern ShaderCacheEntry g_shaderCacheEntries[];
 extern const size_t g_shaderCacheEntryCount;
+#ifdef ROAN_D3D12
 extern const uint8_t g_compressedDxilCache[];
 extern const size_t g_dxilCacheCompressedSize;
 extern const size_t g_dxilCacheDecompressedSize;
+#endif
 extern const uint8_t g_compressedSpirvCache[];
 extern const size_t g_spirvCacheCompressedSize;
 extern const size_t g_spirvCacheDecompressedSize;
 
 namespace gpu
 {
-    // The translated shaders in one format, DXIL or SPIR-V, decompressed once. Read-only after
-    // construction, so any thread may use it.
+    // The translated shaders in one format, DXIL (only where D3D12 is built) or SPIR-V, decompressed
+    // once. Read-only after construction, so any thread may use it.
     class ShaderCache
     {
     public:

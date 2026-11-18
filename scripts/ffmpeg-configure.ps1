@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
-    Regenerates cmake/ffmpeg: the FFmpeg configuration for the XMA decoder.
+    Regenerates cmake/ffmpeg/windows: the FFmpeg configuration of the XMA decoder for Windows x64
+    (ffmpeg-configure.sh writes cmake/ffmpeg/linux).
 
 .DESCRIPTION
     The runtime builds only the part of FFmpeg its XMA1 decoder needs (libavutil and libavcodec
@@ -19,7 +20,7 @@ $bash = Join-Path $env:ProgramFiles 'Git/bin/bash.exe'
 if (-not (Test-Path $bash)) { Fail "the bash of Git for Windows was not found at $bash" }
 $ffmpeg = Join-Path $RepoRoot 'thirdparty/ffmpeg'
 if (-not (Test-Path (Join-Path $ffmpeg 'configure'))) { Fail 'thirdparty/ffmpeg is empty; run: git submodule update --init' }
-$output = Join-Path $RepoRoot 'cmake/ffmpeg'
+$output = Join-Path $RepoRoot 'cmake/ffmpeg/windows'
 
 Use-VsDevEnvironment
 

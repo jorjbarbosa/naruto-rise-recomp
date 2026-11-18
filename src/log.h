@@ -3,10 +3,12 @@
 #include <atomic>
 #include <cstdarg>
 
-// Thread-safe logging to stderr.
-void Log(const char* format, ...);
+// Thread-safe logging to stderr. The formats are printf's, checked by the compiler: a type that
+// matches on one system may not on another (uint64_t is unsigned long long on Windows and unsigned
+// long on Linux).
+void Log(const char* format, ...) __attribute__((format(printf, 1, 2)));
 void LogV(const char* format, va_list args);
-[[noreturn]] void Fatal(const char* format, ...);
+[[noreturn]] void Fatal(const char* format, ...) __attribute__((format(printf, 1, 2)));
 
 // Logs only the first time this line is reached.
 #define LOG_ONCE(...)                                           \

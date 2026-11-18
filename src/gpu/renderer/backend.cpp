@@ -8,7 +8,11 @@
 #include "gpu/textures/formats.h"
 #include "log.h"
 
+// D3D12 exists only in Windows builds (ROAN_D3D12): elsewhere every device is a Vulkan one, and each
+// D3D12 branch below is left out.
+#ifdef ROAN_D3D12
 #include <plume_d3d12.h>
+#endif
 #include <plume_vulkan.h>
 
 #include <cstring>
@@ -21,7 +25,9 @@
 
 namespace plume
 {
+#ifdef ROAN_D3D12
     std::unique_ptr<RenderInterface> CreateD3D12Interface();
+#endif
     // Plume's own mapping of its formats, defined in plume_vulkan.cpp.
     VkFormat toVk(RenderFormat format);
 }
@@ -121,6 +127,7 @@ namespace gpu
             return VK_FALSE;
         }
 
+#ifdef ROAN_D3D12
         // Turns on the D3D12 debug layer; before Plume creates the device.
         void EnableD3D12DebugLayer()
         {
@@ -152,6 +159,7 @@ namespace gpu
             queue->AddStorageFilterEntries(&filter);
             queue->Release();
         }
+#endif
 
         // Logs the Vulkan version and driver of the device and checks what the renderer needs. Plume
         // turns on every core feature the device reports, the descriptor indexing features it reports
@@ -307,9 +315,11 @@ namespace gpu
         }
         else
         {
+#ifdef ROAN_D3D12
             if (settings.debugLayer)
                 EnableD3D12DebugLayer();
             api = plume::CreateD3D12Interface();
+#endif
         }
         if (!api)
             Log("gpu: error: cannot create the %s interface", ApiName(settings.api));
@@ -320,39 +330,49 @@ namespace gpu
     {
         if (settings.api == GpuApi::Vulkan)
             return CheckVulkanDevice(device);
+#ifdef ROAN_D3D12
         if (settings.debugLayer)
             FilterD3D12DebugMessages(device);
+#endif
         return true;
     }
 
     bool IsCreated(const plume::RenderBuffer* buffer)
     {
+#ifdef ROAN_D3D12
         if (const auto* d3d12 = dynamic_cast<const plume::D3D12Buffer*>(buffer))
             return d3d12->d3d != nullptr;
+#endif
         const auto* vulkan = dynamic_cast<const plume::VulkanBuffer*>(buffer);
         return vulkan != nullptr && vulkan->vk != VK_NULL_HANDLE;
     }
 
     bool IsCreated(const plume::RenderTexture* texture)
     {
+#ifdef ROAN_D3D12
         if (const auto* d3d12 = dynamic_cast<const plume::D3D12Texture*>(texture))
             return d3d12->d3d != nullptr;
+#endif
         const auto* vulkan = dynamic_cast<const plume::VulkanTexture*>(texture);
         return vulkan != nullptr && vulkan->vk != VK_NULL_HANDLE;
     }
 
     bool IsCreated(const plume::RenderPipeline* pipeline)
     {
+#ifdef ROAN_D3D12
         if (const auto* d3d12 = dynamic_cast<const plume::D3D12GraphicsPipeline*>(pipeline))
             return d3d12->d3d != nullptr;
+#endif
         const auto* vulkan = dynamic_cast<const plume::VulkanGraphicsPipeline*>(pipeline);
         return vulkan != nullptr && vulkan->vk != VK_NULL_HANDLE;
     }
 
     bool IsCreated(const plume::RenderSwapChain* swapChain)
     {
+#ifdef ROAN_D3D12
         if (const auto* d3d12 = dynamic_cast<const plume::D3D12SwapChain*>(swapChain))
             return d3d12->d3d != nullptr;
+#endif
         // A Vulkan swap chain gets its images at its first resize; the surface comes at creation.
         const auto* vulkan = dynamic_cast<const plume::VulkanSwapChain*>(swapChain);
         return vulkan != nullptr && vulkan->surface != VK_NULL_HANDLE;
@@ -360,8 +380,11 @@ namespace gpu
 
     plume::RenderShaderFormat ShaderFormat(plume::RenderDevice& device)
     {
-        return dynamic_cast<plume::D3D12Device*>(&device) != nullptr ? plume::RenderShaderFormat::DXIL
-                                                                     : plume::RenderShaderFormat::SPIRV;
+#ifdef ROAN_D3D12
+        if (dynamic_cast<plume::D3D12Device*>(&device) != nullptr)
+            return plume::RenderShaderFormat::DXIL;
+#endif
+        return plume::RenderShaderFormat::SPIRV;
     }
 
     bool KeepsPipelineCache(plume::RenderDevice& device)
@@ -416,6 +439,7 @@ namespace gpu
     std::unique_ptr<plume::RenderPipelineLayout> CreateLayout(plume::RenderDevice& device,
         plume::RenderPipelineLayoutDesc desc, const ConstantReferences& references)
     {
+#ifdef ROAN_D3D12
         if (dynamic_cast<plume::D3D12Device*>(&device) != nullptr)
         {
             plume::RenderRootDescriptorDesc roots[kMaxReferences];
@@ -425,6 +449,7 @@ namespace gpu
             desc.rootDescriptorDescsCount = references.count;
             return device.createPipelineLayout(desc);
         }
+#endif
         const plume::RenderPushConstantRange addresses(0, 0, 0, references.count * uint32_t(sizeof(uint64_t)),
             references.stages);
         desc.pushConstantRanges = &addresses;
@@ -435,17 +460,21 @@ namespace gpu
     void BindConstantReferences(plume::RenderCommandList& list, const plume::RenderBufferReference* references,
         uint32_t count, const plume::RenderBufferReference* bound)
     {
+#ifdef ROAN_D3D12
         bool d3d12 = dynamic_cast<plume::D3D12CommandList*>(&list) != nullptr;
+#endif
         for (uint32_t i = 0; i < count; i++)
         {
             const plume::RenderBufferReference& reference = references[i];
             if (bound != nullptr && bound[i] == reference)
                 continue;
+#ifdef ROAN_D3D12
             if (d3d12)
             {
                 list.setGraphicsRootDescriptor(reference, i);
                 continue;
             }
+#endif
             uint64_t address = reference.ref->getDeviceAddress() + reference.offset;
             list.setGraphicsPushConstants(0, &address, i * uint32_t(sizeof(address)), uint32_t(sizeof(address)));
         }
@@ -453,8 +482,11 @@ namespace gpu
 
     void BindImmutableSamplers(plume::RenderCommandList& list, plume::RenderDescriptorSet& set, uint32_t index)
     {
-        if (dynamic_cast<plume::D3D12CommandList*>(&list) == nullptr)
-            list.setGraphicsDescriptorSet(&set, index);
+#ifdef ROAN_D3D12
+        if (dynamic_cast<plume::D3D12CommandList*>(&list) != nullptr)
+            return;
+#endif
+        list.setGraphicsDescriptorSet(&set, index);
     }
 
     std::unique_ptr<plume::RenderPipelineLayout> CreateDrawLayout(plume::RenderDevice& device,
@@ -478,18 +510,26 @@ namespace gpu
 
     void SetBlendConstants(plume::RenderCommandList& list, const std::array<float, 4>& color)
     {
+#ifdef ROAN_D3D12
         if (auto* d3d12 = dynamic_cast<plume::D3D12CommandList*>(&list))
+        {
             d3d12->d3d->OMSetBlendFactor(color.data());
-        else
-            static_cast<plume::VulkanCommandList&>(list).setBlendConstants(color.data());
+            return;
+        }
+#endif
+        static_cast<plume::VulkanCommandList&>(list).setBlendConstants(color.data());
     }
 
     void SetStencilReference(plume::RenderCommandList& list, uint32_t reference)
     {
+#ifdef ROAN_D3D12
         if (auto* d3d12 = dynamic_cast<plume::D3D12CommandList*>(&list))
+        {
             d3d12->d3d->OMSetStencilRef(reference);
-        else
-            static_cast<plume::VulkanCommandList&>(list).setStencilReference(reference);
+            return;
+        }
+#endif
+        static_cast<plume::VulkanCommandList&>(list).setStencilReference(reference);
     }
 
     std::unique_ptr<plume::RenderSwapChain> CreateSwapChain(plume::RenderCommandQueue& queue, plume::RenderWindow window,
@@ -509,7 +549,11 @@ namespace gpu
 
     bool HasSyncInterval(const plume::RenderSwapChain& swapChain)
     {
+#ifdef ROAN_D3D12
         return dynamic_cast<const plume::D3D12SwapChain*>(&swapChain) != nullptr;
+#else
+        return false;
+#endif
     }
 
     LatencyWait WaitForFrameLatency(plume::RenderSwapChain& swapChain, uint32_t timeoutMs)
@@ -526,22 +570,28 @@ namespace gpu
             // Out of date or lost: there is nothing to wait for until the swap chain is made again.
             return result == VK_TIMEOUT ? LatencyWait::TimedOut : LatencyWait::Ready;
         }
+#ifdef ROAN_D3D12
         auto* d3d12 = dynamic_cast<plume::D3D12SwapChain*>(&swapChain);
-        if (d3d12 == nullptr || d3d12->waitableObject == nullptr)
-            return LatencyWait::Unavailable;
-        return WaitForSingleObject(d3d12->waitableObject, timeoutMs) == WAIT_TIMEOUT ? LatencyWait::TimedOut
-                                                                                    : LatencyWait::Ready;
+        if (d3d12 != nullptr && d3d12->waitableObject != nullptr)
+            return WaitForSingleObject(d3d12->waitableObject, timeoutMs) == WAIT_TIMEOUT ? LatencyWait::TimedOut
+                                                                                        : LatencyWait::Ready;
+#endif
+        return LatencyWait::Unavailable;
     }
 
     bool PresentSwapChain(plume::RenderSwapChain& swapChain, uint32_t index, uint32_t syncInterval, bool allowTearing,
         plume::RenderCommandSemaphore* rendered)
     {
-        auto* d3d12 = dynamic_cast<plume::D3D12SwapChain*>(&swapChain);
-        if (d3d12 == nullptr)
-            return swapChain.present(index, &rendered, rendered != nullptr ? 1 : 0);
-        // Tearing needs the swap chain flag, and only an immediate present may tear.
-        UINT flags = allowTearing && syncInterval == 0 && (d3d12->swapChainFlags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) != 0
-            ? DXGI_PRESENT_ALLOW_TEARING : 0;
-        return SUCCEEDED(d3d12->d3d->Present(syncInterval, flags));
+#ifdef ROAN_D3D12
+        if (auto* d3d12 = dynamic_cast<plume::D3D12SwapChain*>(&swapChain))
+        {
+            // Tearing needs the swap chain flag, and only an immediate present may tear.
+            UINT flags = allowTearing && syncInterval == 0 &&
+                    (d3d12->swapChainFlags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) != 0
+                ? DXGI_PRESENT_ALLOW_TEARING : 0;
+            return SUCCEEDED(d3d12->d3d->Present(syncInterval, flags));
+        }
+#endif
+        return swapChain.present(index, &rendered, rendered != nullptr ? 1 : 0);
     }
 }

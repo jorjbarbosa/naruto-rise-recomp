@@ -205,7 +205,7 @@ using namespace kernel;
 void ReportBadIndirectCall(uint32_t target, PPCContext& ctx)
 {
     Fatal("fatal: indirect call to %08X, which is not a known function (lr=%08X, thread %u)",
-        target, ctx.lr, CurrentThread() ? CurrentThread()->id : 0);
+        target, uint32_t(ctx.lr), CurrentThread() ? CurrentThread()->id : 0);
 }
 
 // ExCreateThread(handle*, stackSize, threadId*, xapiStartup, startAddress, startContext, flags)

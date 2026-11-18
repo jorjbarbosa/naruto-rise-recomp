@@ -2,7 +2,12 @@ cmake_minimum_required(VERSION 3.20)
 project(roan-xenon LANGUAGES C CXX)
 
 if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    message(FATAL_ERROR "roan-xenon must be built with clang (clang-cl on Windows); use scripts/build.ps1")
+    message(FATAL_ERROR "roan-xenon must be built with clang (clang-cl on Windows); use scripts/build.ps1 or build.sh")
+endif()
+
+# D3D12 exists only on Windows; ROAN_D3D12 marks the code that needs it, in every target.
+if(WIN32)
+    add_compile_definitions(ROAN_D3D12)
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -16,6 +21,9 @@ set(PPC_AI2C_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/build/ppc_ai2c" CACHE PATH "C++ gen
 
 # XenonUtils provides the XEX loader. EXCLUDE_FROM_ALL keeps the recompiler tools out of this build.
 add_subdirectory("${XENON_RECOMP_DIR}" xenonrecomp EXCLUDE_FROM_ALL)
+# Its bundled disassembler is third-party code like the other libraries here (its printf formats
+# warn where a 64-bit value is a long, on Linux).
+target_compile_options(disasm PRIVATE -Wno-everything)
 
 # Code shared by the generated sources and the runtime: CPU baseline and the hooks in ppc_detail.h.
 # Each module adds its own generated directory, which holds its ppc_config.h.
@@ -75,8 +83,8 @@ set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory("${CMAKE_SOURCE_DIR}/thirdparty/SDL" sdl EXCLUDE_FROM_ALL)
 
 # Plume with its Vulkan backend and, on Windows, its D3D12 one (the renderer picks one at start,
-# gpu/settings.h). The Vulkan backend loads the Vulkan library at run time through volk, so nothing
-# links against it. Off Windows the Vulkan surface comes from the SDL window, X11 or Wayland.
+# gpu/settings.h). The Vulkan backend loads the Vulkan library at run time through volk, so nothing links
+# against it. Off Windows the Vulkan surface comes from the SDL window, X11 or Wayland.
 set(PLUME_DIR "${CMAKE_SOURCE_DIR}/thirdparty/plume")
 add_library(plume STATIC "${PLUME_DIR}/plume_vulkan.cpp")
 target_include_directories(plume PUBLIC "${PLUME_DIR}"
@@ -120,9 +128,15 @@ target_compile_definitions(zstd_decompress PRIVATE ZSTD_DISABLE_ASM)
 target_compile_options(zstd_decompress PRIVATE -Wno-everything)
 
 # FFmpeg's XMA1 decoder (libavutil + libavcodec with the xma1 decoder only), built from the sources
-# and configuration that scripts/ffmpeg-configure.ps1 wrote to cmake/ffmpeg, as FFmpeg's make would.
+# and configuration that scripts/ffmpeg-configure.ps1 (Windows) or ffmpeg-configure.sh (Linux) wrote to
+# cmake/ffmpeg/<platform>, with the definitions and libraries FFmpeg's configure chose there, as
+# FFmpeg's make would.
 set(FFMPEG_DIR "${CMAKE_SOURCE_DIR}/thirdparty/ffmpeg")
-set(FFMPEG_CONFIG_DIR "${CMAKE_SOURCE_DIR}/cmake/ffmpeg")
+if(WIN32)
+    set(FFMPEG_CONFIG_DIR "${CMAKE_SOURCE_DIR}/cmake/ffmpeg/windows")
+else()
+    set(FFMPEG_CONFIG_DIR "${CMAKE_SOURCE_DIR}/cmake/ffmpeg/linux")
+endif()
 include("${FFMPEG_CONFIG_DIR}/sources.cmake")
 function(add_ffmpeg_library name)
     list(TRANSFORM ARGN PREPEND "${FFMPEG_DIR}/")
@@ -130,15 +144,26 @@ function(add_ffmpeg_library name)
     target_include_directories(ffmpeg_${name} PUBLIC "${FFMPEG_CONFIG_DIR}" "${FFMPEG_DIR}"
         PRIVATE "${FFMPEG_DIR}/compat/stdbit")
     target_compile_definitions(ffmpeg_${name} PRIVATE HAVE_AV_CONFIG_H BUILDING_${name} _ISOC11_SOURCE
-        _FILE_OFFSET_BITS=64 _LARGEFILE_SOURCE WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES _CRT_SECURE_NO_WARNINGS
-        _CRT_NONSTDC_NO_WARNINGS _WIN32_WINNT=0x0600)
-    target_compile_options(ffmpeg_${name} PRIVATE /std:c17 -utf-8 -Wno-everything)
+        _FILE_OFFSET_BITS=64 _LARGEFILE_SOURCE)
+    if(WIN32)
+        target_compile_definitions(ffmpeg_${name} PRIVATE WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES
+            _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS _WIN32_WINNT=0x0600)
+        target_compile_options(ffmpeg_${name} PRIVATE /std:c17 -utf-8 -Wno-everything)
+    else()
+        target_compile_definitions(ffmpeg_${name} PRIVATE _POSIX_C_SOURCE=200112 _XOPEN_SOURCE=600)
+        target_compile_options(ffmpeg_${name} PRIVATE -std=c17 -Wno-everything)
+    endif()
 endfunction()
 add_ffmpeg_library(avutil ${FFMPEG_AVUTIL_SOURCES})
-target_link_libraries(ffmpeg_avutil PUBLIC user32 bcrypt)
 add_ffmpeg_library(avcodec ${FFMPEG_AVCODEC_SOURCES})
 # codec_list.c and the other lists are included by allcodecs.c and its siblings, from the config dir.
-target_link_libraries(ffmpeg_avcodec PUBLIC ffmpeg_avutil ole32 user32)
+target_link_libraries(ffmpeg_avcodec PUBLIC ffmpeg_avutil)
+if(WIN32)
+    target_link_libraries(ffmpeg_avutil PUBLIC user32 bcrypt)
+    target_link_libraries(ffmpeg_avcodec PUBLIC ole32 user32)
+else()
+    target_link_libraries(ffmpeg_avutil PUBLIC m atomic)
+endif()
 
 # Every kernel/XAM import of the recompiled modules gets a weak logging stub (src/kernel/stubs.cpp);
 # the runtime overrides the implemented ones. The list comes from the generated headers.
@@ -157,9 +182,17 @@ foreach(name IN LISTS IMPORT_NAMES)
 endforeach()
 file(CONFIGURE OUTPUT "${CMAKE_BINARY_DIR}/generated/imports.inc" CONTENT "${IMPORTS_INC}")
 
-# The renderer's own passes, compiled with the DXC of the XenosRecomp submodule into two headers each:
-# DXIL for D3D12 (its dxil.dll signs them) and SPIR-V for Vulkan (array name with a Spirv suffix).
-set(DXC "${CMAKE_SOURCE_DIR}/tools/XenosRecomp/thirdparty/dxc-bin/bin/x64/dxc.exe")
+# The renderer's own passes, compiled with the DXC of the XenosRecomp submodule into a header per
+# format: SPIR-V for Vulkan (array name with a Spirv suffix) and, on Windows, DXIL for D3D12 (its
+# dxil.dll signs them).
+set(DXC_DIR "${CMAKE_SOURCE_DIR}/tools/XenosRecomp/thirdparty/dxc-bin")
+if(WIN32)
+    set(DXC "${DXC_DIR}/bin/x64/dxc.exe")
+else()
+    # The Linux DXC finds its libdxcompiler.so beside the others of the submodule only through the
+    # loader's path.
+    set(DXC "${CMAKE_COMMAND}" -E env "LD_LIBRARY_PATH=${DXC_DIR}/lib/x64" "${DXC_DIR}/bin/x64/dxc-linux")
+endif()
 set(GPU_SHADER_DIR "${CMAKE_SOURCE_DIR}/src/gpu/renderer/shaders")
 set(GPU_SHADER_OUTPUT "${CMAKE_BINARY_DIR}/generated/shaders")
 file(MAKE_DIRECTORY "${GPU_SHADER_OUTPUT}")
@@ -168,21 +201,25 @@ set(GPU_SHADER_HEADERS "")
 #     [SPIRV_OPTIONS <dxc options for SPIR-V only>...])
 function(add_gpu_shader name variable source profile)
     cmake_parse_arguments(PARSE_ARGV 4 SHADER "" "" "OPTIONS;SPIRV_OPTIONS")
-    set(dxil "${GPU_SHADER_OUTPUT}/${name}.h")
     set(spirv "${GPU_SHADER_OUTPUT}/${name}_spirv.h")
-    add_custom_command(OUTPUT "${dxil}"
-        COMMAND "${DXC}" -nologo -T ${profile} -E main -O3 -Vn ${variable} -Fh "${dxil}" ${SHADER_OPTIONS}
-            "${GPU_SHADER_DIR}/${source}"
-        DEPENDS "${GPU_SHADER_DIR}/${source}"
-        COMMENT "Compiling shader ${name} (DXIL)"
-        VERBATIM)
     add_custom_command(OUTPUT "${spirv}"
-        COMMAND "${DXC}" -nologo -T ${profile} -E main -O3 -spirv -fspv-target-env=vulkan1.2 -Vn ${variable}Spirv
+        COMMAND ${DXC} -nologo -T ${profile} -E main -O3 -spirv -fspv-target-env=vulkan1.2 -Vn ${variable}Spirv
             -Fh "${spirv}" ${SHADER_OPTIONS} ${SHADER_SPIRV_OPTIONS} "${GPU_SHADER_DIR}/${source}"
         DEPENDS "${GPU_SHADER_DIR}/${source}"
         COMMENT "Compiling shader ${name} (SPIR-V)"
         VERBATIM)
-    set(GPU_SHADER_HEADERS ${GPU_SHADER_HEADERS} "${dxil}" "${spirv}" PARENT_SCOPE)
+    set(headers "${spirv}")
+    if(WIN32)
+        set(dxil "${GPU_SHADER_OUTPUT}/${name}.h")
+        add_custom_command(OUTPUT "${dxil}"
+            COMMAND ${DXC} -nologo -T ${profile} -E main -O3 -Vn ${variable} -Fh "${dxil}" ${SHADER_OPTIONS}
+                "${GPU_SHADER_DIR}/${source}"
+            DEPENDS "${GPU_SHADER_DIR}/${source}"
+            COMMENT "Compiling shader ${name} (DXIL)"
+            VERBATIM)
+        list(APPEND headers "${dxil}")
+    endif()
+    set(GPU_SHADER_HEADERS ${GPU_SHADER_HEADERS} ${headers} PARENT_SCOPE)
 endfunction()
 # The translated vertex shaders flip Y for Vulkan's clip space (XenosRecomp passes -fvk-invert-y), and
 # so does the passes' one: every viewport keeps a positive height on both APIs.
@@ -200,8 +237,15 @@ file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
 add_executable(roan-xenon ${SOURCES} ${GPU_SHADER_HEADERS} ${PPC_MODULE_OBJECTS} $<TARGET_OBJECTS:shader_cache>)
 target_include_directories(roan-xenon PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_BINARY_DIR}/generated"
     "${PPC_OUTPUT_DIR}" "${XENOS_THIRDPARTY_DIR}/xxHash")
-target_link_libraries(roan-xenon PRIVATE ppc_common XenonUtils plume zstd_decompress smolv SDL3::SDL3-static ffmpeg_avcodec
-    dbghelp)
-target_compile_options(roan-xenon PRIVATE /EHsc /Z7 -Wno-unused-parameter -Wno-null-arithmetic)
-target_link_options(roan-xenon PRIVATE /DEBUG /STACK:16777216)
+target_link_libraries(roan-xenon PRIVATE ppc_common XenonUtils plume zstd_decompress smolv SDL3::SDL3-static ffmpeg_avcodec)
+target_compile_options(roan-xenon PRIVATE -Wno-unused-parameter -Wno-null-arithmetic)
+# Windows only: dbghelp for the crash report, debug information inside the objects and the 16 MB
+# stack of the main thread.
+if(WIN32)
+    target_link_libraries(roan-xenon PRIVATE dbghelp)
+    target_compile_options(roan-xenon PRIVATE /EHsc /Z7)
+    target_link_options(roan-xenon PRIVATE /DEBUG /STACK:16777216)
+else()
+    target_compile_options(roan-xenon PRIVATE -g)
+endif()
 set_target_properties(roan-xenon PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

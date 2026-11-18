@@ -6,19 +6,30 @@
 #include "gpu/renderer/context.h"
 #include "log.h"
 
-#include "shaders/fullscreen_vs.h"
 #include "shaders/fullscreen_vs_spirv.h"
-#include "shaders/present_ps.h"
 #include "shaders/present_ps_spirv.h"
-#include "shaders/resolve_color_ms_ps.h"
 #include "shaders/resolve_color_ms_ps_spirv.h"
-#include "shaders/resolve_depth_ms_ps.h"
 #include "shaders/resolve_depth_ms_ps_spirv.h"
-#include "shaders/resolve_depth_ps.h"
 #include "shaders/resolve_depth_ps_spirv.h"
+#ifdef ROAN_D3D12
+#include "shaders/fullscreen_vs.h"
+#include "shaders/present_ps.h"
+#include "shaders/resolve_color_ms_ps.h"
+#include "shaders/resolve_depth_ms_ps.h"
+#include "shaders/resolve_depth_ps.h"
+#endif
 
 #include <cstring>
+#include <span>
 #include <vector>
+
+// The DXIL and SPIR-V of a pass shader by its array name (CMakeLists.txt, add_gpu_shader); the DXIL
+// is empty where D3D12 is not built.
+#ifdef ROAN_D3D12
+#define PASS_SHADER_CODE(name) std::span<const unsigned char>(name), std::span<const unsigned char>(name##Spirv)
+#else
+#define PASS_SHADER_CODE(name) std::span<const unsigned char>(), std::span<const unsigned char>(name##Spirv)
+#endif
 
 namespace gpu
 {
@@ -38,17 +49,21 @@ namespace gpu
         const plume::RenderDescriptorRange kTextureRange(plume::RenderDescriptorRangeType::TEXTURE, 0, 1);
         const plume::RenderDescriptorSetDesc kTextureSet(&kTextureRange, 1);
 
-        // A pass shader in the device's format, from the DXIL and SPIR-V headers of the build.
-        template <size_t DxilSize, size_t SpirvSize>
-        std::unique_ptr<plume::RenderShader> Shader(plume::RenderDevice& device, const unsigned char (&dxil)[DxilSize],
-            const unsigned char (&spirv)[SpirvSize])
+        // A pass shader in the device's format, from the DXIL and SPIR-V headers of the build
+        // (PASS_SHADER_CODE).
+        std::unique_ptr<plume::RenderShader> Shader(plume::RenderDevice& device, std::span<const unsigned char> dxil,
+            std::span<const unsigned char> spirv)
         {
             if (ShaderFormat(device) == plume::RenderShaderFormat::DXIL)
-                return device.createShader(dxil, DxilSize, "main", plume::RenderShaderFormat::DXIL);
+            {
+                if (dxil.empty())
+                    Fatal("gpu: this build has no DXIL pass shaders");
+                return device.createShader(dxil.data(), dxil.size(), "main", plume::RenderShaderFormat::DXIL);
+            }
             // The header's bytes have no alignment, and Vulkan reads SPIR-V as 32-bit words.
-            std::vector<uint32_t> words((SpirvSize + 3) / 4);
-            memcpy(words.data(), spirv, SpirvSize);
-            return device.createShader(words.data(), SpirvSize, "main", plume::RenderShaderFormat::SPIRV);
+            std::vector<uint32_t> words((spirv.size() + 3) / 4);
+            memcpy(words.data(), spirv.data(), spirv.size());
+            return device.createShader(words.data(), spirv.size(), "main", plume::RenderShaderFormat::SPIRV);
         }
 
         std::unique_ptr<plume::RenderPipeline> Pipeline(plume::RenderDevice& device, const plume::RenderPipelineLayout& layout,
@@ -94,15 +109,15 @@ namespace gpu
         const plume::RenderPushConstantRange constants(0, 0, 0, sizeof(ResolveConstants), plume::RenderShaderStageFlag::PIXEL);
         resolveLayout_ = device.createPipelineLayout(plume::RenderPipelineLayoutDesc(&constants, 1, &kTextureSet, 1));
 
-        auto fullscreen = Shader(device, kFullscreenVs, kFullscreenVsSpirv);
-        present_ = Pipeline(device, *presentLayout_, *fullscreen, *Shader(device, kPresentPs, kPresentPsSpirv), presentFormat,
+        auto fullscreen = Shader(device, PASS_SHADER_CODE(kFullscreenVs));
+        present_ = Pipeline(device, *presentLayout_, *fullscreen, *Shader(device, PASS_SHADER_CODE(kPresentPs)), presentFormat,
             "present");
-        colorSample_ = Pipeline(device, *resolveLayout_, *fullscreen, *Shader(device, kResolveColorMsPs, kResolveColorMsPsSpirv),
+        colorSample_ = Pipeline(device, *resolveLayout_, *fullscreen, *Shader(device, PASS_SHADER_CODE(kResolveColorMsPs)),
             plume::RenderFormat::R8G8B8A8_UNORM, "color sample resolve");
-        depth_ = Pipeline(device, *resolveLayout_, *fullscreen, *Shader(device, kResolveDepthPs, kResolveDepthPsSpirv),
+        depth_ = Pipeline(device, *resolveLayout_, *fullscreen, *Shader(device, PASS_SHADER_CODE(kResolveDepthPs)),
             plume::RenderFormat::R32_FLOAT, "depth resolve");
         depthMultisample_ = Pipeline(device, *resolveLayout_, *fullscreen,
-            *Shader(device, kResolveDepthMsPs, kResolveDepthMsPsSpirv), plume::RenderFormat::R32_FLOAT,
+            *Shader(device, PASS_SHADER_CODE(kResolveDepthMsPs)), plume::RenderFormat::R32_FLOAT,
             "multisampled depth resolve");
     }
 

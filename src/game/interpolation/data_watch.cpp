@@ -151,14 +151,16 @@ namespace game::interpolation::watch
                 {
                     std::string where = Symbol(rip);
                     Log("watch %u:   %08X %-40s %-16s block r%llu w%llu, outside r%llu w%llu", g_report, g_watched[slot],
-                        where.c_str(), site->thread.c_str(), site->readsInBlock, site->writesInBlock, site->readsOutside,
-                        site->writesOutside);
+                        where.c_str(), site->thread.c_str(), (unsigned long long)site->readsInBlock,
+                        (unsigned long long)site->writesInBlock, (unsigned long long)site->readsOutside,
+                        (unsigned long long)site->writesOutside);
                     if (file == nullptr)
                         continue;
                     std::fprintf(file, "%s  thread %s  view block: reads %llu writes %llu  outside: reads %llu writes %llu"
                                        "  first: step %u value %08X\n",
-                        where.c_str(), site->thread.c_str(), site->readsInBlock, site->writesInBlock, site->readsOutside,
-                        site->writesOutside, site->firstStep, site->firstValue);
+                        where.c_str(), site->thread.c_str(), (unsigned long long)site->readsInBlock,
+                        (unsigned long long)site->writesInBlock, (unsigned long long)site->readsOutside,
+                        (unsigned long long)site->writesOutside, site->firstStep, site->firstValue);
                     for (int i = 0; i < kStackDepth && site->stack[i] != 0; i++)
                         std::fprintf(file, "    #%d %s\n", i, Symbol(site->stack[i]).c_str());
                 }
