@@ -14,6 +14,7 @@
 #include "gpu/renderer/targets.h"
 #include "gpu/renderer/textures.h"
 #include "gpu/settings.h"
+#include "host/thread.h"
 #include "log.h"
 
 #include <atomic>
@@ -61,8 +62,10 @@ namespace gpu
 
         void Start()
         {
-            owner_ = std::thread([this] { OwnerMain(); });
-            SetThreadDescription(static_cast<HANDLE>(owner_.native_handle()), L"gpu owner");
+            owner_ = std::thread([this] {
+                host::SetCurrentThreadName("gpu owner");
+                OwnerMain();
+            });
         }
 
         // False when the owner is stopping: the task is dropped. A task queued before the stop runs,

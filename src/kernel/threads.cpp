@@ -3,6 +3,7 @@
 #include "kernel/kernel.h"
 
 #include "host/input.h"
+#include "host/thread.h"
 #include "host/timing.h"
 #include "loader.h"
 
@@ -12,7 +13,6 @@
 #include <mutex>
 #include <thread>
 #include <vector>
-#include <windows.h>
 
 namespace kernel
 {
@@ -116,24 +116,20 @@ namespace kernel
             };
         }
 
-        DWORD WINAPI HostThreadMain(void* parameter)
+        void HostThreadMain(HostThread* thread)
         {
-            auto* thread = static_cast<HostThread*>(parameter);
             {
                 std::unique_lock lock(thread->suspendMutex);
                 thread->suspendCv.wait(lock, [&] { return thread->suspendCount <= 0; });
             }
             RunGuest(thread);
             SignalObject(thread->object);
-            return 0;
         }
 
         void StartHostThread(HostThread* thread)
         {
-            HANDLE host = CreateThread(nullptr, 16 * 1024 * 1024, HostThreadMain, thread, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
-            if (host == nullptr)
+            if (!host::StartDetachedThread(host::kRecompiledStackSize, [thread] { HostThreadMain(thread); }))
                 Fatal("cannot create the host thread of guest thread %u", thread->id);
-            ::CloseHandle(host);
         }
     }
 
@@ -260,7 +256,7 @@ GUEST_FUNC(ExTerminateThread)
         std::_Exit(0);
     }
     SignalObject(thread->object);
-    ExitThread(ctx.r3.u32);
+    host::ExitCurrentThread(ctx.r3.u32);
 }
 
 // NtResumeThread(handle, previousSuspendCount*)

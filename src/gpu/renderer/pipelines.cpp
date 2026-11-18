@@ -6,6 +6,7 @@
 #include "gpu/renderer/backend.h"
 #include "gpu/renderer/targets.h"
 #include "host/paths.h"
+#include "host/thread.h"
 #include "log.h"
 
 
@@ -335,8 +336,8 @@ namespace gpu
 
     void Pipelines::WorkerMain()
     {
-        SetThreadDescription(GetCurrentThread(), L"gpu pipelines");
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        host::SetCurrentThreadName("gpu pipelines");
+        host::LowerCurrentThreadPriority();
         auto start = std::chrono::steady_clock::now();
         std::unique_lock lock(mutex_);
         for (;;)

@@ -2,11 +2,10 @@
 
 #include "gpu/renderer/context.h"
 
+#include "host/thread.h"
 #include "log.h"
 
 #include <algorithm>
-
-#include <windows.h>
 
 namespace gpu
 {
@@ -24,8 +23,10 @@ namespace gpu
     {
         queue_ = device_->createCommandQueue(plume::RenderCommandListType::DIRECT);
         idleList_ = queue_->createCommandList();
-        completer_ = std::thread([this] { CompleterMain(); });
-        SetThreadDescription(static_cast<HANDLE>(completer_.native_handle()), L"gpu completion");
+        completer_ = std::thread([this] {
+            host::SetCurrentThreadName("gpu completion");
+            CompleterMain();
+        });
     }
 
     Context::~Context()

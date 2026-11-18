@@ -8,6 +8,7 @@
 #include "gpu/replay.h"
 #include "host/input.h"
 #include "host/paths.h"
+#include "host/thread.h"
 #include "host/window.h"
 #include "kernel/kernel.h"
 #include "loader.h"
@@ -74,7 +75,7 @@ namespace
     }
 
     // Host thread of the guest main thread. The host main thread runs the window.
-    DWORD WINAPI GuestMain(void*)
+    void GuestMain()
     {
         kernel::StartKernelClock();
         Log("time base: %llu Hz", (unsigned long long)kernel::TimeBaseFrequency());
@@ -82,7 +83,6 @@ namespace
         kernel::RunMainThread(_xstart, kernel::g_module.stackSize);
         Log("_xstart returned");
         host::RequestQuit();
-        return 0;
     }
 }
 
@@ -133,14 +133,11 @@ int main(int argc, char** argv)
     if (!host::CreateMainWindow("roan-xenon", 1280, 720))
         return 1;
 
-    // Recompiled code recurses deeply on the host stack: same reservation as the other guest threads.
-    HANDLE guest = CreateThread(nullptr, 16 * 1024 * 1024, GuestMain, nullptr, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
-    if (guest == nullptr)
+    if (!host::StartDetachedThread(host::kRecompiledStackSize, GuestMain))
     {
         Log("error: cannot create the guest main thread");
         return 1;
     }
-    CloseHandle(guest);
 
     if (host::RunEventLoop())
         Log("window closed");
