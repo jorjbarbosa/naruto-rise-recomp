@@ -1,4 +1,4 @@
-// Host paths of the runtime (paths.h).
+// Host paths of the runtime on Windows (paths.h).
 
 #include "host/paths.h"
 

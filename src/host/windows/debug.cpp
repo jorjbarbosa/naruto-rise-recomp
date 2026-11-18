@@ -1,4 +1,4 @@
-// Host debugging: symbols, stack walks, the crash handler, data breakpoints (debug.h).
+// Host debugging on Windows: symbols, stack walks, the crash handler, data breakpoints (debug.h).
 
 #include "host/debug.h"
 

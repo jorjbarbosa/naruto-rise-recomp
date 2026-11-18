@@ -1,4 +1,4 @@
-// Host threads: creation with a given stack, names and priority (thread.h).
+// Host threads on Windows: creation with a given stack, names and priority (thread.h).
 
 #include "host/thread.h"
 

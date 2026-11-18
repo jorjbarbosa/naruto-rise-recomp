@@ -1,4 +1,4 @@
-// Host file access: C streams, whole-file reads, positional files and file times (files.h).
+// Host file access on Windows: C streams, whole-file reads, positional files, file times (files.h).
 
 #include "host/files.h"
 

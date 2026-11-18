@@ -1,4 +1,4 @@
-// The host's clocks and waits (timing.h).
+// The host's clocks and waits on Windows (timing.h).
 
 #include "host/timing.h"
 

@@ -16,8 +16,10 @@ namespace host
     // running. Any thread.
     bool StartDetachedThread(size_t stackSize, std::function<void()> body);
 
-    // Ends the calling thread at once with exitCode, without returning to its callers: their frames
-    // are not unwound, so nothing they own may need a destructor. Does not return.
+    // Ends the calling thread at once with exitCode, without returning to its callers. On Windows their
+    // frames are not unwound; with glibc they are, by a forced unwind that runs their destructors. So
+    // nothing they own may need its destructor, nor mind it running, and no frame on the way may be
+    // noexcept or swallow the unwind in a catch (...) (glibc would end the process). Does not return.
     [[noreturn]] void ExitCurrentThread(uint32_t exitCode);
 
     // Names the calling thread for debuggers and profilers. The name is ASCII; systems that limit its

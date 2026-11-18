@@ -15,7 +15,8 @@ namespace host
     // committed by the first access to it, from any thread, or by CommitAddressSpace; the system
     // records every write for TakeWrittenPages. Call once, before the other functions of this file.
     // Null when the space cannot be reserved or the commit on touch cannot be set up; the space is
-    // never released.
+    // never released. A system that cannot record the writes (a kernel before Linux 6.7, or one that
+    // refuses userfaultfd to the process) still reserves the space, and TakeWrittenPages then fails.
     uint8_t* ReserveAddressSpace(uint64_t size);
 
     // Commits the pages of [offset, offset + size) of the reservation now (cut at its end). Host OS

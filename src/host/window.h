@@ -9,7 +9,8 @@ namespace host
     // Initializes SDL (video, and gamepads and audio when available) and opens the window. False
     // on failure (logged).
     bool CreateMainWindow(const char* title, int width, int height);
-    // HWND of the window, or null before it exists. Any thread.
+    // The window as the renderer takes it (plume::RenderWindow): its HWND on Windows, the SDL_Window
+    // elsewhere; null before it exists. Any thread.
     void* MainWindowHandle();
     // Refresh rate of the display the window is on, in millihertz (59.94 Hz is 59940); 0 when
     // unknown. Follows display and mode changes as the event loop sees them. Any thread.

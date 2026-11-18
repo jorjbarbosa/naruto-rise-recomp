@@ -87,7 +87,10 @@ namespace game::interpolation::motion
 
         int64_t Microseconds()
         {
-            return (host::Counter() - g_start) * 1000000 / host::CounterFrequency();
+            // Whole seconds and the rest apart: the product of the ticks and a million would overflow
+            // after hours with a nanosecond counter (Linux).
+            int64_t ticks = host::Counter() - g_start, frequency = host::CounterFrequency();
+            return ticks / frequency * 1000000 + ticks % frequency * 1000000 / frequency;
         }
 
         float Finite(float value)

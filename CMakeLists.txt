@@ -4,6 +4,10 @@ project(roan-xenon LANGUAGES C CXX)
 if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     message(FATAL_ERROR "roan-xenon must be built with clang (clang-cl on Windows); use scripts/build.ps1 or build.sh")
 endif()
+# The host layer (src/host) has a Windows and a Linux implementation; no other system.
+if(NOT WIN32 AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "roan-xenon builds on Windows and Linux only")
+endif()
 
 # D3D12 exists only on Windows; ROAN_D3D12 marks the code that needs it, in every target.
 if(WIN32)
@@ -232,6 +236,14 @@ add_gpu_shader(resolve_depth_ms_ps kResolveDepthMsPs resolve_ps.hlsl ps_6_0 OPTI
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/*.h")
+# The host layer has one implementation per system behind its headers: src/host/windows on Windows,
+# src/host/posix on Linux (POSIX calls, and Linux's where POSIX has none: the write record, /proc,
+# thread ids, the crash context).
+if(WIN32)
+    list(FILTER SOURCES EXCLUDE REGEX "/src/host/posix/")
+else()
+    list(FILTER SOURCES EXCLUDE REGEX "/src/host/windows/")
+endif()
 
 # The runtime sees the ppc_config.h of default.xex; other modules are reached through PPCModuleInfo.
 add_executable(roan-xenon ${SOURCES} ${GPU_SHADER_HEADERS} ${PPC_MODULE_OBJECTS} $<TARGET_OBJECTS:shader_cache>)
@@ -247,5 +259,10 @@ if(WIN32)
     target_link_options(roan-xenon PRIVATE /DEBUG /STACK:16777216)
 else()
     target_compile_options(roan-xenon PRIVATE -g)
+    # The crash report names functions through the dynamic symbol table (host/posix/debug.cpp): only
+    # the recompiled ones and their hooks go in it. Exporting everything would let a library loaded
+    # later (a Vulkan driver linked with zstd) bind to the static copies built in here.
+    target_link_options(roan-xenon PRIVATE "LINKER:--export-dynamic-symbol=__imp__sub_*"
+        "LINKER:--export-dynamic-symbol=sub_*")
 endif()
 set_target_properties(roan-xenon PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

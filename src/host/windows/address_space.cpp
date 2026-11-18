@@ -1,4 +1,4 @@
-// The address space of guest memory: reservation, commit on touch, write record (address_space.h).
+// The address space of guest memory on Windows: reservation, commit on touch, write record (address_space.h).
 
 #include "host/address_space.h"
 

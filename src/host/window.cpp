@@ -50,18 +50,35 @@ namespace host
         // Without audio the game runs silent (host/audio.cpp keeps time instead).
         if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
             Log("error: no audio support: %s", SDL_GetError());
+#ifdef _WIN32
         g_window = SDL_CreateWindow(title, width, height, SDL_WINDOW_RESIZABLE);
+#else
+        // Plume makes its Vulkan surface from the SDL window, which needs a Vulkan window: SDL then
+        // loads the Vulkan library here, on the main thread, before the renderer's thread asks for
+        // the surface. Without Vulkan the window is a plain one and the game runs without a renderer.
+        g_window = SDL_CreateWindow(title, width, height, SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN);
+        if (g_window == nullptr)
+        {
+            Log("error: no Vulkan window (%s); the renderer will not start", SDL_GetError());
+            g_window = SDL_CreateWindow(title, width, height, SDL_WINDOW_RESIZABLE);
+        }
+#endif
         if (g_window == nullptr)
         {
             Log("error: SDL_CreateWindow failed: %s", SDL_GetError());
             return false;
         }
+#ifdef _WIN32
         g_handle = SDL_GetPointerProperty(SDL_GetWindowProperties(g_window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
         if (g_handle == nullptr)
         {
             Log("error: the window has no HWND: %s", SDL_GetError());
             return false;
         }
+#else
+        // Plume makes the Vulkan surface from the SDL window itself (X11 or Wayland).
+        g_handle = g_window;
+#endif
         UpdateRefreshRate();
         return true;
     }
