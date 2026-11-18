@@ -1,0 +1,65 @@
+diff --git a/plume_render_interface_types.h b/plume_render_interface_types.h
+index ad63e0e..83a4ee8 100644
+--- a/plume_render_interface_types.h
++++ b/plume_render_interface_types.h
+@@ -1292,6 +1292,11 @@ namespace plume {
+         uint32_t stencilReadMask = 0xFFFFFFFF;
+         uint32_t stencilWriteMask = 0xFFFFFFFF;
+         uint32_t stencilReference = 0;
++        // Vulkan: the blend constants and the stencil reference are dynamic state, set on the command
++        // list (VulkanCommandList::setBlendConstants, setStencilReference) instead of baked into the
++        // pipeline. D3D12 always takes both from the command list.
++        bool dynamicBlendConstantsEnabled = false;
++        bool dynamicStencilReferenceEnabled = false;
+         RenderStencilFaceDesc stencilFrontFace;
+         RenderStencilFaceDesc stencilBackFace;
+         RenderMultisampling multisampling;
+diff --git a/plume_vulkan.cpp b/plume_vulkan.cpp
+index fd6c504..4209283 100644
+--- a/plume_vulkan.cpp
++++ b/plume_vulkan.cpp
+@@ -1616,6 +1616,14 @@ namespace plume {
+             dynamicStates.emplace_back(VK_DYNAMIC_STATE_DEPTH_BIAS);
+         }
+ 
++        if (desc.dynamicBlendConstantsEnabled) {
++            dynamicStates.emplace_back(VK_DYNAMIC_STATE_BLEND_CONSTANTS);
++        }
++
++        if (desc.dynamicStencilReferenceEnabled) {
++            dynamicStates.emplace_back(VK_DYNAMIC_STATE_STENCIL_REFERENCE);
++        }
++
+         VkPipelineDynamicStateCreateInfo dynamicState = {};
+         dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+         dynamicState.pDynamicStates = dynamicStates.data();
+@@ -3138,6 +3146,14 @@ namespace plume {
+         vkCmdSetDepthBias(vk, depthBias, depthBiasClamp, slopeScaledDepthBias);
+     }
+ 
++    void VulkanCommandList::setBlendConstants(const float constants[4]) {
++        vkCmdSetBlendConstants(vk, constants);
++    }
++
++    void VulkanCommandList::setStencilReference(uint32_t reference) {
++        vkCmdSetStencilReference(vk, VK_STENCIL_FACE_FRONT_AND_BACK, reference);
++    }
++
+     static void clearCommonRectVector(uint32_t width, uint32_t height, const RenderRect *clearRects, uint32_t clearRectsCount, std::vector<VkClearRect> &rectVector) {
+         rectVector.clear();
+ 
+diff --git a/plume_vulkan.h b/plume_vulkan.h
+index 9921e4e..53496b7 100644
+--- a/plume_vulkan.h
++++ b/plume_vulkan.h
+@@ -348,6 +348,10 @@ namespace plume {
+         void setScissors(const RenderRect *scissorRects, uint32_t count) override;
+         void setFramebuffer(const RenderFramebuffer *framebuffer) override;
+         void setDepthBias(float depthBias, float depthBiasClamp, float slopeScaledDepthBias) override;
++        // For pipelines created with dynamicBlendConstantsEnabled / dynamicStencilReferenceEnabled.
++        // Binding a pipeline without the dynamic state replaces the value, so it is set again after one.
++        void setBlendConstants(const float constants[4]);
++        void setStencilReference(uint32_t reference);
+         void clearColor(uint32_t attachmentIndex, RenderColor colorValue, const RenderRect *clearRects, uint32_t clearRectsCount) override;
+         void clearDepthStencil(bool clearDepth, bool clearStencil, float depthValue, uint32_t stencilValue, const RenderRect *clearRects, uint32_t clearRectsCount) override;
+         void copyBufferRegion(RenderBufferReference dstBuffer, RenderBufferReference srcBuffer, uint64_t size) override;

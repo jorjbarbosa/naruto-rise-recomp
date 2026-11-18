@@ -222,6 +222,24 @@ backend maps both; still missing upstream at `b619e50`), so they fell to the `de
 vertex input was invalid. With the validation layer on, checking those pipelines made the layer's memory
 grow without bound (about 1.2 GB/s, until the system ran out of commit).
 
+### 0005: Vulkan dynamic blend constants and stencil reference
+
+The renderer sets the blend constant color and the stencil reference per draw (D3D12's
+`OMSetBlendFactor` and `OMSetStencilRef`). Upstream's Vulkan pipelines bake the stencil reference of the
+description and leave the blend constants at zero, with no way to set either on the command list, so
+blending with the constant color and stencil tests against a draw's reference were wrong. Folding the
+values into the pipelines would multiply them.
+
+- `RenderGraphicsPipelineDesc` gains `dynamicBlendConstantsEnabled` and `dynamicStencilReferenceEnabled`;
+  the Vulkan pipeline then declares `VK_DYNAMIC_STATE_BLEND_CONSTANTS` / `VK_DYNAMIC_STATE_STENCIL_REFERENCE`.
+  The D3D12 backend ignores both: the command list holds those values there anyway.
+- `VulkanCommandList::setBlendConstants` and `setStencilReference` (both faces) set them. They are members
+  of the Vulkan list only, not of `RenderCommandList`, so the other backends are untouched.
+
+Not a bug, checked along the way: the depth-stencil attachment views of a framebuffer have only the depth
+aspect, which the spec allows (an attachment view of a depth/stencil image uses both aspects whatever its
+aspect mask says).
+
 ## XenosRecomp
 
 Findings from the shaders of Naruto: Rise of a Ninja (`game/xeshader.sdb`: 4,467 containers, 3,322 unique,

@@ -321,11 +321,6 @@ namespace gpu
     void BindDrawConstants(plume::RenderCommandList& list, const DrawConstants& constants,
         const std::optional<DrawConstants>& bound)
     {
-        if (dynamic_cast<plume::D3D12CommandList*>(&list) == nullptr)
-        {
-            LOG_ONCE("gpu: the draw constants are not bound on Vulkan");
-            return;
-        }
         const plume::RenderBufferReference references[] = { constants.vertex, constants.pixel, constants.shared };
         if (!bound)
         {
@@ -341,7 +336,7 @@ namespace gpu
         if (auto* d3d12 = dynamic_cast<plume::D3D12CommandList*>(&list))
             d3d12->d3d->OMSetBlendFactor(color.data());
         else
-            LOG_ONCE("gpu: the blend constant color is not set on Vulkan");
+            static_cast<plume::VulkanCommandList&>(list).setBlendConstants(color.data());
     }
 
     void SetStencilReference(plume::RenderCommandList& list, uint32_t reference)
@@ -349,7 +344,7 @@ namespace gpu
         if (auto* d3d12 = dynamic_cast<plume::D3D12CommandList*>(&list))
             d3d12->d3d->OMSetStencilRef(reference);
         else
-            LOG_ONCE("gpu: the stencil reference is not set on Vulkan");
+            static_cast<plume::VulkanCommandList&>(list).setStencilReference(reference);
     }
 
     std::unique_ptr<plume::RenderSwapChain> CreateSwapChain(plume::RenderCommandQueue& queue, plume::RenderWindow window,

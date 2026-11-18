@@ -85,7 +85,8 @@ namespace gpu
         const std::optional<DrawConstants>& bound);
 
     // Dynamic state Plume's interface has no call for, for the draws recorded after it on the list:
-    // the blend constant color and the stencil reference.
+    // the blend constant color and the stencil reference. On Vulkan the pipelines must declare them
+    // dynamic, and binding a pipeline that does not (another pass) drops the values.
     void SetBlendConstants(plume::RenderCommandList& list, const std::array<float, 4>& color);
     void SetStencilReference(plume::RenderCommandList& list, uint32_t reference);
 

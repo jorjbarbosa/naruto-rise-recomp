@@ -114,11 +114,6 @@ namespace gpu
         const plume::RenderPipeline* pipeline = pipelines_->Get(key, *op.input);
         if (pipeline == nullptr)
             return;
-        if (ShaderFormat(context_.Device()) != plume::RenderShaderFormat::DXIL)
-        {
-            LOG_ONCE("gpu: the draws are not recorded on Vulkan yet (no draw constants)");
-            return;
-        }
         const SurfaceDesc& target = op.color.key != 0 ? op.color : op.depth;
         Rect scissor = Intersect(op.scissor, { 0, 0, int32_t(target.width), int32_t(target.height) });
         if (scissor.Empty())
@@ -238,8 +233,6 @@ namespace gpu
                 state_.blendFactor = color;
             }
         }
-        // Plume's D3D12 backend sets the reference of the pipeline when it differs from the last one
-        // it set; every pipeline has 0, so it never overrides this one.
         if (op.depth.key != 0 && (op.state.depthControl & kStencilEnable) != 0 && state_.stencilReference != op.stencilReference)
         {
             SetStencilReference(list, op.stencilReference);

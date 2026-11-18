@@ -391,6 +391,10 @@ namespace gpu
                                                                       : plume::RenderFrontFace::COUNTER_CLOCKWISE;
         desc.depthBias = state.depthBias;
         desc.slopeScaledDepthBias = state.depthBiasSlope;
+        // The blend color and the stencil reference are set per draw (Draws::Draw). On every draw
+        // pipeline alike, so that a value set on the list outlives a change of pipeline on Vulkan.
+        desc.dynamicBlendConstantsEnabled = true;
+        desc.dynamicStencilReferenceEnabled = true;
         if ((key.targets & 1) != 0)
         {
             desc.renderTargetFormat[0] = Targets::kColorFormat;
@@ -406,7 +410,8 @@ namespace gpu
             desc.stencilEnabled = (state.depthControl & kStencilEnable) != 0;
             if (desc.stencilEnabled)
             {
-                // The reference is set per draw (Draws::Draw); every pipeline keeps 0.
+                // The pipeline's reference stays 0: Plume's D3D12 backend sets it only when it
+                // differs from the last pipeline's, so it never overrides the draw's.
                 desc.stencilReadMask = (state.stencilMasks >> 8) & 0xFF;
                 desc.stencilWriteMask = (state.stencilMasks >> 16) & 0xFF;
                 desc.stencilFrontFace = StencilFace(state.depthControl >> 8);
