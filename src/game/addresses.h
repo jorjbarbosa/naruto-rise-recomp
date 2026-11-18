@@ -67,6 +67,21 @@
 #define JADE_THUMBNAIL_CAPTURE sub_8211D878 // render thread: draws, resolves, saves and compresses into [task+56]; clears +8 and +60; 1 on success
 #define JADE_THUMBNAIL_RELEASE sub_82583D28 // frees a thumbnail's two buffers (r3 the thumbnail); every free of one follows it
 
+// The menus (menu_entries.h; docs/development/plans/port-menus/game-side-findings.md sections 2 to 4).
+// Natives of default.xex that AI2C.dll calls through its native table, and one track of AI2C.dll.
+#define AI_OPTIONS_TRACK sub_8810B248     // fct_9E002BAB: the Options screen's track, every tick of state 27 (returns 1000)
+#define AI_BUTTON_JUST_PRESSED sub_825A3448 // native 7006 IO_ButtonJustPressed (r3 player, r4 button; r3 1 when pressed)
+#define AI_EXCLUSIVE_CONTENT sub_825AE948 // native 16455: XLaunchNewImage("LinkApp.xex"), the main menu's 5th entry
+#define AI_MNU_VAR_SET_TEXT sub_82693880  // native 21268 MNU_VarSetText (r3 movie, r4 variable name, r5 text id)
+#define AI_MNU_VAR_SET_STRING sub_82693950 // native 21267 MNU_VarSetString (r3 movie, r4 variable name, r5 string)
+// The game's option store (game_options.h; game-side-findings.md section 6). Each takes the store's
+// instance first and saves and restores the AI context itself.
+#define AI_OPTIONS_LOAD sub_880629D0 // load from the profile (r3 store), then validate and apply all
+#define AI_OPTION_GET sub_88064500   // fni_Option_GetValue (r3 store, r4 int* out, r5 index)
+#define AI_OPTION_SET sub_88061C20   // fn_Option_SetValue (r3 store, r4 int* changed, r5 index, r6 value): clamps, applies
+#define AI_OPTIONS_SAVE sub_88062B30 // save to the profile (r3 store, r4 int* ok)
+#define AI_OPTION_APPLY sub_88061FB0 // fn_Option_Apply (r3 store, r4 index): applies the stored value
+
 namespace game::jade
 {
     // Globals.
@@ -96,6 +111,9 @@ namespace game::jade
     // (the scripts, natives 7033/7034) and 0x10 (its message box); the word is zeroed once at start
     // (82684128, from main). docs/development/plans/port-menus/game-side-findings.md section 5.
     constexpr uint32_t kInputFlag = 0x82C0F0D8;
+    // byte_82C0EE41: 1 while the game has taken an XN_SYS_UI 1 (its pause: time, sounds, interface),
+    // 0 after the 0. The notification handler (825F7D90) runs in the main loop, not during a Bink movie.
+    constexpr uint32_t kSystemUiTaken = 0x82C0EE41;
 
     // The D3D device lock ([kDeviceLock]), recursive per thread.
     namespace device_lock
@@ -254,5 +272,29 @@ namespace game::jade
     namespace thumbnail
     {
         constexpr uint32_t kReady = 16; // 1 once captured (the capture's last store)
+    }
+}
+
+// AI2C.dll's compiled scripts (the menu model, menu-screens.md).
+namespace game::ai
+{
+    // A slot of AI2C.dll's data: points to the word that holds the running AI object
+    // (sub_88397450). The object's +72 holds its model variables, words at byte offsets.
+    constexpr uint32_t kCurrentObject = 0x883B2118;
+    constexpr uint32_t kVariables = 72;
+    // The native table's slot of the native the Options track calls with 1 before it shows the
+    // Japanese voices' row (non-zero: offered); its result and g_200 decide the ninth row.
+    constexpr uint32_t kJapaneseVoicesNative = 0x883B3304;
+
+    // The menu model's variables.
+    namespace menu
+    {
+        // g_2908: 1 on a state's first ticks, set by the state change (880EC2F8); the Options track
+        // creates its screen while it is 1, then sets it to 0.
+        constexpr uint32_t kStateEntering = 2908;
+        // g_200: 1 when Options was entered from the main menu (it goes back there), else the story pause.
+        constexpr uint32_t kFromMainMenu = 200;
+        constexpr uint32_t kTrackIdle = 1000; // what a track returns to stay in its state
+        constexpr uint32_t kExclusiveContentText = 21827; // the label of the main menu's 5th entry
     }
 }

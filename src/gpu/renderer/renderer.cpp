@@ -39,6 +39,10 @@ namespace gpu
         // The draws the owner receives together.
         constexpr size_t kDrawBatch = 32;
 
+        // The adapters' names, for Renderer::AdapterNames.
+        std::mutex g_adapterMutex;
+        std::vector<std::string> g_adapterNames;
+
         // The constant ring of each stage. A frame of the heaviest scene seen (4,000 draws) hands out
         // about 2 MB of vertex constants and 0.6 MB of pixel constants, and the capture runs at most
         // about two frames ahead of the owner.
@@ -286,8 +290,13 @@ namespace gpu
             Log("gpu: error: cannot create the D3D12 interface");
             return nullptr;
         }
-        for (const std::string& name : impl->api->getDeviceNames())
+        std::vector<std::string> adapters = impl->api->getDeviceNames();
+        for (const std::string& name : adapters)
             Log("gpu: adapter \"%s\"", name.c_str());
+        {
+            std::lock_guard lock(g_adapterMutex);
+            g_adapterNames = std::move(adapters);
+        }
 
         std::unique_ptr<plume::RenderDevice> device = impl->api->createDevice(settings.adapter);
         if (!device)
@@ -445,6 +454,17 @@ namespace gpu
     bool Renderer::DisplayPaces() const
     {
         return impl_->displayPaces;
+    }
+
+    void Renderer::SetVSync(bool vsync)
+    {
+        impl_->Post([impl = impl_.get(), vsync] { impl->presenter->SetVSync(vsync); });
+    }
+
+    std::vector<std::string> Renderer::AdapterNames()
+    {
+        std::lock_guard lock(g_adapterMutex);
+        return g_adapterNames;
     }
 
     void Renderer::SetGammaRamp(const GammaRamp& ramp)

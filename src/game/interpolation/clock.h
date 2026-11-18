@@ -19,8 +19,10 @@
 // the game keeps its speed; with a measured dt (menus) it keeps the title's presentation interval.
 //
 // The setting video.frame_rate (settings/settings.h; ROAN_FRAME_RATE overrides it) at 31 to 240 turns
-// it on at that rate; at "game" it is off and the game runs at its own rate (the hooks test one flag). Main thread only: the calls come from
-// engine_hooks.cpp, from the three loop functions.
+// it on at that rate; at "game" it is off and the game runs at its own rate (the hooks test one flag).
+// The menu changes it with RequestRate, taken at the start of the next iteration (experiment 6 of the
+// port menus: the change shows on the next frame, the game's speed kept). Main thread only, but
+// RequestRate: the calls come from engine_hooks.cpp, from the three loop functions.
 
 #include <ppc_config.h>
 #include <ppc_context.h>
@@ -29,8 +31,12 @@
 
 namespace game::interpolation::clock
 {
-    // Whether the clock is on (read once).
+    // Whether the clock is on (the setting, read once, then changed by RequestRate).
     bool Enabled();
+    // A new rate (0: off, the game's own), taken by the next IterationStart. Any thread.
+    void RequestRate(uint32_t rate);
+    // The first call of an iteration (the HUD map's), before Enabled is asked: takes a requested rate.
+    void IterationStart();
 
     // The current loop iteration.
     struct Frame

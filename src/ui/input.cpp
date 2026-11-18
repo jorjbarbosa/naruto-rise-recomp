@@ -144,7 +144,8 @@ namespace ui
             case SDL_GAMEPAD_BUTTON_EAST: if (down) actions.push_back(Action::Back); break;
             case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: if (down) actions.push_back(Action::PreviousTab); break;
             case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: if (down) actions.push_back(Action::NextTab); break;
-            case SDL_GAMEPAD_BUTTON_NORTH: if (down) actions.push_back(Action::Reset); break;
+            case SDL_GAMEPAD_BUTTON_WEST: if (down) actions.push_back(Action::Reset); break;
+            case SDL_GAMEPAD_BUTTON_GUIDE: if (down) actions.push_back(Action::Menu); break;
             default: break;
             }
             UpdateHeld(now, actions);

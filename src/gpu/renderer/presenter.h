@@ -43,6 +43,8 @@ namespace gpu
         // be presented; paced tells whether the display paced it.
         void Present(const Passes& passes, UiPass& ui, const ResolvedTexture* image, uint32_t vblanks,
             uint32_t refreshMillihertz, const std::function<void(bool paced)>& shown);
+        // Whether the next presents wait for the vertical blank. Owner thread.
+        void SetVSync(bool vsync);
 
     private:
         explicit Presenter(Context& context, bool vsync);

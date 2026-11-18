@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -645,14 +646,46 @@ namespace settings
             return out;
         }
 
-        // A setter: the stored and the effective value (the window's options have no variable).
+        // A number, as other threads read it while the main thread may set it.
+        int64_t Number(size_t id)
+        {
+            return std::atomic_ref<int64_t>(g_effective[id].number).load(std::memory_order_relaxed);
+        }
+
+        // A setter: the stored value, and the effective one unless the option applies at the next start.
         void Set(Id id, const Value& value)
         {
             if (g_stored[id] == value)
                 return;
             g_stored[id] = value;
-            g_effective[id] = value;
+            if (kOptions[id].apply == Apply::Live)
+            {
+                std::atomic_ref<int64_t>(g_effective[id].number).store(value.number, std::memory_order_relaxed);
+                g_effective[id].text = value.text;
+            }
             g_changed = true;
+        }
+
+        Id SettingId(Setting setting)
+        {
+            switch (setting)
+            {
+            case Setting::VSync: return kVSync;
+            case Setting::FrameRate: return kFrameRate;
+            case Setting::Adapter: return kAdapter;
+            case Setting::Volume: return kVolume;
+            case Setting::AudioDevice: return kAudioDevice;
+            case Setting::MuteInBackground: return kMuteInBackground;
+            case Setting::DeadZone: return kDeadZone;
+            case Setting::Language: return kLanguage;
+            }
+            return kVSync;
+        }
+
+        Value Default(Id id)
+        {
+            const Option& option = kOptions[id];
+            return Value{ option.defaultNumber, option.defaultText != nullptr ? option.defaultText : "" };
         }
     }
 
@@ -790,12 +823,12 @@ namespace settings
 
     bool VSync()
     {
-        return g_effective[kVSync].number != 0;
+        return Number(kVSync) != 0;
     }
 
     uint32_t FrameRate()
     {
-        int64_t rate = g_effective[kFrameRate].number;
+        int64_t rate = Number(kFrameRate);
         if (rate != kDisplayRate)
             return uint32_t(rate);
         uint32_t hertz = g_displayRefresh != nullptr ? (g_displayRefresh() + 500) / 1000 : 0;
@@ -853,7 +886,7 @@ namespace settings
 
     uint32_t Volume()
     {
-        return uint32_t(g_effective[kVolume].number);
+        return uint32_t(Number(kVolume));
     }
 
     const std::string& AudioDevice()
@@ -863,27 +896,118 @@ namespace settings
 
     bool MuteInBackground()
     {
-        return g_effective[kMuteInBackground].number != 0;
+        return Number(kMuteInBackground) != 0;
     }
 
     uint32_t DeadZone()
     {
-        return uint32_t(g_effective[kDeadZone].number);
+        return uint32_t(Number(kDeadZone));
     }
 
     std::array<uint16_t, 2> KeyboardKeys(PadInput input)
     {
-        int64_t keys = g_effective[kKeyboardFirst + size_t(input)].number;
+        int64_t keys = Number(kKeyboardFirst + size_t(input));
         return { KeyAt(keys, 0), KeyAt(keys, 1) };
     }
 
     Language GameLanguage()
     {
-        return Language(g_effective[kLanguage].number);
+        return Language(Number(kLanguage));
     }
 
     uint32_t XdkLanguage()
     {
-        return kXdkLanguages[size_t(g_effective[kLanguage].number)];
+        return kXdkLanguages[size_t(Number(kLanguage))];
+    }
+
+    bool IsOverridden(Setting setting)
+    {
+        return g_overridden[SettingId(setting)];
+    }
+
+    const char* OverrideVariable(Setting setting)
+    {
+        return kOptions[SettingId(setting)].variable;
+    }
+
+    bool AppliesAtRestart(Setting setting)
+    {
+        return kOptions[SettingId(setting)].apply == Apply::Restart;
+    }
+
+    void ResetToDefault(Setting setting)
+    {
+        Id id = SettingId(setting);
+        Set(id, Default(id));
+    }
+
+    void SetVSync(bool vsync)
+    {
+        Set(kVSync, Value{ vsync ? 1 : 0 });
+    }
+
+    int32_t FrameRateSetting()
+    {
+        return int32_t(g_stored[kFrameRate].number);
+    }
+
+    void SetFrameRateSetting(int32_t rate)
+    {
+        int64_t stored = rate == kDisplayRate ? kDisplayRate : rate < kMinRate ? 0 : std::min<int64_t>(rate, kMaxRate);
+        Set(kFrameRate, Value{ stored });
+    }
+
+    const std::string& StoredAdapter()
+    {
+        return g_stored[kAdapter].text;
+    }
+
+    void SetAdapter(const std::string& adapter)
+    {
+        Set(kAdapter, Value{ 0, adapter });
+    }
+
+    Language StoredGameLanguage()
+    {
+        return Language(g_stored[kLanguage].number);
+    }
+
+    void SetGameLanguage(Language language)
+    {
+        Set(kLanguage, Value{ int64_t(language) });
+    }
+
+    void SetVolume(uint32_t volume)
+    {
+        Set(kVolume, Value{ std::clamp<int64_t>(volume, kOptions[kVolume].minimum, kOptions[kVolume].maximum) });
+    }
+
+    void SetAudioDevice(const std::string& device)
+    {
+        Set(kAudioDevice, Value{ 0, device });
+    }
+
+    void SetMuteInBackground(bool mute)
+    {
+        Set(kMuteInBackground, Value{ mute ? 1 : 0 });
+    }
+
+    void SetDeadZone(uint32_t percent)
+    {
+        Set(kDeadZone, Value{ std::clamp<int64_t>(percent, kOptions[kDeadZone].minimum, kOptions[kDeadZone].maximum) });
+    }
+
+    void SetKeyboardKeys(PadInput input, std::array<uint16_t, 2> keys)
+    {
+        // A first slot left empty takes the second's key.
+        if (keys[0] == 0)
+            std::swap(keys[0], keys[1]);
+        Set(Id(kKeyboardFirst + size_t(input)), Value{ int64_t(keys[0]) | (int64_t(keys[1]) << 16) });
+    }
+
+    std::array<uint16_t, 2> DefaultKeyboardKeys(PadInput input)
+    {
+        int64_t keys = kOptions[kKeyboardFirst + size_t(input)].defaultNumber;
+        return { KeyAt(keys, 0), KeyAt(keys, 1) };
     }
 }

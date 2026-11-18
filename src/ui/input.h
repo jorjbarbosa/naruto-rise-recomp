@@ -25,6 +25,8 @@ namespace ui
         PreviousTab,
         NextTab,
         Reset,
+        // The pad's Guide button: the port menu's own key (the game cannot read it).
+        Menu,
     };
 
     // Keyboard: arrows; Enter, keypad Enter, Space; Escape, Backspace; Q, E, Page Up, Page Down;
@@ -38,7 +40,7 @@ namespace ui
     bool IsDirection(Action action);
 
     // The pads' menu actions: the d-pad and the left stick (past half its travel, released below 35%)
-    // as directions that repeat while held, A, B, LB, RB and Y. Every pad drives them; a direction is
+    // as directions that repeat while held, A, B, LB, RB, X (Reset) and Guide. Every pad drives them; a direction is
     // held while any pad holds it.
     class PadActions
     {

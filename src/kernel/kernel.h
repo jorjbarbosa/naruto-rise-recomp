@@ -232,6 +232,8 @@ namespace kernel
     bool MountDevice(const std::string& name, const std::filesystem::path& hostDir);
     bool UnmountDevice(const std::string& name);
     bool IsDeviceMounted(const std::string& name);
+    // Whether any content root is mounted: a package (a save) the game has open. Thread-safe.
+    bool ContentMounted();
 
     // Called by the stubs of imports that are not implemented.
     void ReportUnimplemented(const char* name, PPCContext& ctx);

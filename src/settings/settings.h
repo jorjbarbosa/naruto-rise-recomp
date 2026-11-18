@@ -9,9 +9,12 @@
 //
 // Each setting has a stored value (the file's, what Save writes) and an effective one (the stored
 // value, or the variable's when it is set: what the accessors return). Load runs on the main thread
-// before any other thread exists. The window's values change afterwards through the setters, on the
-// main thread, and are read there only; every other value is set once by Load and may be read from
-// any thread. Before Load the accessors return the defaults.
+// before any other thread exists. Afterwards the values change through the setters, on the main
+// thread (the window's as it moves, the others from the menu pages). The window's values and the text
+// values are read on the main thread only; the numbers (bool, rate, integer, choice, keys) may be read
+// from any thread. A setter changes the stored value, and the effective one unless the option applies
+// at the next start; it does not apply the change: the caller tells the value's owner. Before Load the
+// accessors return the defaults.
 
 #include <array>
 #include <cstdint>
@@ -100,4 +103,42 @@ namespace settings
     Language GameLanguage();
     // The XDK language of game.language: the answer to ExGetXConfigSetting(3, 9).
     uint32_t XdkLanguage();
+
+    // ---- The menu pages (phase 6). Main thread. ----
+
+    // The options the pages change, besides the window's and the keyboard's.
+    enum class Setting : uint8_t
+    {
+        VSync,
+        FrameRate,
+        Adapter,
+        Volume,
+        AudioDevice,
+        MuteInBackground,
+        DeadZone,
+        Language,
+    };
+    // Whether the option's environment variable sets it for this run, and the variable's name (null
+    // for an option without one).
+    bool IsOverridden(Setting setting);
+    const char* OverrideVariable(Setting setting);
+    // Whether a change applies only at the next start (the accessors keep this run's value).
+    bool AppliesAtRestart(Setting setting);
+    void ResetToDefault(Setting setting);
+
+    void SetVSync(bool vsync);
+    // video.frame_rate as stored: 0 "game", -1 "display", or 31 to 240.
+    int32_t FrameRateSetting();
+    void SetFrameRateSetting(int32_t rate);
+    // The stored adapter and language: what the next start uses.
+    const std::string& StoredAdapter();
+    void SetAdapter(const std::string& adapter);
+    Language StoredGameLanguage();
+    void SetGameLanguage(Language language);
+    void SetVolume(uint32_t volume);
+    void SetAudioDevice(const std::string& device);
+    void SetMuteInBackground(bool mute);
+    void SetDeadZone(uint32_t percent);
+    void SetKeyboardKeys(PadInput input, std::array<uint16_t, 2> keys);
+    std::array<uint16_t, 2> DefaultKeyboardKeys(PadInput input);
 }

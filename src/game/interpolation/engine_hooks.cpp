@@ -5,6 +5,7 @@
 // flag before calling the original.
 
 #include "game/addresses.h"
+#include "game/game_options.h"
 #include "game/interpolation/clock.h"
 #include "game/interpolation/data_watch.h"
 #include "game/interpolation/display_writes.h"
@@ -47,6 +48,7 @@ namespace
 // and so the carry probe compares before anything of a tick's iteration runs.
 PPC_FUNC(JADE_HUD_MAP)
 {
+    interpolation::clock::IterationStart();
     bool logic = !interpolation::clock::Enabled() || interpolation::clock::LogicRuns();
     if (interpolation::purity::Enabled())
         interpolation::purity::IterationStart(logic);
@@ -69,6 +71,8 @@ PPC_FUNC(JADE_WORLD_CHANGE)
 // for the probes; the purity probe compares and replays after it.
 PPC_FUNC(JADE_MAIN_STEP)
 {
+    // The menu's writes to the game's options, on this thread, before the logic.
+    game::options::MainStep(ctx, base);
     bool gated = interpolation::clock::Enabled();
     bool motion = interpolation::motion::Enabled();
     bool purity = interpolation::purity::Enabled();

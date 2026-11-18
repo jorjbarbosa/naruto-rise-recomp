@@ -4,8 +4,11 @@
 // ROAN_TRACE=1 logs every traced kernel call.
 
 #include "apu/xma.h"
+#include "game/game_options.h"
+#include "game/menu_entries.h"
 #include "host/input.h"
 #include "host/paths.h"
+#include "host/quit.h"
 #include "host/window.h"
 #include "kernel/kernel.h"
 #include "loader.h"
@@ -81,7 +84,7 @@ namespace
         Log("running _xstart");
         kernel::RunMainThread(_xstart, kernel::g_module.stackSize);
         Log("_xstart returned");
-        host::RequestQuit();
+        host::Quit("_xstart returned");
         return 0;
     }
 }
@@ -122,8 +125,9 @@ int main(int argc, char** argv)
     if (!host::CreateMainWindow("roan-xenon"))
         return 1;
     settings::SetDisplayRefreshSource(host::DisplayRefreshMillihertz);
-    // Without it the game runs with no menus of the port's (logged).
-    ui::Initialize(host::MainWindow(), exeDir / "data" / "ui", gameDir);
+    // Without it the game runs with no menus of the port's (logged), and its own Options.
+    if (ui::Initialize(host::MainWindow(), exeDir / "data" / "ui", gameDir))
+        game::menu::Install();
 
     // Recompiled code recurses deeply on the host stack: same reservation as the other guest threads.
     HANDLE guest = CreateThread(nullptr, 16 * 1024 * 1024, GuestMain, nullptr, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
@@ -135,11 +139,10 @@ int main(int argc, char** argv)
     CloseHandle(guest);
 
     if (host::RunEventLoop())
-        Log("window closed");
-    // The window's mode, rectangle and maximized state. The guest's own exits do not come here yet.
-    settings::SaveIfChanged();
-    host::StopInput();
-    kernel::PrintImportSummary();
-    // Plain exit: guest threads are still running, so no static destructors.
-    std::_Exit(0);
+        host::Quit("window closed");
+    // The game's options changed in the menu and not saved yet (a quit with the menu open): the game
+    // saves them on its own thread, which still runs unless it is the one quitting.
+    game::options::SaveBeforeQuit(2.0);
+    // Every exit ends here: the window's, the menu's and the guest's (host/quit.h).
+    host::FinishQuit();
 }

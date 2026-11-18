@@ -1,0 +1,34 @@
+<rml>
+<head>
+    <title>Options</title>
+    <link type="text/rcss" href="menu.rcss"/>
+</head>
+<!-- The port menu. Its rows are built into #rows from the page table (src/ui/pages.cpp); the focused
+     or hovered row is described in #description. -->
+<body class="menu">
+    <div id="stage">
+        <div class="strip" id="strip-left"></div>
+        <div class="strip" id="strip-right"></div>
+        <div id="title-band"></div>
+        <div id="title-splat"></div>
+        <div class="label" id="title">OPTIONS</div>
+        <div id="tabs">
+            <span class="tab-step" data-tab-step="-1"><span class="pad-only icon lb"></span><span class="key-only cap">Q</span></span>
+            <span class="tab label" id="tab-0" data-tab="0">GAME</span>
+            <span class="tab label" id="tab-1" data-tab="1">VIDEO</span>
+            <span class="tab label" id="tab-2" data-tab="2">AUDIO</span>
+            <span class="tab label" id="tab-3" data-tab="3">CONTROLS</span>
+            <span class="tab-step" data-tab-step="1"><span class="pad-only icon rb"></span><span class="key-only cap">E</span></span>
+        </div>
+        <div class="panel" id="rows"></div>
+        <div class="panel" id="description">
+            <h2 id="desc-title"></h2>
+            <p id="desc-text"></p>
+            <p id="desc-values"></p>
+            <p id="desc-note"></p>
+        </div>
+        <div class="prompt" id="prompt-back" data-action="back"><span class="pad-only button b"></span><span class="key-only cap">ESC</span>BACK</div>
+        <div class="prompt" id="prompt-reset" data-reset="data-reset">DEFAULT<span class="pad-only button x"></span><span class="key-only cap">DEL</span></div>
+    </div>
+</body>
+</rml>

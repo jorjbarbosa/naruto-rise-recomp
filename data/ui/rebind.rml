@@ -1,0 +1,29 @@
+<rml>
+<head>
+    <title>Key</title>
+    <link type="text/rcss" href="menu.rcss"/>
+</head>
+<!-- A key for a pad input, over the CONTROLS page: the next key pressed is bound (src/ui/pages.cpp). -->
+<body class="window">
+    <div id="stage">
+        <div id="scroll">
+            <div class="part" id="paper"></div>
+            <div class="part band" id="band-top"></div>
+            <div class="part band" id="band-bottom"></div>
+            <div class="part shade" id="shade-left"></div>
+            <div class="part shade" id="shade-left-edge"></div>
+            <div class="part shade" id="shade-right-edge"></div>
+            <div class="part shade" id="shade-right"></div>
+            <div class="part roller-body" id="roller-left-body"></div>
+            <div class="part roller-top" id="roller-left-top"></div>
+            <div class="part roller-bottom" id="roller-left-bottom"></div>
+            <div class="part roller-body" id="roller-right-body"></div>
+            <div class="part roller-top" id="roller-right-top"></div>
+            <div class="part roller-bottom" id="roller-right-bottom"></div>
+            <h1 id="rebind-input"></h1>
+            <p>Press a key for this button. Backspace leaves the slot empty; Escape keeps it as it is.</p>
+            <div class="answer" id="answer-back" data-action="back"><span class="button b"></span>Back</div>
+        </div>
+    </div>
+</body>
+</rml>

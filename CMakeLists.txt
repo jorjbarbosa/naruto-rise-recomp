@@ -206,7 +206,9 @@ target_link_libraries(roan-xenon PRIVATE ppc_common XenonUtils plume zstd_decomp
 target_compile_options(roan-xenon PRIVATE /EHsc /Z7 -Wno-unused-parameter -Wno-null-arithmetic)
 target_link_options(roan-xenon PRIVATE /DEBUG /STACK:16777216)
 set_target_properties(roan-xenon PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-# The UI's own files (fonts, and the documents from phase 6 on) beside the executable, in data/ui.
-add_custom_command(TARGET roan-xenon POST_BUILD
+# The UI's own files (fonts, documents, style sheets) beside the executable, in data/ui. A target of
+# its own that runs at every build: a change to them alone does not relink the executable.
+add_custom_target(roan-xenon-ui-data ALL
     COMMAND "${CMAKE_COMMAND}" -E copy_directory "${CMAKE_SOURCE_DIR}/data/ui" "${CMAKE_BINARY_DIR}/data/ui"
     VERBATIM)
+add_dependencies(roan-xenon roan-xenon-ui-data)

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 // Audio output: the frames of the guest audio driver (6 channels at 48 kHz, float) to the SDL 3
 // playback device of audio.device (the default one when empty), at the master volume of
@@ -28,4 +30,14 @@ namespace host
     // The window gained or lost the focus: applies audio.mute_in_background. Any thread (the main
     // thread's focus events); before OpenAudio it only records the focus.
     void SetAudioFocus(bool focused);
+
+    // ---- For the menu pages. ----
+
+    // Applies audio.volume and audio.mute_in_background as they are now. Any thread.
+    void ApplyAudioVolume();
+    // The names of the playback devices, as audio.device takes them. Host main thread.
+    std::vector<std::string> AudioDeviceNames();
+    // Moves the output to the device named (empty: the system's default) at the producer's next wait:
+    // the stream is closed and opened again there. Any thread.
+    void RequestAudioDevice(const std::string& name);
 }

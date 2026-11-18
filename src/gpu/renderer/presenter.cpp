@@ -41,6 +41,15 @@ namespace gpu
                 ramp_[4 * i + channel] = (i * 1023 + 127) / 255;
     }
 
+    void Presenter::SetVSync(bool vsync)
+    {
+        if (vsync == vsync_)
+            return;
+        vsync_ = vsync;
+        refreshMillihertz_ = 0; // the next present logs how frames are paced now
+        Log("gpu: vsync %s", vsync ? "on" : "off");
+    }
+
     void Presenter::SetGammaRamp(const GammaRamp& ramp)
     {
         for (uint32_t channel = 0; channel < 3; channel++)

@@ -10,6 +10,7 @@
 #include <memory>
 #include <new>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -425,6 +426,11 @@ namespace gpu
         bool DisplayPaces() const;
         // The ramp the presents posted after it map the front buffer through.
         void SetGammaRamp(const GammaRamp& ramp);
+        // Whether the presents posted after it wait for the vertical blank (video.vsync).
+        void SetVSync(bool vsync);
+        // The graphics adapters as named in the log (and in video.adapter), once a renderer was
+        // created. Any thread.
+        static std::vector<std::string> AdapterNames();
 
         class Impl;
 

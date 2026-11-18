@@ -96,7 +96,7 @@ namespace host
             return rect;
         }
 
-        void SetBorderless(bool borderless)
+        void SwitchBorderless(bool borderless)
         {
             bool was = g_borderless;
             g_borderless = borderless;
@@ -247,7 +247,7 @@ namespace host
                 (event.key.scancode == SDL_SCANCODE_RETURN || event.key.scancode == SDL_SCANCODE_KP_ENTER))
             {
                 if (!event.key.repeat)
-                    SetBorderless(!g_borderless);
+                    SwitchBorderless(!g_borderless);
                 continue;
             }
             ui::HandleEvent(event);
@@ -269,5 +269,115 @@ namespace host
     uint32_t DiagnosticKeyPresses()
     {
         return g_diagnosticKeyPresses.load(std::memory_order_relaxed);
+    }
+
+    bool IsBorderless()
+    {
+        return g_borderless;
+    }
+
+    void SetBorderless(bool borderless)
+    {
+        if (borderless != g_borderless)
+            SwitchBorderless(borderless);
+    }
+
+    WindowSize CurrentWindowSize()
+    {
+        settings::WindowRect rect = settings::GetWindowRect();
+        return { rect.width, rect.height };
+    }
+
+    std::vector<WindowSize> WindowSizes()
+    {
+        static constexpr WindowSize kSizes[] = { { 1280, 720 }, { 1366, 768 }, { 1600, 900 }, { 1920, 1080 },
+            { 2560, 1440 }, { 3200, 1800 }, { 3840, 2160 }, { 5120, 2880 }, { 7680, 4320 } };
+        SDL_Rect bounds{ 0, 0, 0, 0 };
+        SDL_DisplayID display = SDL_GetDisplayForWindow(g_window);
+        if (display == 0 || !SDL_GetDisplayUsableBounds(display, &bounds))
+            bounds = { 0, 0, 1 << 16, 1 << 16 };
+        // The frame takes some of the usable area: a size whose client area fills it would not fit.
+        int top = 0, left = 0, bottom = 0, right = 0;
+        SDL_GetWindowBordersSize(g_window, &top, &left, &bottom, &right);
+        std::vector<WindowSize> sizes;
+        for (const WindowSize& size : kSizes)
+            if (size.width + left + right <= bounds.w && size.height + top + bottom <= bounds.h)
+                sizes.push_back(size);
+        WindowSize current = CurrentWindowSize();
+        if (std::find(sizes.begin(), sizes.end(), current) == sizes.end())
+        {
+            auto at = std::find_if(sizes.begin(), sizes.end(), [&](const WindowSize& size) {
+                return int64_t(size.width) * size.height > int64_t(current.width) * current.height;
+            });
+            sizes.insert(at, current);
+        }
+        return sizes;
+    }
+
+    void SetWindowSize(WindowSize size)
+    {
+        if (g_borderless)
+            return;
+        if ((SDL_GetWindowFlags(g_window) & SDL_WINDOW_MAXIMIZED) != 0)
+        {
+            // Restoring is asynchronous: the centre is taken from the restored rectangle.
+            SDL_RestoreWindow(g_window);
+            SDL_SyncWindow(g_window);
+        }
+        int x = 0, y = 0, width = 0, height = 0;
+        SDL_GetWindowPosition(g_window, &x, &y);
+        SDL_GetWindowSize(g_window, &width, &height);
+        SDL_SetWindowSize(g_window, size.width, size.height);
+        SDL_SetWindowPosition(g_window, x + (width - size.width) / 2, y + (height - size.height) / 2);
+        Log("window: %dx%d", size.width, size.height);
+    }
+
+    std::vector<std::string> DisplayNames()
+    {
+        std::vector<std::string> names;
+        int count = 0;
+        SDL_DisplayID* displays = SDL_GetDisplays(&count);
+        for (int i = 0; i < count; i++)
+        {
+            const char* name = SDL_GetDisplayName(displays[i]);
+            names.push_back(name != nullptr && *name != 0 ? name : "Display " + std::to_string(i + 1));
+        }
+        SDL_free(displays);
+        return names;
+    }
+
+    int WindowDisplay()
+    {
+        SDL_DisplayID current = SDL_GetDisplayForWindow(g_window);
+        int count = 0;
+        SDL_DisplayID* displays = SDL_GetDisplays(&count);
+        int found = -1;
+        for (int i = 0; i < count && found < 0; i++)
+            if (displays[i] == current)
+                found = i;
+        SDL_free(displays);
+        return found;
+    }
+
+    void MoveToDisplay(int index)
+    {
+        int count = 0;
+        SDL_DisplayID* displays = SDL_GetDisplays(&count);
+        SDL_DisplayID display = index >= 0 && index < count ? displays[index] : 0;
+        SDL_free(displays);
+        if (display == 0 || display == SDL_GetDisplayForWindow(g_window))
+            return;
+        bool borderless = g_borderless;
+        // A borderless window goes windowed for the move, then fills the new display.
+        if (borderless)
+            SwitchBorderless(false);
+        if ((SDL_GetWindowFlags(g_window) & SDL_WINDOW_MAXIMIZED) != 0)
+            SDL_RestoreWindow(g_window);
+        SDL_SetWindowPosition(g_window, int(SDL_WINDOWPOS_CENTERED_DISPLAY(display)),
+            int(SDL_WINDOWPOS_CENTERED_DISPLAY(display)));
+        SDL_SyncWindow(g_window);
+        if (borderless)
+            SwitchBorderless(true);
+        Log("window: moved to display %d", index + 1);
     }
 }

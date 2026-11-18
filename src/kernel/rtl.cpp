@@ -2,7 +2,7 @@
 
 #include "kernel/kernel.h"
 
-#include "host/input.h"
+#include "host/quit.h"
 #include "loader.h"
 #include "settings/settings.h"
 
@@ -443,10 +443,8 @@ GUEST_FUNC(KeBugCheckEx)
 
 GUEST_FUNC(HalReturnToFirmware)
 {
-    host::StopInput();
-    PrintImportSummary();
     Log("HalReturnToFirmware(%u): the game asked to leave", ctx.r3.u32);
-    std::_Exit(0);
+    host::QuitFromGuest("HalReturnToFirmware");
 }
 
 GUEST_FUNC(KeEnableFpuExceptions) {}
