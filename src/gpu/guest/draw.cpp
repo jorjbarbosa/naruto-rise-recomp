@@ -91,6 +91,9 @@ namespace gpu::guest
         constexpr uint32_t kClipDisable = 0x10000;
         constexpr uint32_t kClipCullOnly = 0x20000;
 
+        // The span of the viewport's width the thread's draws are clipped to (SetDrawClip).
+        thread_local DrawClip t_clip;
+
         struct DrawCall
         {
             uint32_t primitive = 0;
@@ -523,6 +526,11 @@ namespace gpu::guest
                     int32_t(mem::Load32(devAddress + dev::kScissor + 8)), int32_t(mem::Load32(devAddress + dev::kScissor + 12)) };
             else
                 op.scissor = { 0, 0, INT32_MAX, INT32_MAX };
+            if (t_clip != DrawClip{})
+            {
+                op.scissor.left = std::max(op.scissor.left, int32_t(std::lround(op.viewport[0] + width * t_clip.left)));
+                op.scissor.right = std::min(op.scissor.right, int32_t(std::lround(op.viewport[0] + width * t_clip.right)));
+            }
             return true;
         }
 
@@ -805,6 +813,11 @@ namespace gpu::guest
     {
         PostInlineDraw(false);
     }
+}
+
+void gpu::SetDrawClip(const DrawClip& clip)
+{
+    guest::t_clip = clip;
 }
 
 using namespace gpu::guest;

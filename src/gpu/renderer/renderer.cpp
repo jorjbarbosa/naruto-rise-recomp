@@ -399,12 +399,12 @@ namespace gpu
         return result.get();
     }
 
-    uint64_t Renderer::Present(uint32_t frontAddress, uint32_t vblanks, uint32_t refreshMillihertz)
+    uint64_t Renderer::Present(uint32_t frontAddress, float stretch, uint32_t vblanks, uint32_t refreshMillihertz)
     {
         impl_->Record([&](FrameRecorder& recorder) { recorder.Present(frontAddress); });
         uint64_t present = impl_->presentsPosted.fetch_add(1) + 1;
-        if (!impl_->Post([impl = impl_.get(), frontAddress, vblanks, refreshMillihertz, present] {
-                impl->presenter->Present(*impl->passes, impl->targets->Resolved(frontAddress), vblanks, refreshMillihertz,
+        if (!impl_->Post([impl = impl_.get(), frontAddress, stretch, vblanks, refreshMillihertz, present] {
+                impl->presenter->Present(*impl->passes, impl->targets->Resolved(frontAddress), stretch, vblanks, refreshMillihertz,
                     [&](bool paced) {
                         impl->displayPaces = paced;
                         {

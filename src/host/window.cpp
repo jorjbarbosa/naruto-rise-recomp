@@ -20,6 +20,8 @@ namespace host
         std::atomic<void*> g_handle{ nullptr };
         std::atomic<bool> g_quitRequested{ false };
         std::atomic<uint32_t> g_refreshMillihertz{ 0 };
+        // The drawing area as (width << 32) | height; 0 before the first size.
+        std::atomic<uint64_t> g_pixelSize{ 0 };
 
         // Reads the current mode of the window's display. Main thread.
         void UpdateRefreshRate()
@@ -32,6 +34,16 @@ namespace host
                 millihertz = uint32_t(std::lround(mode->refresh_rate * 1000.0f));
             g_refreshMillihertz = millihertz;
         }
+
+        // Reads the size of the window's drawing area; a window without one (minimized) keeps the
+        // last. Main thread.
+        void UpdatePixelSize()
+        {
+            int width = 0, height = 0;
+            if (SDL_GetWindowSizeInPixels(g_window, &width, &height) && width > 0 && height > 0)
+                g_pixelSize = (uint64_t(width) << 32) | uint32_t(height);
+        }
+
         std::atomic<uint32_t> g_diagnosticKeyPresses{ 0 };
         constexpr SDL_Scancode kDiagnosticKey = SDL_SCANCODE_F8;
     }
@@ -80,6 +92,7 @@ namespace host
         g_handle = g_window;
 #endif
         UpdateRefreshRate();
+        UpdatePixelSize();
         return true;
     }
 
@@ -93,6 +106,14 @@ namespace host
         return g_refreshMillihertz;
     }
 
+    bool WindowPixelSize(uint32_t& width, uint32_t& height)
+    {
+        uint64_t size = g_pixelSize;
+        width = uint32_t(size >> 32);
+        height = uint32_t(size);
+        return size != 0;
+    }
+
     bool RunEventLoop()
     {
         SDL_Event event;
@@ -102,6 +123,8 @@ namespace host
                 return !g_quitRequested;
             if (event.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED || event.type == SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED)
                 UpdateRefreshRate();
+            if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
+                UpdatePixelSize();
             if (event.type == SDL_EVENT_KEY_DOWN && event.key.scancode == kDiagnosticKey && !event.key.repeat)
                 g_diagnosticKeyPresses.fetch_add(1, std::memory_order_relaxed);
             HandleInputEvent(event);

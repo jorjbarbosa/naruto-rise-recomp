@@ -4,6 +4,7 @@
 #include "game/render_packets.h"
 
 #include "game/addresses.h"
+#include "game/widescreen.h"
 #include "kernel/kernel.h"
 #include "log.h"
 
@@ -122,6 +123,7 @@ PPC_FUNC(JADE_HAND_PACKET)
     kernel::GuestThread* thread = kernel::CurrentThread();
     game::g_handing.store(thread, std::memory_order_release);
     ORIGINAL(JADE_HAND_PACKET)(ctx, base);
+    game::widescreen::PacketHanded();
     {
         std::lock_guard guard(game::g_mutex);
         if (mem::Load32(game::jade::kPacketPending) == 1)

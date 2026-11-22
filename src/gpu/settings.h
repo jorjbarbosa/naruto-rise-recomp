@@ -34,6 +34,9 @@ namespace gpu
         bool debugLayer = false; // ROAN_GPU_DEBUG=1: the API's debug layer
         bool syncValidation = false; // ROAN_GPU_DEBUG=sync: the debug layer, plus Vulkan's synchronization validation
         bool vsync = true;       // ROAN_VSYNC=0: present without waiting for the vertical blank
+        // ROAN_ULTRAWIDE=0: the picture stays 16:9, with bars in a window of another shape. Otherwise
+        // a window wider than 16:9 is filled (gpu::WideStretch).
+        bool ultrawide = true;
         std::string adapter;     // ROAN_ADAPTER=<name>: adapter as listed in the log (default: Plume's choice)
         std::filesystem::path pipelineList; // the pipeline list file (Pipelines); empty: none
         std::filesystem::path pipelineCache; // the driver's pipeline cache file, on Vulkan (Pipelines); empty: none
@@ -75,6 +78,8 @@ namespace gpu
             }
             if (const char* value = std::getenv("ROAN_VSYNC"))
                 settings.vsync = std::strcmp(value, "0") != 0;
+            if (const char* value = std::getenv("ROAN_ULTRAWIDE"))
+                settings.ultrawide = std::strcmp(value, "0") != 0;
             if (const char* value = std::getenv("ROAN_ADAPTER"))
                 settings.adapter = value;
             return settings;

@@ -15,6 +15,9 @@ namespace host
     // Refresh rate of the display the window is on, in millihertz (59.94 Hz is 59940); 0 when
     // unknown. Follows display and mode changes as the event loop sees them. Any thread.
     uint32_t DisplayRefreshMillihertz();
+    // Width and height in pixels of the window's drawing area; false before the window has one. A
+    // minimized window keeps its last size. Follows resizes as the event loop sees them. Any thread.
+    bool WindowPixelSize(uint32_t& width, uint32_t& height);
     // Pumps window events until the window is closed (returns true) or RequestQuit is called
     // (returns false).
     bool RunEventLoop();

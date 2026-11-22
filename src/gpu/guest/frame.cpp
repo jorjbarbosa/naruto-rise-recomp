@@ -20,6 +20,7 @@
 #include "host/window.h"
 #include "kernel/kernel.h"
 
+#include <algorithm>
 #include <atomic>
 
 namespace gpu
@@ -103,6 +104,13 @@ namespace gpu
         };
 
         FrameLimiter g_limiter;
+
+        // The settings of the process, read at the first use. Any thread.
+        const Settings& EnvironmentSettings()
+        {
+            static const Settings settings = Settings::FromEnvironment();
+            return settings;
+        }
     }
 
     Renderer* ActiveRenderer()
@@ -114,7 +122,7 @@ namespace gpu
     {
         if (g_renderer)
             return;
-        Settings settings = Settings::FromEnvironment();
+        Settings settings = EnvironmentSettings();
         if (!settings.renderer)
         {
             Log("gpu: no renderer (ROAN_GPU_API=none)");
@@ -170,7 +178,7 @@ namespace gpu
         uint32_t rate = g_paceRate.load(std::memory_order_relaxed);
         uint32_t vblanks = VblankInterval(device != 0 ? mem::Load32(device + guest::dev::kPresentInterval) : 1);
         uint64_t present = g_renderer
-            ? g_renderer->Present(front.address, rate != 0 ? 0 : vblanks, host::DisplayRefreshMillihertz())
+            ? g_renderer->Present(front.address, WideStretch(), rate != 0 ? 0 : vblanks, host::DisplayRefreshMillihertz())
             : 0;
         guest::EndTextureFrame();
         guest::EndBufferFrame();
@@ -183,5 +191,15 @@ namespace gpu
     void SetPaceRate(uint32_t rate)
     {
         g_paceRate.store(rate, std::memory_order_relaxed);
+    }
+
+    float WideStretch()
+    {
+        uint32_t width = 0, height = 0;
+        if (!EnvironmentSettings().ultrawide || !host::WindowPixelSize(width, height))
+            return 1.0f;
+        // The window's width over the width of a 16:9 picture of its height.
+        float stretch = float(width) * 9.0f / (float(height) * 16.0f);
+        return stretch < kMinWideStretch ? 1.0f : std::min(stretch, kMaxWideStretch);
     }
 }

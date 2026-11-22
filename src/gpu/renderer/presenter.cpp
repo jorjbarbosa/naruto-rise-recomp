@@ -138,7 +138,7 @@ namespace gpu
         }
     }
 
-    void Presenter::Submit(const Passes& passes, ResolvedTexture* image, uint32_t syncInterval)
+    void Presenter::Submit(const Passes& passes, ResolvedTexture* image, float stretch, uint32_t syncInterval)
     {
         plume::RenderCommandSemaphore* acquired = nullptr;
         uint32_t slot = 0;
@@ -175,11 +175,12 @@ namespace gpu
         list.clearColor(0, plume::RenderColor(0.0f, 0.0f, 0.0f, 1.0f));
         if (image != nullptr)
         {
-            // The largest rectangle of the image's aspect ratio, centered.
+            // The largest rectangle of the shown image's aspect ratio, centered.
             uint32_t width = swapChain_->getWidth();
             uint32_t height = swapChain_->getHeight();
-            double scale = std::min(double(width) / image->width, double(height) / image->height);
-            uint32_t fitWidth = std::clamp(uint32_t(std::lround(image->width * scale)), 1u, width);
+            double shownWidth = double(image->width) * stretch;
+            double scale = std::min(double(width) / shownWidth, double(height) / image->height);
+            uint32_t fitWidth = std::clamp(uint32_t(std::lround(shownWidth * scale)), 1u, width);
             uint32_t fitHeight = std::clamp(uint32_t(std::lround(image->height * scale)), 1u, height);
             uint32_t x = (width - fitWidth) / 2;
             uint32_t y = (height - fitHeight) / 2;
@@ -207,7 +208,7 @@ namespace gpu
         }
     }
 
-    void Presenter::Present(const Passes& passes, ResolvedTexture* image, uint32_t vblanks,
+    void Presenter::Present(const Passes& passes, ResolvedTexture* image, float stretch, uint32_t vblanks,
         uint32_t refreshMillihertz, const std::function<void(bool paced)>& shown)
     {
         if (swapChain_->needsResize())
@@ -231,7 +232,7 @@ namespace gpu
         if (refreshes == 0)
         {
             WaitForRoom();
-            Submit(passes, image, vsync_ ? 1 : 0);
+            Submit(passes, image, stretch, vsync_ ? 1 : 0);
             shown(false);
             return;
         }
@@ -243,7 +244,7 @@ namespace gpu
         for (uint32_t i = 0; i < presents; i++)
         {
             WaitForRoom();
-            Submit(passes, image, refreshes / presents + (i < refreshes % presents ? 1 : 0));
+            Submit(passes, image, stretch, refreshes / presents + (i < refreshes % presents ? 1 : 0));
             if (i == 0)
                 shown(true);
         }

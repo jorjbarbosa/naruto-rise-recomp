@@ -67,6 +67,20 @@
 #define JADE_THUMBNAIL_CAPTURE sub_8211D878 // render thread: draws, resolves, saves and compresses into [task+56]; clears +8 and +60; 1 on success
 #define JADE_THUMBNAIL_RELEASE sub_82583D28 // frees a thumbnail's two buffers (r3 the thumbnail); every free of one follows it
 
+// The shape of the picture (widescreen.cpp). The interface manager ([kEffects]) draws its groups in
+// JADE_EFFECTS_DRAW; each draw places its item with JADE_INTERFACE_PLACE first.
+#define JADE_CAMERA_ASSIGN sub_82584860       // CAM_AssignCameraToDevice: a camera's factors and size for the device (r3 screen format, r4 camera, r5 width, r6 height)
+#define JADE_INTERFACE_PLACE sub_820C3A58     // r3 = the placement at r4 (none: the whole screen) inside the one at r5 (none: the whole screen)
+#define JADE_INTERFACE_MOVIE_DRAW sub_826A42B8 // draws a Flash movie item (r3 item, r4 the placement it is in)
+#define JADE_INTERFACE_IMAGE_DRAW sub_8264F1A0 // draws an item that is one quad (r3 item, r4 the placement it is in)
+#define JADE_INTERFACE_TEXT_DRAW sub_8264F768  // draws a text item (r3 item, r4 the placement it is in)
+#define JADE_VIDEO_QUAD sub_820EC008           // a Bink video item's frame as a quad of the frame's size in device pixels (r3 video)
+#define JADE_VERTEX_ALLOCATE sub_82101C00      // r3 = room for a geometry's vertices in the frame's vertex memory (r3 geometry, r4 bytes, r5 stride)
+// The renderer's draw records: every draw the engine asks for fills one in the packet being built and
+// submits it; the render thread makes the device's draw of each record of the packet it was handed.
+#define JADE_RECORD_SUBMIT sub_820E7D40        // adds the packet's current record to its pass (r3 packet)
+#define JADE_RECORD_DRAW sub_821024A8          // the device's draw of a record (r3 packet, r4 record): the only caller of the device's draws
+
 namespace game::jade
 {
     // Globals.
@@ -133,6 +147,69 @@ namespace game::jade
         constexpr uint32_t kRenderingCounter = 0x964;
         // The extent the probes label: up to the last field the delivery writes (+2572, 8259FF40).
         constexpr uint32_t kProbeSize = 2576;
+    }
+
+    // A camera (CAM_tdst_Camera; the view's is at view +288), as JADE_CAMERA_ASSIGN leaves it.
+    namespace camera
+    {
+        constexpr uint32_t kFlags = 0;
+        constexpr uint32_t kFlagPerspective = 1; // otherwise orthographic, with a square screen ratio
+        constexpr uint32_t kFactorX = 20;        // float: half the camera's width times the screen ratio, over the tangent of half the field of view
+        constexpr uint32_t kScreenRatio = 76;    // float: the screen's height over its width
+    }
+
+    // The interface manager ([kEffects]).
+    namespace interface_manager
+    {
+        constexpr uint32_t kGroups = 8;      // array of group addresses
+        constexpr uint32_t kGroupCount = 12;
+    }
+
+    // An item of the interface manager: a group, or a movie, image, text or video in one.
+    namespace interface_item
+    {
+        constexpr uint32_t kVtable = 0;
+        constexpr uint32_t kMovieVtable = 0x82084958; // of a Flash movie item
+        constexpr uint32_t kFlags = 4;
+        constexpr uint32_t kShown = 0xE0000000; // in kFlags: created, open and shown, what every draw tests first
+        constexpr uint32_t kGroupItems = 92;    // a group's array of item addresses
+        constexpr uint32_t kGroupItemCount = 96;
+        constexpr uint32_t kMovieName = 100; // a movie item's name: a string object, the characters' address first
+        constexpr uint32_t kNameFlags = 4;   // of the string object
+        constexpr uint32_t kNameWide = 8;    // in kNameFlags: 16-bit characters
+        constexpr uint32_t kMovie = 124;     // a movie item's movie, 0 until it is open
+    }
+
+    // A placement of the interface: 4 floats, left, top, width and height as shares of the screen.
+    namespace placement
+    {
+        constexpr uint32_t kLeft = 0;
+        constexpr uint32_t kTop = 4;
+        constexpr uint32_t kWidth = 8;
+        constexpr uint32_t kHeight = 12;
+    }
+
+    // The renderer ([kRenderer]): two packets, one being built while the render thread draws the other.
+    constexpr uint32_t kRenderer = 0x82C0F020;
+    namespace renderer
+    {
+        constexpr uint32_t kPacketSize = 3208;
+        constexpr uint32_t kPacketCount = 2;
+        constexpr uint32_t kBuiltPacket = 6416; // index of the packet being built; a hand-off flips it
+    }
+
+    // A packet of the renderer.
+    namespace packet
+    {
+        constexpr uint32_t kCurrentRecord = 3060; // the record being filled, 0 once submitted; records of a packet are filled at rising addresses
+        constexpr uint32_t kRecordSize = 224;
+    }
+
+    // The quad JADE_VIDEO_QUAD writes: 4 vertices of x, y, z, u, v in clip space.
+    namespace video_quad
+    {
+        constexpr uint32_t kVertices = 4;
+        constexpr uint32_t kStride = 20;
     }
 
     // A view entry (WOR_tdst_View, 172 bytes; the world's +48 holds them): what the display builds its
