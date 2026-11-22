@@ -1,0 +1,39 @@
+name: Feature Request
+description: Suggest a feature or improvement for Naruto Rise.
+title: "[Feature Request]: "
+labels: ["feature request"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: Describe the problem you want to solve or the experience you want to improve.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed feature
+      description: Explain how you would like the feature to work and how it would help.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe any alternatives or workarounds you have considered or tried.
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform or input device
+      description: If relevant, specify the operating system, hardware, or input device this feature concerns.
+      placeholder: Windows, Linux with Proton, controller, keyboard and mouse, etc.
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Add screenshots, examples from other projects, or links to related issues that help explain your request.

@@ -1,0 +1,89 @@
+name: Bug Report
+description: Report a problem with Naruto Rise.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Naruto Rise version
+      description: Enter the release version or commit hash. Mention if you built it yourself.
+      placeholder: Release version or commit hash
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug description
+      description: Describe what happens and how it affects the game or menus.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the mission or location, relevant settings, and how often the issue occurs. If you cannot reproduce it consistently, say so.
+      placeholder: |
+        1. Launch the game
+        2. Go to...
+        3. Perform...
+        4. Observe...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: Describe what should happen instead.
+    validations:
+      required: true
+
+  - type: input
+    id: operating-system
+    attributes:
+      label: Operating system
+      description: Include the OS version and, if applicable, your Wine or Proton version.
+      placeholder: Windows 11, or Linux distribution with Wine/Proton version
+    validations:
+      required: true
+
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware
+      description: Include your processor, graphics card, graphics driver version, and RAM.
+      placeholder: |
+        CPU:
+        GPU:
+        Graphics driver:
+        RAM:
+    validations:
+      required: true
+
+  - type: dropdown
+    id: graphics-api
+    attributes:
+      label: Graphics API
+      description: Select the option configured in Settings → Display.
+      options:
+        - Direct3D 12
+        - Vulkan
+        - Not sure
+        - Not applicable
+    validations:
+      required: true
+
+  - type: textarea
+    id: mods-and-settings
+    attributes:
+      label: Mods and settings
+      description: List translation mods, other modifications, and settings relevant to the issue. Mention whether it also happens without mods, if tested.
+
+  - type: textarea
+    id: attachments
+    attributes:
+      label: Logs, screenshots, and additional context
+      description: Attach relevant logs, screenshots, videos, or narutorise.toml by dragging files into this field. Include any other details that could help reproduce the issue.
