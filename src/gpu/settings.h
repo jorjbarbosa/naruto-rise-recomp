@@ -19,6 +19,9 @@ namespace gpu
     // Renderer settings. Defaults, with a few environment overrides.
     struct Settings
     {
+        static constexpr float kMinResolutionScale = 1.0f;
+        static constexpr float kMaxResolutionScale = 4.0f;
+
         // ROAN_GPU_API=d3d12|vulkan|none. d3d12 or vulkan picks the API; none turns the renderer off
         // (renderer below). Any other value, and d3d12 where it is not built (ROAN_D3D12, Windows only;
         // logged), keeps the default: D3D12 where it is built, else Vulkan.
@@ -37,6 +40,10 @@ namespace gpu
         // ROAN_ULTRAWIDE=0: the picture stays 16:9, with bars in a window of another shape. Otherwise
         // a window wider than 16:9 is filled (gpu::WideStretch).
         bool ultrawide = true;
+        // ROAN_RESOLUTION_SCALE=<1 to 4>: the internal resolution, as a factor of the title's 1280x720
+        // (fractions allowed: 1.5 is 1920x1080). Out of range or not a number: logged, kept at 1.
+        // Lowered to what the device's textures allow (Renderer::Create).
+        float resolutionScale = 1.0f;
         std::string adapter;     // ROAN_ADAPTER=<name>: adapter as listed in the log (default: Plume's choice)
         std::filesystem::path pipelineList; // the pipeline list file (Pipelines); empty: none
         std::filesystem::path pipelineCache; // the driver's pipeline cache file, on Vulkan (Pipelines); empty: none
@@ -80,6 +87,16 @@ namespace gpu
                 settings.vsync = std::strcmp(value, "0") != 0;
             if (const char* value = std::getenv("ROAN_ULTRAWIDE"))
                 settings.ultrawide = std::strcmp(value, "0") != 0;
+            if (const char* value = std::getenv("ROAN_RESOLUTION_SCALE"))
+            {
+                char* end = nullptr;
+                float scale = std::strtof(value, &end);
+                if (end != value && *end == '\0' && scale >= kMinResolutionScale && scale <= kMaxResolutionScale)
+                    settings.resolutionScale = scale;
+                else
+                    Log("gpu: ROAN_RESOLUTION_SCALE=%s is not a number from %g to %g; the scale stays 1", value,
+                        double(kMinResolutionScale), double(kMaxResolutionScale));
+            }
             if (const char* value = std::getenv("ROAN_ADAPTER"))
                 settings.adapter = value;
             return settings;

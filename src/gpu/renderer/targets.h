@@ -2,6 +2,7 @@
 
 #include "gpu/renderer/descriptors.h"
 #include "gpu/renderer/renderer.h"
+#include "gpu/renderer/scale.h"
 
 #include <plume_render_interface.h>
 
@@ -17,14 +18,17 @@ namespace gpu
     class Context;
     class Passes;
 
-    // A texture holding resolved guest memory: RGBA8 from color surfaces, R32_FLOAT from depth.
+    // A texture holding resolved guest memory: RGBA8 from color surfaces, R32_FLOAT from depth, at
+    // the internal resolution.
     struct ResolvedTexture
     {
-        uint32_t width = 0;
+        uint32_t width = 0; // guest pixels
         uint32_t height = 0;
+        uint32_t hostWidth = 0; // the texture's own size: the guest size at the renderer's Scale
+        uint32_t hostHeight = 0;
         bool depth = false;
         // The bounds of what the resolves wrote since the texture last became the latest of its
-        // address, when it was cleared: outside them it reads zero.
+        // address, when it was cleared, in guest pixels: outside them it reads zero.
         Rect region;
         uint32_t header = 0; // the guest texture header of the last resolve into it
         plume::RenderFormat format = plume::RenderFormat::UNKNOWN;
@@ -38,7 +42,8 @@ namespace gpu
         bool readable = false;
     };
 
-    // The host side of the guest surfaces and of the texture memory they are resolved into.
+    // The host side of the guest surfaces and of the texture memory they are resolved into, at the
+    // internal resolution: the operations come in guest pixels and are mapped through the Scale.
     // Owner thread only.
     class Targets
     {
@@ -52,8 +57,8 @@ namespace gpu
         // Sample counts of the guest surfaces besides 1 (the Xenos has 2x and 4x MSAA).
         static constexpr uint32_t kMultisampleCounts[] = { 2, 4 };
 
-        Targets(Context& context, const Passes& passes, Descriptors& descriptors)
-            : context_(context), passes_(passes), descriptors_(descriptors) {}
+        Targets(Context& context, const Passes& passes, Descriptors& descriptors, Scale scale)
+            : context_(context), passes_(passes), descriptors_(descriptors), scale_(scale) {}
 
         void Clear(const ClearOp& op);
         void Resolve(const ResolveOp& op);
@@ -70,7 +75,8 @@ namespace gpu
         // in a layout other than the one its readers put it in: a resolve, a readback, a release.
         uint64_t ResolvedChanges() const { return resolvedChanges_; }
         // Copies the color texture resolved at a GPU address back from the GPU, waiting for the queue
-        // to go idle. False when there is none (depth resolves included).
+        // to go idle, in guest pixels: at another scale each guest pixel is the average of the host
+        // pixels it covers. False when there is none (depth resolves included).
         bool ReadResolved(uint32_t address, ResolvedImage& image);
 
         // Binds the targets of a draw (either may have key 0), recording the barriers that put
@@ -108,12 +114,21 @@ namespace gpu
         // The texture of (address, size, kind), created on first use, as the latest of its address.
         // One that was not the latest is cleared (recorded in the open command list).
         ResolvedTexture& EnsureResolved(uint32_t address, uint32_t width, uint32_t height, bool depth);
+        // Copies a region of a surface into a resolved texture at (destX, destY), all in host pixels:
+        // a copy, a multisample resolve, or a pass for a selected sample or a depth surface.
+        void CopyRegion(Surface& source, ResolvedTexture& dest, const Rect& region, uint32_t destX, uint32_t destY,
+            int32_t sample);
         void ResolvePass(Surface& source, ResolvedTexture& dest, const Rect& region, uint32_t destX, uint32_t destY,
             int32_t sample);
+        // Fills the Scale::Gap of a resolve whose region (host pixels, copied to destX, destY) starts
+        // at the left or top edge of its surface, from the first column or row the draws cover.
+        void FillGap(Surface& source, ResolvedTexture& dest, const Rect& region, uint32_t destX, uint32_t destY,
+            int32_t sample, bool left, bool top);
 
         Context& context_;
         const Passes& passes_;
         Descriptors& descriptors_;
+        const Scale scale_;
         std::unordered_map<uint32_t, Surface> surfaces_;
         std::unordered_map<uint32_t, ResolvedAddress> resolved_;
         uint64_t resolvedChanges_ = 0;

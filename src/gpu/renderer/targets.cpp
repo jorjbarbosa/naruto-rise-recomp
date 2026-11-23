@@ -6,8 +6,10 @@
 #include "gpu/renderer/passes.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <optional>
+#include <vector>
 
 namespace gpu
 {
@@ -32,6 +34,56 @@ namespace gpu
         {
             Barrier(list, stages, texture.texture.get(), layout);
             texture.readable = false;
+        }
+
+        // Reduces an RGBA8 image to a smaller size, each destination pixel the average of the source
+        // area it covers (the texels it partly covers weighed by their share), one axis at a time.
+        void ReduceArea(const std::vector<uint8_t>& source, uint32_t sourceWidth, uint32_t sourceHeight,
+            std::vector<uint8_t>& dest, uint32_t destWidth, uint32_t destHeight)
+        {
+            // The source texels under each destination texel of one axis, with their weights.
+            struct Tap
+            {
+                uint32_t texel;
+                float weight;
+            };
+            auto taps = [](uint32_t sourceSize, uint32_t destSize) {
+                std::vector<std::vector<Tap>> all(destSize);
+                double ratio = double(sourceSize) / destSize;
+                for (uint32_t i = 0; i < destSize; i++)
+                {
+                    double begin = i * ratio;
+                    double end = std::min((i + 1) * ratio, double(sourceSize));
+                    for (uint32_t texel = uint32_t(begin); texel < end; texel++)
+                    {
+                        double covered = std::min(end, texel + 1.0) - std::max(begin, double(texel));
+                        if (covered > 0)
+                            all[i].push_back({ texel, float(covered / ratio) });
+                    }
+                }
+                return all;
+            };
+            std::vector<std::vector<Tap>> columns = taps(sourceWidth, destWidth);
+            std::vector<std::vector<Tap>> rows = taps(sourceHeight, destHeight);
+
+            std::vector<float> narrow(size_t(destWidth) * sourceHeight * 4);
+            for (uint32_t y = 0; y < sourceHeight; y++)
+                for (uint32_t x = 0; x < destWidth; x++)
+                    for (const Tap& tap : columns[x])
+                        for (uint32_t channel = 0; channel < 4; channel++)
+                            narrow[(size_t(y) * destWidth + x) * 4 + channel] +=
+                                tap.weight * source[(size_t(y) * sourceWidth + tap.texel) * 4 + channel];
+            dest.assign(size_t(destWidth) * destHeight * 4, 0);
+            for (uint32_t y = 0; y < destHeight; y++)
+                for (uint32_t x = 0; x < destWidth; x++)
+                    for (uint32_t channel = 0; channel < 4; channel++)
+                    {
+                        float sum = 0.0f;
+                        for (const Tap& tap : rows[y])
+                            sum += tap.weight * narrow[(size_t(tap.texel) * destWidth + x) * 4 + channel];
+                        dest[(size_t(y) * destWidth + x) * 4 + channel] =
+                            uint8_t(std::clamp(std::lround(sum), 0l, 255l));
+                    }
         }
     }
 
@@ -58,15 +110,15 @@ namespace gpu
         surface.desc = desc;
         if (desc.depth)
         {
-            surface.texture = device.createTexture(
-                plume::RenderTextureDesc::DepthTarget(desc.width, desc.height, kDepthFormat, Multisampling(desc.samples)));
+            surface.texture = device.createTexture(plume::RenderTextureDesc::DepthTarget(scale_.Size(desc.width),
+                scale_.Size(desc.height), kDepthFormat, Multisampling(desc.samples)));
             surface.view = surface.texture->createTextureView(plume::RenderTextureViewDesc::Texture2D(kDepthFormat));
             surface.framebuffer = device.createFramebuffer(plume::RenderFramebufferDesc(nullptr, 0, surface.texture.get()));
         }
         else
         {
-            surface.texture = device.createTexture(
-                plume::RenderTextureDesc::ColorTarget(desc.width, desc.height, kColorFormat, Multisampling(desc.samples)));
+            surface.texture = device.createTexture(plume::RenderTextureDesc::ColorTarget(scale_.Size(desc.width),
+                scale_.Size(desc.height), kColorFormat, Multisampling(desc.samples)));
             surface.view = surface.texture->createTextureView(plume::RenderTextureViewDesc::Texture2D(kColorFormat));
             const plume::RenderTexture* attachment = surface.texture.get();
             surface.framebuffer = device.createFramebuffer(plume::RenderFramebufferDesc(&attachment, 1));
@@ -87,10 +139,13 @@ namespace gpu
             resolved = entry.textures.emplace_back(std::make_unique<ResolvedTexture>()).get();
             resolved->width = width;
             resolved->height = height;
+            resolved->hostWidth = scale_.Size(width);
+            resolved->hostHeight = scale_.Size(height);
             resolved->depth = depth;
             resolved->format = depth ? kResolvedDepthFormat : kColorFormat;
             // A render target too: the resolve passes draw into it.
-            resolved->texture = device.createTexture(plume::RenderTextureDesc::ColorTarget(width, height, resolved->format));
+            resolved->texture = device.createTexture(
+                plume::RenderTextureDesc::ColorTarget(resolved->hostWidth, resolved->hostHeight, resolved->format));
             const plume::RenderTexture* attachment = resolved->texture.get();
             resolved->framebuffer = device.createFramebuffer(plume::RenderFramebufferDesc(&attachment, 1));
             resolved->sampling = passes_.CreateTextureSet(*resolved->texture, nullptr);
@@ -163,7 +218,7 @@ namespace gpu
         auto area = [&](const SurfaceDesc& desc) -> std::optional<plume::RenderRect> {
             if (!op.rect)
                 return std::nullopt;
-            Rect rect = Intersect(*op.rect, { 0, 0, int32_t(desc.width), int32_t(desc.height) });
+            Rect rect = scale_.Map(Intersect(*op.rect, { 0, 0, int32_t(desc.width), int32_t(desc.height) }));
             return plume::RenderRect(rect.left, rect.top, rect.right, rect.bottom);
         };
 
@@ -212,12 +267,29 @@ namespace gpu
         ResolvedTexture& dest = EnsureResolved(op.destAddress, op.destWidth, op.destHeight, op.source.depth);
         dest.header = op.destHeader;
 
+        const Rect hostRegion = scale_.Map(region);
+        const uint32_t hostX = uint32_t(scale_.Edge(int32_t(destX)));
+        const uint32_t hostY = uint32_t(scale_.Edge(int32_t(destY)));
+        CopyRegion(source, dest, hostRegion, hostX, hostY, op.sample);
+        FillGap(source, dest, hostRegion, hostX, hostY, op.sample, region.left == 0, region.top == 0);
+
+        Rect written = { int32_t(destX), int32_t(destY), int32_t(destX) + (region.right - region.left),
+            int32_t(destY) + (region.bottom - region.top) };
+        dest.region = dest.region.Empty() ? written
+                                          : Rect{ std::min(dest.region.left, written.left), std::min(dest.region.top, written.top),
+                                                std::max(dest.region.right, written.right), std::max(dest.region.bottom, written.bottom) };
+        resolvedChanges_++;
+    }
+
+    void Targets::CopyRegion(Surface& source, ResolvedTexture& dest, const Rect& region, uint32_t destX, uint32_t destY,
+        int32_t sample)
+    {
         plume::RenderCommandList& list = context_.Commands();
-        if (op.source.depth || (op.source.samples > 1 && op.sample >= 0))
+        if (source.desc.depth || (source.desc.samples > 1 && sample >= 0))
         {
-            ResolvePass(source, dest, region, destX, destY, op.sample);
+            ResolvePass(source, dest, region, destX, destY, sample);
         }
-        else if (op.source.samples > 1)
+        else if (source.desc.samples > 1)
         {
             Barrier(list, plume::RenderBarrierStage::COPY, source.texture.get(), plume::RenderTextureLayout::RESOLVE_SOURCE);
             Barrier(list, plume::RenderBarrierStage::COPY, dest, plume::RenderTextureLayout::RESOLVE_DEST);
@@ -232,12 +304,29 @@ namespace gpu
             list.copyTextureRegion(plume::RenderTextureCopyLocation::Subresource(dest.texture.get()),
                 plume::RenderTextureCopyLocation::Subresource(source.texture.get()), destX, destY, 0, &box);
         }
-        Rect written = { int32_t(destX), int32_t(destY), int32_t(destX) + (region.right - region.left),
-            int32_t(destY) + (region.bottom - region.top) };
-        dest.region = dest.region.Empty() ? written
-                                          : Rect{ std::min(dest.region.left, written.left), std::min(dest.region.top, written.top),
-                                                std::max(dest.region.right, written.right), std::max(dest.region.bottom, written.bottom) };
-        resolvedChanges_++;
+    }
+
+    void Targets::FillGap(Surface& source, ResolvedTexture& dest, const Rect& region, uint32_t destX, uint32_t destY,
+        int32_t sample, bool left, bool top)
+    {
+        // The first covered column and row of the surface, repeated over the ones before them; the
+        // corner from the first covered pixel, since that row starts in the column gap.
+        const int32_t gap = scale_.Gap();
+        if (gap == 0 || region.right - region.left <= gap || region.bottom - region.top <= gap)
+            return;
+        const int32_t column = region.left + gap;
+        const int32_t row = region.top + gap;
+        for (int32_t i = 0; i < gap; i++)
+        {
+            if (left)
+                CopyRegion(source, dest, { column, region.top, column + 1, region.bottom }, destX + i, destY, sample);
+            if (top)
+                CopyRegion(source, dest, { region.left, row, region.right, row + 1 }, destX, destY + i, sample);
+        }
+        if (left && top)
+            for (int32_t y = 0; y < gap; y++)
+                for (int32_t x = 0; x < gap; x++)
+                    CopyRegion(source, dest, { column, row, column + 1, row + 1 }, destX + x, destY + y, sample);
     }
 
     void Targets::ResolvePass(Surface& source, ResolvedTexture& dest, const Rect& region, uint32_t destX, uint32_t destY,
@@ -271,15 +360,17 @@ namespace gpu
         if (resolved == nullptr || resolved->depth)
             return false;
         constexpr uint32_t kRowAlignment = Context::kTextureRowAlignment;
-        uint32_t rowBytes = resolved->width * kColorBytes;
+        uint32_t width = resolved->hostWidth;
+        uint32_t height = resolved->hostHeight;
+        uint32_t rowBytes = width * kColorBytes;
         uint32_t pitch = (rowBytes + kRowAlignment - 1) / kRowAlignment * kRowAlignment;
         std::unique_ptr<plume::RenderBuffer> buffer =
-            context_.Device().createBuffer(plume::RenderBufferDesc::ReadbackBuffer(uint64_t(pitch) * resolved->height));
+            context_.Device().createBuffer(plume::RenderBufferDesc::ReadbackBuffer(uint64_t(pitch) * height));
 
         plume::RenderCommandList& list = context_.Commands();
         Barrier(list, plume::RenderBarrierStage::COPY, *resolved, plume::RenderTextureLayout::COPY_SOURCE);
         list.copyTextureRegion(plume::RenderTextureCopyLocation::PlacedFootprint(buffer.get(), kColorFormat,
-                                   resolved->width, resolved->height, 1, pitch / kColorBytes),
+                                   width, height, 1, pitch / kColorBytes),
             plume::RenderTextureCopyLocation::Subresource(resolved->texture.get()));
         context_.WaitIdle();
         resolvedChanges_++;
@@ -287,13 +378,17 @@ namespace gpu
         const uint8_t* data = static_cast<const uint8_t*>(buffer->map());
         if (data == nullptr)
             return false;
+        std::vector<uint8_t> rgba(size_t(rowBytes) * height);
+        for (uint32_t row = 0; row < height; row++)
+            memcpy(rgba.data() + size_t(row) * rowBytes, data + size_t(row) * pitch, rowBytes);
+        buffer->unmap();
         image.width = resolved->width;
         image.height = resolved->height;
         image.region = resolved->region;
-        image.rgba.resize(size_t(rowBytes) * resolved->height);
-        for (uint32_t row = 0; row < resolved->height; row++)
-            memcpy(image.rgba.data() + size_t(row) * rowBytes, data + size_t(row) * pitch, rowBytes);
-        buffer->unmap();
+        if (width == resolved->width && height == resolved->height)
+            image.rgba = std::move(rgba);
+        else
+            ReduceArea(rgba, width, height, image.rgba, resolved->width, resolved->height);
         return true;
     }
 

@@ -165,7 +165,7 @@ namespace gpu
         uint32_t alphaToCoverage = 0;
         // Polygon offset as the host depth bias: the constant in the integer unit of a 24-bit
         // depth buffer (which the host's float buffer scales by the depth's exponent), the slope
-        // per pixel; 0 without depth.
+        // per guest pixel; 0 without depth.
         int32_t depthBias = 0;
         float depthBiasSlope = 0;
 

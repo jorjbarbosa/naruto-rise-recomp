@@ -4,6 +4,7 @@
 #include "gpu/renderer/context.h"
 #include "gpu/renderer/pipelines.h"
 #include "gpu/renderer/renderer.h"
+#include "gpu/renderer/scale.h"
 #include "gpu/renderer/textures.h"
 
 #include <plume_render_interface.h>
@@ -32,14 +33,15 @@ namespace gpu
     // and indices from the host copies of their buffers (Buffers) or from the draw's own copies, and
     // its constants copied from the constant rings once for the draws in a row that share a range.
     // State the previous draw left in the command list is not set again, and a fetch slot is bound
-    // again only when its texture differs from the previous draw's. Owner thread only.
+    // again only when its texture differs from the previous draw's. Viewports and scissors come in
+    // guest pixels and are mapped through the Scale of the targets. Owner thread only.
     class Draws
     {
     public:
         // pipelineList, pipelineCache: the files the pipelines are remembered in (Pipelines; empty: none).
         Draws(Context& context, Targets& targets, Descriptors& descriptors, Textures& textures, Buffers& buffers,
-            const ConstantRing& vertexRing, const ConstantRing& pixelRing, const std::filesystem::path& pipelineList,
-            const std::filesystem::path& pipelineCache);
+            const ConstantRing& vertexRing, const ConstantRing& pixelRing, Scale scale,
+            const std::filesystem::path& pipelineList, const std::filesystem::path& pipelineCache);
         ~Draws();
 
         // Records the draw; a draw whose shaders or pipeline are missing is skipped (logged).
@@ -99,6 +101,7 @@ namespace gpu
         Buffers& buffers_;
         const ConstantRing& vertexRing_;
         const ConstantRing& pixelRing_;
+        const Scale scale_;
         std::unique_ptr<plume::RenderPipelineLayout> layout_;
         std::unique_ptr<Pipelines> pipelines_; // after layout_, which it uses
         ConstantUpload vertexConstants_;

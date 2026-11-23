@@ -55,13 +55,14 @@ namespace gpu
     }
 
     Draws::Draws(Context& context, Targets& targets, Descriptors& descriptors, Textures& textures, Buffers& buffers,
-        const ConstantRing& vertexRing, const ConstantRing& pixelRing, const std::filesystem::path& pipelineList,
-        const std::filesystem::path& pipelineCache)
+        const ConstantRing& vertexRing, const ConstantRing& pixelRing, Scale scale,
+        const std::filesystem::path& pipelineList, const std::filesystem::path& pipelineCache)
         : context_(context), targets_(targets), descriptors_(descriptors), textures_(textures), buffers_(buffers),
-          vertexRing_(vertexRing), pixelRing_(pixelRing)
+          vertexRing_(vertexRing), pixelRing_(pixelRing), scale_(scale)
     {
         layout_ = CreateDrawLayout(context.Device(), descriptors.SetLayouts(), Descriptors::kSetCount);
-        pipelines_ = std::make_unique<Pipelines>(context.Device(), *layout_, pipelineList, pipelineCache);
+        pipelines_ =
+            std::make_unique<Pipelines>(context.Device(), *layout_, scale.Factor(), pipelineList, pipelineCache);
     }
 
     Draws::~Draws() = default;
@@ -116,9 +117,10 @@ namespace gpu
         if (pipeline == nullptr)
             return;
         const SurfaceDesc& target = op.color.key != 0 ? op.color : op.depth;
-        Rect scissor = Intersect(op.scissor, { 0, 0, int32_t(target.width), int32_t(target.height) });
-        if (scissor.Empty())
+        const Rect guestScissor = Intersect(op.scissor, { 0, 0, int32_t(target.width), int32_t(target.height) });
+        if (guestScissor.Empty())
             return;
+        const Rect scissor = scale_.Map(guestScissor);
         plume::RenderCommandList& list = context_.Commands();
 
         // The state the last draw set stays unless the command list changed or another pass claimed
@@ -240,8 +242,11 @@ namespace gpu
             state_.stencilReference = op.stencilReference;
         }
 
-        const plume::RenderViewport viewport(op.viewport[0], op.viewport[1], op.viewport[2], op.viewport[3], op.viewport[4],
-            op.viewport[5]);
+        // Each edge alone, as the scissor and the targets' sizes are mapped.
+        const float left = scale_.Coordinate(op.viewport[0]);
+        const float top = scale_.Coordinate(op.viewport[1]);
+        const plume::RenderViewport viewport(left, top, scale_.Coordinate(op.viewport[0] + op.viewport[2]) - left,
+            scale_.Coordinate(op.viewport[1] + op.viewport[3]) - top, op.viewport[4], op.viewport[5]);
         if (!state_.viewport || *state_.viewport != viewport)
         {
             list.setViewports(&viewport, 1);

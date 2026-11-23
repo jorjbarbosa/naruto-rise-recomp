@@ -11,6 +11,7 @@
 #include "gpu/renderer/passes.h"
 #include "gpu/renderer/presenter.h"
 #include "gpu/renderer/recording.h"
+#include "gpu/renderer/scale.h"
 #include "gpu/renderer/targets.h"
 #include "gpu/renderer/textures.h"
 #include "gpu/settings.h"
@@ -38,6 +39,23 @@ namespace gpu
         // about 2 MB of vertex constants and 0.6 MB of pixel constants, and the capture runs at most
         // about two frames ahead of the owner.
         constexpr uint64_t kConstantRingBytes = 8 << 20;
+
+        // The scale asked for, lowered so that the largest surface fits the device's textures.
+        Scale ChooseScale(const Settings& settings, const plume::RenderDevice& device)
+        {
+            float factor = settings.resolutionScale;
+            float largest = float(device.getCapabilities().maxTextureSize) / kVideoWidth;
+            if (factor > largest)
+            {
+                Log("gpu: a resolution scale of %g makes textures larger than the device's %llu; lowered to %g",
+                    double(factor), (unsigned long long)device.getCapabilities().maxTextureSize, double(largest));
+                factor = largest;
+            }
+            Scale scale(factor);
+            Log("gpu: internal resolution %ux%u (scale %g)", scale.Size(kVideoWidth), scale.Size(kVideoHeight),
+                double(factor));
+            return scale;
+        }
     }
 
     class Renderer::Impl
@@ -281,13 +299,14 @@ namespace gpu
         impl->presenter = Presenter::Create(*impl->context, window, settings);
         if (!impl->presenter)
             return nullptr;
+        const Scale scale = ChooseScale(settings, impl->context->Device());
         impl->descriptors = std::make_unique<Descriptors>(*impl->context);
         impl->passes = std::make_unique<Passes>(*impl->context, Presenter::kFormat);
-        impl->targets = std::make_unique<Targets>(*impl->context, *impl->passes, *impl->descriptors);
+        impl->targets = std::make_unique<Targets>(*impl->context, *impl->passes, *impl->descriptors, scale);
         impl->textures = std::make_unique<Textures>(*impl->context, *impl->targets, *impl->descriptors);
         impl->buffers = std::make_unique<Buffers>(*impl->context);
         impl->draws = std::make_unique<Draws>(*impl->context, *impl->targets, *impl->descriptors, *impl->textures,
-            *impl->buffers, impl->vertexRing, impl->pixelRing, settings.pipelineList, settings.pipelineCache);
+            *impl->buffers, impl->vertexRing, impl->pixelRing, scale, settings.pipelineList, settings.pipelineCache);
         impl->Start();
         return std::unique_ptr<Renderer>(new Renderer(std::move(impl)));
     }

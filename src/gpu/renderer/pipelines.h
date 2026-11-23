@@ -47,11 +47,13 @@ namespace gpu
     class Pipelines
     {
     public:
-        // listFile: the pipeline list, read now and appended to (empty: no list). cacheFile: the
-        // pipeline cache file, read now and written when the listed pipelines are created (empty:
-        // none).
-        Pipelines(plume::RenderDevice& device, const plume::RenderPipelineLayout& layout, std::filesystem::path listFile,
-            std::filesystem::path cacheFile);
+        // slopeScale: the internal resolution scale (Scale), by which the slope-scaled depth bias of
+        // every pipeline is multiplied; the keys keep the title's slope, so that the list serves
+        // every scale. listFile: the pipeline list, read now and appended to (empty: no list).
+        // cacheFile: the pipeline cache file, read now and written when the listed pipelines are
+        // created (empty: none).
+        Pipelines(plume::RenderDevice& device, const plume::RenderPipelineLayout& layout, float slopeScale,
+            std::filesystem::path listFile, std::filesystem::path cacheFile);
         ~Pipelines();
 
         // The pipeline of a key: ready, waited for while a background thread creates it, or created
@@ -92,6 +94,7 @@ namespace gpu
 
         plume::RenderDevice& device_;
         const plume::RenderPipelineLayout& layout_;
+        const float slopeScale_;
         ShaderCache cache_;
 
         std::mutex shaderMutex_;

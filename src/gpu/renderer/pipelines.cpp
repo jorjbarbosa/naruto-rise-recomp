@@ -139,9 +139,9 @@ namespace gpu
         return size_t(hash);
     }
 
-    Pipelines::Pipelines(plume::RenderDevice& device, const plume::RenderPipelineLayout& layout, std::filesystem::path listFile,
-        std::filesystem::path cacheFile)
-        : device_(device), layout_(layout), cache_(ShaderFormat(device))
+    Pipelines::Pipelines(plume::RenderDevice& device, const plume::RenderPipelineLayout& layout, float slopeScale,
+        std::filesystem::path listFile, std::filesystem::path cacheFile)
+        : device_(device), layout_(layout), slopeScale_(slopeScale), cache_(ShaderFormat(device))
     {
         if (!cacheFile.empty() && KeepsPipelineCache(device))
         {
@@ -435,7 +435,9 @@ namespace gpu
         desc.frontFace = (state.cullControl & kFrontClockwise) != 0 ? plume::RenderFrontFace::CLOCKWISE
                                                                       : plume::RenderFrontFace::COUNTER_CLOCKWISE;
         desc.depthBias = state.depthBias;
-        desc.slopeScaledDepthBias = state.depthBiasSlope;
+        // The slope is per guest pixel, and a host pixel spans 1 / scale of the depth a guest pixel
+        // did: the same bias in depth takes the slope times the scale.
+        desc.slopeScaledDepthBias = state.depthBiasSlope * slopeScale_;
         // The blend color and the stencil reference are set per draw (Draws::Draw). On every draw
         // pipeline alike, so that a value set on the list outlives a change of pipeline on Vulkan.
         desc.dynamicBlendConstantsEnabled = true;
