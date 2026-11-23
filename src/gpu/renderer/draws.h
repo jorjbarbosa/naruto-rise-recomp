@@ -46,6 +46,8 @@ namespace gpu
 
         // Records the draw; a draw whose shaders or pipeline are missing is skipped (logged).
         void Draw(DrawOp& op);
+        // The scale of the draws that follow, the targets' (Targets::SetScale).
+        void SetScale(const Scale& scale);
 
     private:
         // The constants of a stage uploaded for a draw of the open command list, which the draws after
@@ -101,7 +103,7 @@ namespace gpu
         Buffers& buffers_;
         const ConstantRing& vertexRing_;
         const ConstantRing& pixelRing_;
-        const Scale scale_;
+        Scale scale_;
         std::unique_ptr<plume::RenderPipelineLayout> layout_;
         std::unique_ptr<Pipelines> pipelines_; // after layout_, which it uses
         ConstantUpload vertexConstants_;

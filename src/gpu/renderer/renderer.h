@@ -413,6 +413,9 @@ namespace gpu
 
         // Presents the texture resolved at the given GPU address, shown stretch times wider than its
         // own shape (1: as it is) and fitted to the window (black when nothing was resolved there).
+        // Once the stretch has settled at a new value, the frames after it are rendered that much
+        // wider (the internal resolution's horizontal scale), so that the picture keeps the window's
+        // density.
         // When the display can pace (vsync on, a window with an area, refreshMillihertz within 1 Hz
         // of a multiple of 60 Hz) and vblanks != 0, the image is held for vblanks vertical blanks of
         // 60 Hz after the previous one; otherwise it is presented at once. Returns the number to pass

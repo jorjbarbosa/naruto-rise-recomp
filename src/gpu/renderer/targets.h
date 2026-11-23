@@ -24,7 +24,7 @@ namespace gpu
     {
         uint32_t width = 0; // guest pixels
         uint32_t height = 0;
-        uint32_t hostWidth = 0; // the texture's own size: the guest size at the renderer's Scale
+        uint32_t hostWidth = 0; // the texture's own size: the guest size at the Scale it was made at
         uint32_t hostHeight = 0;
         bool depth = false;
         // The bounds of what the resolves wrote since the texture last became the latest of its
@@ -59,6 +59,11 @@ namespace gpu
 
         Targets(Context& context, const Passes& passes, Descriptors& descriptors, Scale scale)
             : context_(context), passes_(passes), descriptors_(descriptors), scale_(scale) {}
+
+        // Makes the targets at another scale, between frames. The surfaces are retired and come back
+        // at the new size on first use; a resolved texture is sampled as it is until its next
+        // resolve replaces it (EnsureResolved).
+        void SetScale(const Scale& scale);
 
         void Clear(const ClearOp& op);
         void Resolve(const ResolveOp& op);
@@ -112,7 +117,8 @@ namespace gpu
         Surface& EnsureSurface(const SurfaceDesc& desc);
         void RetireSurface(uint32_t key);
         // The texture of (address, size, kind), created on first use, as the latest of its address.
-        // One that was not the latest is cleared (recorded in the open command list).
+        // One that was not the latest is cleared (recorded in the open command list); one made at
+        // another scale is replaced.
         ResolvedTexture& EnsureResolved(uint32_t address, uint32_t width, uint32_t height, bool depth);
         // Copies a region of a surface into a resolved texture at (destX, destY), all in host pixels:
         // a copy, a multisample resolve, or a pass for a selected sample or a depth surface.
@@ -120,7 +126,7 @@ namespace gpu
             int32_t sample);
         void ResolvePass(Surface& source, ResolvedTexture& dest, const Rect& region, uint32_t destX, uint32_t destY,
             int32_t sample);
-        // Fills the Scale::Gap of a resolve whose region (host pixels, copied to destX, destY) starts
+        // Fills the Scale::GapX and GapY of a resolve whose region (host pixels, copied to destX, destY) starts
         // at the left or top edge of its surface, from the first column or row the draws cover.
         void FillGap(Surface& source, ResolvedTexture& dest, const Rect& region, uint32_t destX, uint32_t destY,
             int32_t sample, bool left, bool top);
@@ -128,7 +134,7 @@ namespace gpu
         Context& context_;
         const Passes& passes_;
         Descriptors& descriptors_;
-        const Scale scale_;
+        Scale scale_;
         std::unordered_map<uint32_t, Surface> surfaces_;
         std::unordered_map<uint32_t, ResolvedAddress> resolved_;
         uint64_t resolvedChanges_ = 0;

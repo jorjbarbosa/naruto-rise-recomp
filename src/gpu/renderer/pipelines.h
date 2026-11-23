@@ -19,6 +19,8 @@
 
 namespace gpu
 {
+    class Context;
+
     // Everything a pipeline of a guest draw depends on. Plain data without padding, hashed, compared
     // and stored in the pipeline list as bytes: a change of its layout, or of what a field means,
     // needs a new kListVersion.
@@ -47,12 +49,12 @@ namespace gpu
     class Pipelines
     {
     public:
-        // slopeScale: the internal resolution scale (Scale), by which the slope-scaled depth bias of
+        // slopeScale: the factor of the slope-scaled depth bias (Scale::Slope), by which the slope of
         // every pipeline is multiplied; the keys keep the title's slope, so that the list serves
         // every scale. listFile: the pipeline list, read now and appended to (empty: no list).
         // cacheFile: the pipeline cache file, read now and written when the listed pipelines are
         // created (empty: none).
-        Pipelines(plume::RenderDevice& device, const plume::RenderPipelineLayout& layout, float slopeScale,
+        Pipelines(Context& context, const plume::RenderPipelineLayout& layout, float slopeScale,
             std::filesystem::path listFile, std::filesystem::path cacheFile);
         ~Pipelines();
 
@@ -60,6 +62,10 @@ namespace gpu
         // here (then added to the list). Null when its shaders are missing or the driver refuses it
         // (logged once per key). A new key keeps a copy of input. Owner thread only.
         const plume::RenderPipeline* Get(const PipelineKey& key, const VertexInput& input);
+        // The factor of the slope-scaled depth bias from now on. A pipeline with a slope made for
+        // another factor is made again when a draw next asks for it (the old one retired). Owner
+        // thread only.
+        void SetSlopeScale(float slopeScale);
 
     private:
         struct KeyHash
@@ -77,12 +83,15 @@ namespace gpu
             State state = State::Queued;
             std::shared_ptr<const VertexInput> input;
             std::unique_ptr<plume::RenderPipeline> pipeline;
+            float slopeScale = 0.0f; // what the pipeline was made with
         };
 
         // The shader of a cache key, or null when the cache has none (logged once per key). Any thread.
         const plume::RenderShader* Shader(uint64_t key);
         // Creates a pipeline. Any thread.
-        std::unique_ptr<plume::RenderPipeline> Create(const PipelineKey& key, const VertexInput& input);
+        std::unique_ptr<plume::RenderPipeline> Create(const PipelineKey& key, const VertexInput& input, float slopeScale);
+        // Whether a ready entry's pipeline was made for another factor of the slope. Under mutex_.
+        bool Outdated(const PipelineKey& key, const Entry& entry) const;
         void ReadList(const std::filesystem::path& listFile);
         void AppendToList(const PipelineKey& key, const VertexInput& input);
         void WorkerMain();
@@ -92,15 +101,16 @@ namespace gpu
         // thread; once.
         void SaveCache();
 
+        Context& context_;
         plume::RenderDevice& device_;
         const plume::RenderPipelineLayout& layout_;
-        const float slopeScale_;
         ShaderCache cache_;
 
         std::mutex shaderMutex_;
         std::unordered_map<uint64_t, std::unique_ptr<plume::RenderShader>> shaders_;
 
-        std::mutex mutex_; // the entries, the queue, stopping_, busy_ and reported_
+        std::mutex mutex_; // the entries, the queue, slopeScale_, stopping_, busy_ and reported_
+        float slopeScale_;
         std::condition_variable created_;
         std::unordered_map<PipelineKey, Entry, KeyHash> entries_;
         std::deque<PipelineKey> queue_;

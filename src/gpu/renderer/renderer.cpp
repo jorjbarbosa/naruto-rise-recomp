@@ -18,13 +18,16 @@
 #include "host/thread.h"
 #include "log.h"
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <future>
 #include <iterator>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -40,20 +43,24 @@ namespace gpu
         // about two frames ahead of the owner.
         constexpr uint64_t kConstantRingBytes = 8 << 20;
 
-        // The scale asked for, lowered so that the largest surface fits the device's textures.
-        Scale ChooseScale(const Settings& settings, const plume::RenderDevice& device)
+        // How long the shape the presents ask for must stay the same before the scale follows it: a
+        // resize drags the window through many shapes, and each change of scale makes the surfaces
+        // again.
+        constexpr auto kShapeSettle = std::chrono::milliseconds(300);
+
+        // The scale of the resolution scale asked for in a picture stretched that much wider than
+        // 16:9 (gpu::WideStretch), each axis lowered so that the largest surface fits the device's
+        // textures.
+        Scale ChooseScale(float resolutionScale, float stretch, const plume::RenderDevice& device)
         {
-            float factor = settings.resolutionScale;
-            float largest = float(device.getCapabilities().maxTextureSize) / kVideoWidth;
-            if (factor > largest)
-            {
-                Log("gpu: a resolution scale of %g makes textures larger than the device's %llu; lowered to %g",
-                    double(factor), (unsigned long long)device.getCapabilities().maxTextureSize, double(largest));
-                factor = largest;
-            }
-            Scale scale(factor);
-            Log("gpu: internal resolution %ux%u (scale %g)", scale.Size(kVideoWidth), scale.Size(kVideoHeight),
-                double(factor));
+            float largest = float(device.getCapabilities().maxTextureSize);
+            float x = std::min(resolutionScale * stretch, largest / kVideoWidth);
+            float y = std::min(resolutionScale, largest / kVideoHeight);
+            if (x < resolutionScale * stretch || y < resolutionScale)
+                Log("gpu: the resolution scale makes textures larger than the device's %.0f; lowered", double(largest));
+            Scale scale(x, y);
+            Log("gpu: internal resolution %ux%u (scale %g x %g)", scale.Width(kVideoWidth), scale.Height(kVideoHeight),
+                double(x), double(y));
             return scale;
         }
     }
@@ -183,6 +190,38 @@ namespace gpu
         std::unique_ptr<FrameRecorder> recorder; // Settings::recordFrames
         Renderer::BeforePost beforePost;
 
+        // The scale follows the shape the presents ask for (owner thread): the resolution scale of
+        // the settings, times the stretch the targets are made for, and a stretch waiting to settle.
+        float resolutionScale = 1.0f;
+        float scaleStretch = 1.0f;
+        std::optional<float> pendingStretch;
+        std::chrono::steady_clock::time_point pendingSince;
+
+        // After a present: once the stretch has stayed at another value for kShapeSettle, the
+        // targets and the draws are made at the scale of it, from the next frame on.
+        void FollowShape(float stretch)
+        {
+            if (stretch == scaleStretch)
+            {
+                pendingStretch.reset();
+                return;
+            }
+            auto now = std::chrono::steady_clock::now();
+            if (pendingStretch != stretch)
+            {
+                pendingStretch = stretch;
+                pendingSince = now;
+                return;
+            }
+            if (now - pendingSince < kShapeSettle)
+                return;
+            scaleStretch = stretch;
+            pendingStretch.reset();
+            Scale scale = ChooseScale(resolutionScale, stretch, context->Device());
+            targets->SetScale(scale);
+            draws->SetScale(scale);
+        }
+
         // Presents: numbered as they are posted, and the last one the owner handed to the swap chain.
         std::atomic<uint64_t> presentsPosted{ 0 };
         std::mutex presentMutex;
@@ -299,7 +338,8 @@ namespace gpu
         impl->presenter = Presenter::Create(*impl->context, window, settings);
         if (!impl->presenter)
             return nullptr;
-        const Scale scale = ChooseScale(settings, impl->context->Device());
+        impl->resolutionScale = settings.resolutionScale;
+        const Scale scale = ChooseScale(impl->resolutionScale, impl->scaleStretch, impl->context->Device());
         impl->descriptors = std::make_unique<Descriptors>(*impl->context);
         impl->passes = std::make_unique<Passes>(*impl->context, Presenter::kFormat);
         impl->targets = std::make_unique<Targets>(*impl->context, *impl->passes, *impl->descriptors, scale);
@@ -436,6 +476,7 @@ namespace gpu
                         }
                         impl->presentDone.notify_all();
                     });
+                impl->FollowShape(stretch);
             }))
             return 0;
         return present;

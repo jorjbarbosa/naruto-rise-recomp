@@ -4,6 +4,7 @@
 #include "gpu/renderer/pipelines.h"
 
 #include "gpu/renderer/backend.h"
+#include "gpu/renderer/context.h"
 #include "gpu/renderer/targets.h"
 #include "host/files.h"
 #include "host/paths.h"
@@ -139,11 +140,12 @@ namespace gpu
         return size_t(hash);
     }
 
-    Pipelines::Pipelines(plume::RenderDevice& device, const plume::RenderPipelineLayout& layout, float slopeScale,
+    Pipelines::Pipelines(Context& context, const plume::RenderPipelineLayout& layout, float slopeScale,
         std::filesystem::path listFile, std::filesystem::path cacheFile)
-        : device_(device), layout_(layout), slopeScale_(slopeScale), cache_(ShaderFormat(device))
+        : context_(context), device_(context.Device()), layout_(layout), cache_(ShaderFormat(device_)),
+          slopeScale_(slopeScale)
     {
-        if (!cacheFile.empty() && KeepsPipelineCache(device))
+        if (!cacheFile.empty() && KeepsPipelineCache(device_))
         {
             cacheFile_ = std::move(cacheFile);
             LoadCache();
@@ -284,30 +286,46 @@ namespace gpu
             {
                 auto start = std::chrono::steady_clock::now();
                 created_.wait(lock, [&] { return entry.state == State::Ready; });
-                const plume::RenderPipeline* pipeline = entry.pipeline.get();
                 // Logged outside the lock: the background threads take it to finish their pipelines.
                 lock.unlock();
                 NoteDrawCost(false, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(), key);
-                return pipeline;
+                lock.lock();
             }
-            if (entry.state == State::Ready)
+            if (entry.state == State::Ready && !Outdated(key, entry))
                 return entry.pipeline.get();
-            // Listed but not taken yet: created here instead (the threads skip it).
+            // Listed but not taken yet, or made for another slope factor: created here instead (the
+            // threads skip it).
             entry.state = State::Creating;
         }
         std::shared_ptr<const VertexInput> entryInput = entry.input;
+        float slopeScale = slopeScale_;
         lock.unlock();
 
         auto start = std::chrono::steady_clock::now();
-        std::unique_ptr<plume::RenderPipeline> pipeline = Create(key, *entryInput);
+        std::unique_ptr<plume::RenderPipeline> pipeline = Create(key, *entryInput, slopeScale);
         NoteDrawCost(true, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(), key);
         if (inserted && pipeline)
             AppendToList(key, *entryInput);
 
         lock.lock();
+        // The draws recorded before may still use the one it replaces.
+        if (entry.pipeline)
+            context_.Retire(std::shared_ptr<plume::RenderPipeline>(std::move(entry.pipeline)));
         entry.pipeline = std::move(pipeline);
+        entry.slopeScale = slopeScale;
         entry.state = State::Ready;
         return entry.pipeline.get();
+    }
+
+    bool Pipelines::Outdated(const PipelineKey& key, const Entry& entry) const
+    {
+        return key.state.depthBiasSlope != 0 && entry.slopeScale != slopeScale_;
+    }
+
+    void Pipelines::SetSlopeScale(float slopeScale)
+    {
+        std::lock_guard lock(mutex_);
+        slopeScale_ = slopeScale;
     }
 
     void Pipelines::NoteDrawCost(bool created, double ms, const PipelineKey& key)
@@ -367,11 +385,13 @@ namespace gpu
             entry.state = State::Creating;
             busy_++;
             std::shared_ptr<const VertexInput> input = entry.input;
+            float slopeScale = slopeScale_;
             lock.unlock();
-            std::unique_ptr<plume::RenderPipeline> pipeline = Create(key, *input);
+            std::unique_ptr<plume::RenderPipeline> pipeline = Create(key, *input, slopeScale);
             lock.lock();
             busy_--;
             entry.pipeline = std::move(pipeline);
+            entry.slopeScale = slopeScale;
             entry.state = State::Ready;
             created_.notify_all();
         }
@@ -392,7 +412,8 @@ namespace gpu
         return shaders_.emplace(key, std::move(shader)).first->second.get();
     }
 
-    std::unique_ptr<plume::RenderPipeline> Pipelines::Create(const PipelineKey& key, const VertexInput& input)
+    std::unique_ptr<plume::RenderPipeline> Pipelines::Create(const PipelineKey& key, const VertexInput& input,
+        float slopeScale)
     {
         const plume::RenderShader* vertexShader = Shader(key.vertexShader);
         const plume::RenderShader* pixelShader = key.pixelShader != 0 ? Shader(key.pixelShader) : nullptr;
@@ -435,9 +456,8 @@ namespace gpu
         desc.frontFace = (state.cullControl & kFrontClockwise) != 0 ? plume::RenderFrontFace::CLOCKWISE
                                                                       : plume::RenderFrontFace::COUNTER_CLOCKWISE;
         desc.depthBias = state.depthBias;
-        // The slope is per guest pixel, and a host pixel spans 1 / scale of the depth a guest pixel
-        // did: the same bias in depth takes the slope times the scale.
-        desc.slopeScaledDepthBias = state.depthBiasSlope * slopeScale_;
+        // The slope is per guest pixel (Scale::Slope).
+        desc.slopeScaledDepthBias = state.depthBiasSlope * slopeScale;
         // The blend color and the stencil reference are set per draw (Draws::Draw). On every draw
         // pipeline alike, so that a value set on the list outlives a change of pipeline on Vulkan.
         desc.dynamicBlendConstantsEnabled = true;

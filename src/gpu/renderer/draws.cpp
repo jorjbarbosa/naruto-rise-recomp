@@ -61,11 +61,16 @@ namespace gpu
           vertexRing_(vertexRing), pixelRing_(pixelRing), scale_(scale)
     {
         layout_ = CreateDrawLayout(context.Device(), descriptors.SetLayouts(), Descriptors::kSetCount);
-        pipelines_ =
-            std::make_unique<Pipelines>(context.Device(), *layout_, scale.Factor(), pipelineList, pipelineCache);
+        pipelines_ = std::make_unique<Pipelines>(context, *layout_, scale.Slope(), pipelineList, pipelineCache);
     }
 
     Draws::~Draws() = default;
+
+    void Draws::SetScale(const Scale& scale)
+    {
+        scale_ = scale;
+        pipelines_->SetSlopeScale(scale.Slope());
+    }
 
     plume::RenderBufferReference Draws::Shared(const SharedConstants& shared)
     {
@@ -243,10 +248,10 @@ namespace gpu
         }
 
         // Each edge alone, as the scissor and the targets' sizes are mapped.
-        const float left = scale_.Coordinate(op.viewport[0]);
-        const float top = scale_.Coordinate(op.viewport[1]);
-        const plume::RenderViewport viewport(left, top, scale_.Coordinate(op.viewport[0] + op.viewport[2]) - left,
-            scale_.Coordinate(op.viewport[1] + op.viewport[3]) - top, op.viewport[4], op.viewport[5]);
+        const float left = scale_.CoordinateX(op.viewport[0]);
+        const float top = scale_.CoordinateY(op.viewport[1]);
+        const plume::RenderViewport viewport(left, top, scale_.CoordinateX(op.viewport[0] + op.viewport[2]) - left,
+            scale_.CoordinateY(op.viewport[1] + op.viewport[3]) - top, op.viewport[4], op.viewport[5]);
         if (!state_.viewport || *state_.viewport != viewport)
         {
             list.setViewports(&viewport, 1);

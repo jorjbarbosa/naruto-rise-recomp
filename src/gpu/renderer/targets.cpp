@@ -110,15 +110,15 @@ namespace gpu
         surface.desc = desc;
         if (desc.depth)
         {
-            surface.texture = device.createTexture(plume::RenderTextureDesc::DepthTarget(scale_.Size(desc.width),
-                scale_.Size(desc.height), kDepthFormat, Multisampling(desc.samples)));
+            surface.texture = device.createTexture(plume::RenderTextureDesc::DepthTarget(scale_.Width(desc.width),
+                scale_.Height(desc.height), kDepthFormat, Multisampling(desc.samples)));
             surface.view = surface.texture->createTextureView(plume::RenderTextureViewDesc::Texture2D(kDepthFormat));
             surface.framebuffer = device.createFramebuffer(plume::RenderFramebufferDesc(nullptr, 0, surface.texture.get()));
         }
         else
         {
-            surface.texture = device.createTexture(plume::RenderTextureDesc::ColorTarget(scale_.Size(desc.width),
-                scale_.Size(desc.height), kColorFormat, Multisampling(desc.samples)));
+            surface.texture = device.createTexture(plume::RenderTextureDesc::ColorTarget(scale_.Width(desc.width),
+                scale_.Height(desc.height), kColorFormat, Multisampling(desc.samples)));
             surface.view = surface.texture->createTextureView(plume::RenderTextureViewDesc::Texture2D(kColorFormat));
             const plume::RenderTexture* attachment = surface.texture.get();
             surface.framebuffer = device.createFramebuffer(plume::RenderFramebufferDesc(&attachment, 1));
@@ -130,17 +130,33 @@ namespace gpu
     {
         ResolvedAddress& entry = resolved_[address];
         ResolvedTexture* resolved = nullptr;
-        for (const std::unique_ptr<ResolvedTexture>& texture : entry.textures)
-            if (texture->width == width && texture->height == height && texture->depth == depth)
-                resolved = texture.get();
+        for (auto texture = entry.textures.begin(); texture != entry.textures.end(); ++texture)
+        {
+            if ((*texture)->width != width || (*texture)->height != height || (*texture)->depth != depth)
+                continue;
+            if ((*texture)->hostWidth == scale_.Width(width) && (*texture)->hostHeight == scale_.Height(height))
+            {
+                resolved = texture->get();
+                break;
+            }
+            // Made at another scale: replaced, and started over like a new one. A resolve covers its
+            // whole destination in every frame the census saw (the scene's tiles together), so no
+            // image is lost past the frame of the change.
+            if (texture->get() == entry.latest)
+                entry.latest = nullptr;
+            context_.Retire(std::shared_ptr<ResolvedTexture>(std::move(*texture)));
+            entry.textures.erase(texture);
+            resolvedChanges_++;
+            break;
+        }
         if (resolved == nullptr)
         {
             plume::RenderDevice& device = context_.Device();
             resolved = entry.textures.emplace_back(std::make_unique<ResolvedTexture>()).get();
             resolved->width = width;
             resolved->height = height;
-            resolved->hostWidth = scale_.Size(width);
-            resolved->hostHeight = scale_.Size(height);
+            resolved->hostWidth = scale_.Width(width);
+            resolved->hostHeight = scale_.Height(height);
             resolved->depth = depth;
             resolved->format = depth ? kResolvedDepthFormat : kColorFormat;
             // A render target too: the resolve passes draw into it.
@@ -163,6 +179,15 @@ namespace gpu
             entry.latest = resolved;
         }
         return *resolved;
+    }
+
+    void Targets::SetScale(const Scale& scale)
+    {
+        if (scale == scale_)
+            return;
+        scale_ = scale;
+        while (!surfaces_.empty())
+            RetireSurface(surfaces_.begin()->first);
     }
 
     void Targets::RetireSurface(uint32_t key)
@@ -268,8 +293,8 @@ namespace gpu
         dest.header = op.destHeader;
 
         const Rect hostRegion = scale_.Map(region);
-        const uint32_t hostX = uint32_t(scale_.Edge(int32_t(destX)));
-        const uint32_t hostY = uint32_t(scale_.Edge(int32_t(destY)));
+        const uint32_t hostX = uint32_t(scale_.EdgeX(int32_t(destX)));
+        const uint32_t hostY = uint32_t(scale_.EdgeY(int32_t(destY)));
         CopyRegion(source, dest, hostRegion, hostX, hostY, op.sample);
         FillGap(source, dest, hostRegion, hostX, hostY, op.sample, region.left == 0, region.top == 0);
 
@@ -311,22 +336,19 @@ namespace gpu
     {
         // The first covered column and row of the surface, repeated over the ones before them; the
         // corner from the first covered pixel, since that row starts in the column gap.
-        const int32_t gap = scale_.Gap();
-        if (gap == 0 || region.right - region.left <= gap || region.bottom - region.top <= gap)
+        const int32_t gapX = left ? scale_.GapX() : 0;
+        const int32_t gapY = top ? scale_.GapY() : 0;
+        if ((gapX == 0 && gapY == 0) || region.right - region.left <= gapX || region.bottom - region.top <= gapY)
             return;
-        const int32_t column = region.left + gap;
-        const int32_t row = region.top + gap;
-        for (int32_t i = 0; i < gap; i++)
-        {
-            if (left)
-                CopyRegion(source, dest, { column, region.top, column + 1, region.bottom }, destX + i, destY, sample);
-            if (top)
-                CopyRegion(source, dest, { region.left, row, region.right, row + 1 }, destX, destY + i, sample);
-        }
-        if (left && top)
-            for (int32_t y = 0; y < gap; y++)
-                for (int32_t x = 0; x < gap; x++)
-                    CopyRegion(source, dest, { column, row, column + 1, row + 1 }, destX + x, destY + y, sample);
+        const int32_t column = region.left + gapX;
+        const int32_t row = region.top + gapY;
+        for (int32_t x = 0; x < gapX; x++)
+            CopyRegion(source, dest, { column, region.top, column + 1, region.bottom }, destX + x, destY, sample);
+        for (int32_t y = 0; y < gapY; y++)
+            CopyRegion(source, dest, { region.left, row, region.right, row + 1 }, destX, destY + y, sample);
+        for (int32_t y = 0; y < gapY; y++)
+            for (int32_t x = 0; x < gapX; x++)
+                CopyRegion(source, dest, { column, row, column + 1, row + 1 }, destX + x, destY + y, sample);
     }
 
     void Targets::ResolvePass(Surface& source, ResolvedTexture& dest, const Rect& region, uint32_t destX, uint32_t destY,
