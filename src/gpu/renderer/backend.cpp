@@ -480,15 +480,6 @@ namespace gpu
         }
     }
 
-    void BindImmutableSamplers(plume::RenderCommandList& list, plume::RenderDescriptorSet& set, uint32_t index)
-    {
-#ifdef ROAN_D3D12
-        if (dynamic_cast<plume::D3D12CommandList*>(&list) != nullptr)
-            return;
-#endif
-        list.setGraphicsDescriptorSet(&set, index);
-    }
-
     std::unique_ptr<plume::RenderPipelineLayout> CreateDrawLayout(plume::RenderDevice& device,
         const plume::RenderDescriptorSetDesc* sets, uint32_t setCount)
     {

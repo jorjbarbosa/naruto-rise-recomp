@@ -35,8 +35,8 @@ namespace gpu
 {
     namespace
     {
-        // The gamma ramp of the present (present_ps.hlsl), read by reference: b0 in space 2.
-        const ConstantReferences kRamp{ 1, 2, plume::RenderShaderStageFlag::PIXEL };
+        // The gamma ramp of the present (present_ps.hlsl), read by reference: b0 in space 1.
+        const ConstantReferences kRamp{ 1, 1, plume::RenderShaderStageFlag::PIXEL };
 
         // Root constants of the resolve pass (resolve_ps.hlsl).
         struct ResolveConstants
@@ -87,23 +87,9 @@ namespace gpu
         : context_(context), device_(context.Device())
     {
         plume::RenderDevice& device = device_;
-        plume::RenderSamplerDesc sampler;
-        sampler.minFilter = plume::RenderFilter::LINEAR;
-        sampler.magFilter = plume::RenderFilter::LINEAR;
-        sampler.mipmapMode = plume::RenderMipmapMode::NEAREST;
-        sampler.addressU = plume::RenderTextureAddressMode::CLAMP;
-        sampler.addressV = plume::RenderTextureAddressMode::CLAMP;
-        sampler.addressW = plume::RenderTextureAddressMode::CLAMP;
-        sampler.shaderVisibility = plume::RenderShaderVisibility::PIXEL;
-        sampler_ = device.createSampler(sampler);
 
-        // Present: the image in set 0, the sampler (immutable; the pass gathers with its clamp) in
-        // set 1, the gamma ramp by reference.
-        const plume::RenderSampler* samplers[] = { sampler_.get() };
-        const plume::RenderDescriptorRange samplerRange(plume::RenderDescriptorRangeType::SAMPLER, 0, 1, samplers);
-        const plume::RenderDescriptorSetDesc presentSets[] = { kTextureSet, plume::RenderDescriptorSetDesc(&samplerRange, 1) };
-        samplerSet_ = device.createDescriptorSet(presentSets[1]);
-        presentLayout_ = CreateLayout(device, plume::RenderPipelineLayoutDesc(nullptr, 0, presentSets, 2), kRamp);
+        // Present: the image in set 0 (loaded, not sampled), the gamma ramp by reference.
+        presentLayout_ = CreateLayout(device, plume::RenderPipelineLayoutDesc(nullptr, 0, &kTextureSet, 1), kRamp);
 
         // Resolve: the constants, then the source in set 0.
         const plume::RenderPushConstantRange constants(0, 0, 0, sizeof(ResolveConstants), plume::RenderShaderStageFlag::PIXEL);
@@ -136,7 +122,6 @@ namespace gpu
         list.setGraphicsPipelineLayout(presentLayout_.get());
         list.setPipeline(present_.get());
         list.setGraphicsDescriptorSet(&image, 0);
-        BindImmutableSamplers(list, *samplerSet_, 1);
         BindConstantReferences(list, &ramp, kRamp.count, nullptr);
         list.drawInstanced(3, 1, 0, 0);
     }

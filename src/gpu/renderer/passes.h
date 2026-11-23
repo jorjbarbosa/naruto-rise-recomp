@@ -33,7 +33,8 @@ namespace gpu
         static constexpr uint32_t kRampBytes = 256 * 16;
 
         // Draws the image through the ramp (kRampBytes in a buffer the list reads, readable by
-        // reference: backend.h, ConstantReferences) over the bound framebuffer's viewport.
+        // reference: backend.h, ConstantReferences) over the bound framebuffer's viewport, each
+        // pixel the average of the image's area under it (bilinear where the image is enlarged).
         void Present(plume::RenderCommandList& list, plume::RenderDescriptorSet& image,
             plume::RenderBufferReference ramp) const;
         // Draws over the bound framebuffer's viewport: each pixel reads the source at its position
@@ -44,9 +45,6 @@ namespace gpu
     private:
         Context& context_;
         plume::RenderDevice& device_;
-        std::unique_ptr<plume::RenderSampler> sampler_;
-        // The present's sampler set, which holds the immutable sampler (BindImmutableSamplers).
-        std::unique_ptr<plume::RenderDescriptorSet> samplerSet_;
         std::unique_ptr<plume::RenderPipelineLayout> presentLayout_;
         std::unique_ptr<plume::RenderPipelineLayout> resolveLayout_;
         std::unique_ptr<plume::RenderPipeline> present_;

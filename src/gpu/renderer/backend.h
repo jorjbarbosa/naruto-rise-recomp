@@ -77,10 +77,6 @@ namespace gpu
     void BindConstantReferences(plume::RenderCommandList& list, const plume::RenderBufferReference* references,
         uint32_t count, const plume::RenderBufferReference* bound);
 
-    // Binds a descriptor set that holds only immutable samplers, at index. Vulkan reads them from the
-    // bound set; D3D12 has them in the root signature, where such a set has no table to bind.
-    void BindImmutableSamplers(plume::RenderCommandList& list, plume::RenderDescriptorSet& set, uint32_t index);
-
     // The constant buffers of a draw of the translated shaders.
     struct DrawConstants
     {
