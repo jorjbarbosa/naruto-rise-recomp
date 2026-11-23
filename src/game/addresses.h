@@ -81,6 +81,15 @@
 #define JADE_RECORD_SUBMIT sub_820E7D40        // adds the packet's current record to its pass (r3 packet)
 #define JADE_RECORD_DRAW sub_821024A8          // the device's draw of a record (r3 packet, r4 record): the only caller of the device's draws
 
+// The shader manager ([82C0F03C], shader_lookup.cpp): every material setup asks it for a vertex
+// and a pixel shader by key. A miss creates the shader from the bank and inserts it (820F5C58 vertex,
+// 820F5D38 pixel); the loading queue (820F94C0, through 820F5E18/820F5EE8) and the setup's 821221A8
+// insert through the same two, and an insert on a present key replaces the node's shader in place.
+// Only the destruction erases nodes (820F5828 and the tree erase 820F6970 have no other caller).
+#define JADE_GET_VERTEX_SHADER sub_820F5A80        // r3 = the shader of the key object r4, from the manager r3's vertex map
+#define JADE_GET_PIXEL_SHADER sub_820F5B68         // the same from its pixel map
+#define JADE_SHADER_MANAGER_DESTROY sub_820F56C8   // frees the manager's shaders and the nodes of both maps (r3 manager; from 820E7208)
+
 namespace game::jade
 {
     // Globals.
@@ -320,6 +329,35 @@ namespace game::jade
         constexpr uint32_t kPending = 8;    // set by the request, cleared by the capture
         constexpr uint32_t kThumbnail = 56; // the capture's thumbnail
         constexpr uint32_t kRequest = 60;   // the requested thumbnail, cleared by the capture
+    }
+
+    // The shader manager's maps: std::map from a 64-bit shader key to a shader object.
+    namespace shader_manager
+    {
+        constexpr uint32_t kVertexMap = 0;
+        constexpr uint32_t kPixelMap = 12;
+    }
+
+    // A std::map of the title's library (Dinkumware): the head node at +4. A node holds its left child,
+    // parent and right child, the key at +16 (an unsigned 64-bit key in the shader maps) and the value
+    // at +24 (the shader); the head and the leaves are marked by the byte at +33.
+    namespace std_map
+    {
+        constexpr uint32_t kHead = 4;
+        constexpr uint32_t kLeft = 0;
+        constexpr uint32_t kParent = 4;
+        constexpr uint32_t kRight = 8;
+        constexpr uint32_t kKey = 16;
+        constexpr uint32_t kValue = 24;
+        constexpr uint32_t kIsNil = 33;
+    }
+
+    // A shader key object (the classes of vtables 82086930, vertex, and 82086980, pixel): the getters
+    // read the key through its vtable +0, which in every key class returns the 64-bit key at +8.
+    namespace shader_key
+    {
+        constexpr uint32_t kGetKey = 0x820F7300;
+        constexpr uint32_t kKey = 8;
     }
 
     // A save thumbnail (20 bytes, allocated by the save's start 82651F88).
