@@ -266,3 +266,12 @@ else()
         "LINKER:--export-dynamic-symbol=sub_*")
 endif()
 set_target_properties(roan-xenon PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+
+# The sampling profiler (tools/sampler, scripts/profile.ps1): Windows only, and out of the default
+# build, so build.ps1 builds the runtime alone.
+if(WIN32)
+    add_executable(roan-sampler EXCLUDE_FROM_ALL "${CMAKE_SOURCE_DIR}/tools/sampler/sampler.cpp")
+    target_compile_definitions(roan-sampler PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+    target_link_libraries(roan-sampler PRIVATE dbghelp winmm)
+    set_target_properties(roan-sampler PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+endif()
