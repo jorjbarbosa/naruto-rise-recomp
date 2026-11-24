@@ -20,6 +20,10 @@ namespace gpu
     {
         // RB_DEPTHCONTROL: stencil test on.
         constexpr uint32_t kStencilEnable = 0x1;
+        // RB_BLENDCONTROL's color fields (source factor, operation, destination factor): ONE, ADD,
+        // ZERO is no blending.
+        constexpr uint32_t kColorBlendMask = 0x1FFF;
+        constexpr uint32_t kOpaqueColorBlend = 0x0001;
 
         // The blend color of a draw: its constant color, or its alpha for the constant alpha factors.
         bool UsesBlendColor(uint32_t control, bool& alphaOnly)
@@ -55,10 +59,10 @@ namespace gpu
     }
 
     Draws::Draws(Context& context, Targets& targets, Descriptors& descriptors, Textures& textures, Buffers& buffers,
-        const ConstantRing& vertexRing, const ConstantRing& pixelRing, Scale scale,
+        const ConstantRing& vertexRing, const ConstantRing& pixelRing, Scale scale, bool transparencyAa,
         const std::filesystem::path& pipelineList, const std::filesystem::path& pipelineCache)
         : context_(context), targets_(targets), descriptors_(descriptors), textures_(textures), buffers_(buffers),
-          vertexRing_(vertexRing), pixelRing_(pixelRing), scale_(scale)
+          vertexRing_(vertexRing), pixelRing_(pixelRing), scale_(scale), transparencyAa_(transparencyAa)
     {
         layout_ = CreateDrawLayout(context.Device(), descriptors.SetLayouts(), Descriptors::kSetCount);
         pipelines_ = std::make_unique<Pipelines>(context, *layout_, scale.Slope(), pipelineList, pipelineCache);
@@ -118,6 +122,15 @@ namespace gpu
             key.state.depthBias = 0;
             key.state.depthBiasSlope = 0;
         }
+        // Transparency anti-aliasing: an alpha-tested draw of opaque color into a multisampled target
+        // spreads its cut-out edge over the samples (alpha to coverage of the shader's sharpened
+        // alpha) instead of the test. A blended draw keeps the test: its alpha weighs the color, and
+        // the sharpened alpha would turn soft sprites into solid quads.
+        const bool alphaToCoverage = transparencyAa_ && op.color.key != 0 && key.samples > 1 &&
+            (op.shared.specConstants & kSpecAlphaTest) != 0 &&
+            (op.state.blendControl & kColorBlendMask) == kOpaqueColorBlend;
+        if (alphaToCoverage)
+            key.state.alphaToCoverage = 1;
         const plume::RenderPipeline* pipeline = pipelines_->Get(key, *op.input);
         if (pipeline == nullptr)
             return;
@@ -196,6 +209,8 @@ namespace gpu
             state_.textureChanges = changes;
         }
         SharedConstants shared = op.shared;
+        if (alphaToCoverage)
+            shared.specConstants = (shared.specConstants & ~kSpecAlphaTest) | kSpecAlphaToCoverage;
         for (uint32_t slot = 0; slot < SharedConstants::kFetchSlots; slot++)
         {
             if (state_.textures[slot] != op.textures[slot])

@@ -52,6 +52,10 @@ namespace gpu
         // own textures (1: none), in place of the title's choice, which mostly asks for none; 0, the
         // default, keeps the title's. Any other value: logged, kept at 0.
         uint32_t anisotropy = 0;
+        // ROAN_TRANSPARENCY_AA=1: the alpha-tested draws of opaque color into multisampled targets
+        // (cut-out leaves, grass, hair) spread their cut-out edge over the samples by alpha to coverage
+        // instead of the test (Draws::Draw). Off by default.
+        bool transparencyAa = false;
         std::string adapter;     // ROAN_ADAPTER=<name>: adapter as listed in the log (default: Plume's choice)
         std::filesystem::path pipelineList; // the pipeline list file (Pipelines); empty: none
         std::filesystem::path pipelineCache; // the driver's pipeline cache file, on Vulkan (Pipelines); empty: none
@@ -121,6 +125,8 @@ namespace gpu
                 else
                     Log("gpu: ROAN_ANISOTROPY=%s is not 1, 2, 4, 8 or 16; the title's filters are kept", value);
             }
+            if (const char* value = std::getenv("ROAN_TRANSPARENCY_AA"))
+                settings.transparencyAa = std::strcmp(value, "1") == 0;
             if (const char* value = std::getenv("ROAN_ADAPTER"))
                 settings.adapter = value;
             return settings;

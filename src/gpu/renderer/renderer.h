@@ -127,6 +127,9 @@ namespace gpu
 
     // SPEC_CONSTANT_ALPHA_TEST: the pixel shader discards pixels whose alpha is below the threshold.
     constexpr uint32_t kSpecAlphaTest = 2;
+    // SPEC_CONSTANT_ALPHA_TO_COVERAGE (patches/XenosRecomp/0008): in place of the test, the pixel
+    // shader sharpens its alpha around the threshold for the pipeline's alpha to coverage.
+    constexpr uint32_t kSpecAlphaToCoverage = 8;
 
     // A vertex element of a draw: the raw dwords of one vertex shader input, at an offset in a
     // vertex stream. The shader decodes them (SharedConstants::vertexFetch).

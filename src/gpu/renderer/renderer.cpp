@@ -355,13 +355,16 @@ namespace gpu
         impl->descriptors = std::make_unique<Descriptors>(*impl->context);
         impl->passes = std::make_unique<Passes>(*impl->context, Presenter::kFormat);
         impl->targets = std::make_unique<Targets>(*impl->context, *impl->passes, *impl->descriptors, scale, samples);
+        if (settings.transparencyAa)
+            Log("gpu: transparency anti-aliasing on the alpha-tested draws of multisampled targets");
         if (settings.anisotropy != 0)
             Log("gpu: anisotropic filtering %ux on the title's trilinear textures", settings.anisotropy);
         impl->textures =
             std::make_unique<Textures>(*impl->context, *impl->targets, *impl->descriptors, settings.anisotropy);
         impl->buffers = std::make_unique<Buffers>(*impl->context);
         impl->draws = std::make_unique<Draws>(*impl->context, *impl->targets, *impl->descriptors, *impl->textures,
-            *impl->buffers, impl->vertexRing, impl->pixelRing, scale, settings.pipelineList, settings.pipelineCache);
+            *impl->buffers, impl->vertexRing, impl->pixelRing, scale, settings.transparencyAa, settings.pipelineList,
+            settings.pipelineCache);
         impl->Start();
         return std::unique_ptr<Renderer>(new Renderer(std::move(impl)));
     }

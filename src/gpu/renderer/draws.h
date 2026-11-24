@@ -38,9 +38,10 @@ namespace gpu
     class Draws
     {
     public:
-        // pipelineList, pipelineCache: the files the pipelines are remembered in (Pipelines; empty: none).
+        // transparencyAa: Settings::transparencyAa. pipelineList, pipelineCache: the files the pipelines
+        // are remembered in (Pipelines; empty: none).
         Draws(Context& context, Targets& targets, Descriptors& descriptors, Textures& textures, Buffers& buffers,
-            const ConstantRing& vertexRing, const ConstantRing& pixelRing, Scale scale,
+            const ConstantRing& vertexRing, const ConstantRing& pixelRing, Scale scale, bool transparencyAa,
             const std::filesystem::path& pipelineList, const std::filesystem::path& pipelineCache);
         ~Draws();
 
@@ -104,6 +105,7 @@ namespace gpu
         const ConstantRing& vertexRing_;
         const ConstantRing& pixelRing_;
         Scale scale_;
+        const bool transparencyAa_;
         std::unique_ptr<plume::RenderPipelineLayout> layout_;
         std::unique_ptr<Pipelines> pipelines_; // after layout_, which it uses
         ConstantUpload vertexConstants_;

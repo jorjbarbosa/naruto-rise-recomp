@@ -367,6 +367,17 @@ shader the elements Position0, Color0, Color1, Normal0, Tangent0, TexCoord0, Tex
 2, 4, 5). Element `i` is now at location `i`, the index that also selects its fetch descriptor
 (`g_VertexFetchDescriptor(i)`), and the table is gone. DXIL matches by semantic and does not change.
 
+### 0008: alpha to coverage
+
+Upstream keeps a second branch beside the alpha test behind `UNLEASHED_RECOMP`: with
+`SPEC_CONSTANT_ALPHA_TO_COVERAGE` (bit 3) set instead of `SPEC_CONSTANT_ALPHA_TEST`, the pixel shader does
+not clip but sharpens its alpha around the threshold by its change across the pixel,
+`0.5 + (alpha - threshold) / max(fwidth(alpha), 1e-6)`, so that the pipeline's alpha to coverage spreads a
+cut-out edge over the samples of a multisampled target. The bit and the branch are now always there; only
+Unleashed's boost of the alpha by the mip level stays behind the define (it reads `pixelCoord`, which this
+port's shaders do not have). The host sets the bit for transparency anti-aliasing (`ROAN_TRANSPARENCY_AA`,
+`Draws::Draw`). Every pixel shader with an alpha test changes, so `recompile.ps1` rebuilds the shader cache.
+
 ## ffmpeg
 
 FFmpeg n7.1.5, shallow. The runtime builds only libavutil and libavcodec with the `xma1` decoder, from the
