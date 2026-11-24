@@ -32,8 +32,9 @@ namespace gpu
     class Textures
     {
     public:
-        Textures(Context& context, Targets& targets, Descriptors& descriptors)
-            : context_(context), targets_(targets), descriptors_(descriptors) {}
+        // anisotropy: Settings::anisotropy, the filter of the trilinear fetches of uploaded textures
+        // (0: the title's).
+        Textures(Context& context, Targets& targets, Descriptors& descriptors, uint32_t anisotropy);
 
         // Creates the texture on first use and records the copy of every level and face.
         void Upload(const TextureUpload& upload);
@@ -65,6 +66,8 @@ namespace gpu
         Context& context_;
         Targets& targets_;
         Descriptors& descriptors_;
+        // The anisotropic field of SamplerState::filter the trilinear fetches take (0: the title's).
+        uint32_t anisotropyField_ = 0;
         std::map<Key, std::unique_ptr<Texture>> textures_; // ordered by address, for Release
         uint64_t changes_ = 0; // uploads and releases
     };

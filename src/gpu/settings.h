@@ -48,6 +48,10 @@ namespace gpu
         // are 2 and 4; single-sampled ones stay so); 0, the default, keeps the title's. Lowered to
         // what the device supports (Renderer::Create). Any other value: logged, kept at 0.
         uint32_t msaa = 0;
+        // ROAN_ANISOTROPY=1|2|4|8|16: the anisotropic filter of every trilinear fetch of the title's
+        // own textures (1: none), in place of the title's choice, which mostly asks for none; 0, the
+        // default, keeps the title's. Any other value: logged, kept at 0.
+        uint32_t anisotropy = 0;
         std::string adapter;     // ROAN_ADAPTER=<name>: adapter as listed in the log (default: Plume's choice)
         std::filesystem::path pipelineList; // the pipeline list file (Pipelines); empty: none
         std::filesystem::path pipelineCache; // the driver's pipeline cache file, on Vulkan (Pipelines); empty: none
@@ -108,6 +112,14 @@ namespace gpu
                     settings.msaa = uint32_t(std::atoi(value));
                 else
                     Log("gpu: ROAN_MSAA=%s is not 1, 2, 4 or 8; the title's sample counts are kept", value);
+            }
+            if (const char* value = std::getenv("ROAN_ANISOTROPY"))
+            {
+                if (std::strcmp(value, "1") == 0 || std::strcmp(value, "2") == 0 || std::strcmp(value, "4") == 0 ||
+                    std::strcmp(value, "8") == 0 || std::strcmp(value, "16") == 0)
+                    settings.anisotropy = uint32_t(std::atoi(value));
+                else
+                    Log("gpu: ROAN_ANISOTROPY=%s is not 1, 2, 4, 8 or 16; the title's filters are kept", value);
             }
             if (const char* value = std::getenv("ROAN_ADAPTER"))
                 settings.adapter = value;

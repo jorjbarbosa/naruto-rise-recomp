@@ -182,6 +182,13 @@ namespace gpu
         uint32_t border = 0; // fetch dword 5 bits 0..1
 
         bool operator==(const SamplerState&) const = default;
+
+        // The fields of filter: 2 bits each for mag, min and mip (1 is linear), then 3 for the
+        // anisotropic filter (0 off, 1 to 5 for 1:1 up to 16:1).
+        static constexpr uint32_t kMinFilterShift = 2;
+        static constexpr uint32_t kMipFilterShift = 4;
+        static constexpr uint32_t kAnisotropyShift = 6;
+        static constexpr uint32_t kLinearFilter = 1;
     };
 
     // How a draw samples the texture of a fetch constant.

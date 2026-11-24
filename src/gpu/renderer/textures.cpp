@@ -158,6 +158,14 @@ namespace gpu
         }
     }
 
+    Textures::Textures(Context& context, Targets& targets, Descriptors& descriptors, uint32_t anisotropy)
+        : context_(context), targets_(targets), descriptors_(descriptors)
+    {
+        // 1:1 is 1, each doubling one more.
+        for (uint32_t ratio = anisotropy; ratio != 0; ratio >>= 1)
+            anisotropyField_++;
+    }
+
     uint64_t Textures::Changes() const
     {
         // Neither count goes back, so the sum moves when either does.
@@ -169,7 +177,19 @@ namespace gpu
         TextureBinding binding;
         if (texture.kind == DrawTexture::Kind::None)
             return binding;
-        binding.sampler = descriptors_.Sampler(texture.sampler);
+        // The filter override: on the title's own textures, where the fetch is trilinear (a minifying
+        // linear filter between linear levels: the surfaces the anisotropic filter sharpens at a
+        // grazing angle). Resolved textures, point fetches and the bone matrices keep the title's.
+        SamplerState sampler = texture.sampler;
+        uint32_t minFilter = (sampler.filter >> SamplerState::kMinFilterShift) & 3;
+        uint32_t mipFilter = (sampler.filter >> SamplerState::kMipFilterShift) & 3;
+        if (anisotropyField_ != 0 && !texture.resolved && minFilter == SamplerState::kLinearFilter &&
+            mipFilter == SamplerState::kLinearFilter)
+        {
+            sampler.filter &= ~(7u << SamplerState::kAnisotropyShift);
+            sampler.filter |= anisotropyField_ << SamplerState::kAnisotropyShift;
+        }
+        binding.sampler = descriptors_.Sampler(sampler);
 
         if (texture.resolved)
         {
