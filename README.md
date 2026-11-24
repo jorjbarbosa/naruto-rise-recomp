@@ -2,183 +2,245 @@
 > Looking for Naruto: The Broken Bond? Click [here](https://github.com/jorjbarbosa/broken-bond-recomp/releases/latest)
 
 > [!IMPORTANT]
-> This project is being migrated to [XenonRecomp](https://github.com/hedge-dev/XenonRecomp).
-
-<p align="center">
-  <img src="docs/assets/naruto-rise-logo.png" alt="Naruto: Rise of a Ninja" width="600">
-</p>
+> This is the port rebuilt on [XenonRecomp](https://github.com/hedge-dev/XenonRecomp). It has no release yet.
+> To play now, download the [latest release](https://github.com/jorjbarbosa/naruto-rise-recomp/releases/latest)
+> of the previous port, built on ReXGlue.
 
 <h1 align="center">Naruto: Rise of a Ninja — Recomp</h1>
 
 <p align="center">
-  A static recompilation for PC powered by ReXGlue<br>
-  <strong>Native Direct3D 12 and Vulkan renderer with 60 and 120 FPS • Windows and Linux • DLC support • Seven languages</strong>
+  A static recompilation of the Xbox 360 game for PC<br>
+  <strong>Direct3D 12 and Vulkan • Up to 4× internal resolution • Ultrawide up to 32:9 • 60 FPS and beyond</strong>
 </p>
 
 <p align="center">
-  <a href="#installing">Installing</a> ·
-  <a href="#updating">Updating</a> ·
-  <a href="#native-renderer-and-60-fps">Native renderer and 60 FPS</a> ·
-  <a href="docs/build-and-run.md">Build and run</a> ·
-  <a href="docs/configuration.md">Configuration</a> ·
-  <a href="docs/troubleshooting.md">Troubleshooting</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#building">Building</a> ·
+  <a href="#running">Running</a> ·
+  <a href="#settings">Settings</a> ·
+  <a href="#status">Status</a> ·
   <a href="#support">Support</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/jorjbarbosa/naruto-rise-recomp/releases/latest"><img src="https://img.shields.io/github/v/release/jorjbarbosa/naruto-rise-recomp?label=release" alt="Latest release"></a>
-  <a href="https://github.com/jorjbarbosa/naruto-rise-recomp/releases"><img src="https://img.shields.io/github/downloads/jorjbarbosa/naruto-rise-recomp/total" alt="Downloads"></a>
   <a href="https://github.com/jorjbarbosa/naruto-rise-recomp/stargazers"><img src="https://img.shields.io/github/stars/jorjbarbosa/naruto-rise-recomp" alt="Stars"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/jorjbarbosa/naruto-rise-recomp" alt="License"></a>
-  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue" alt="Platforms">
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20(experimental)-blue" alt="Platforms">
   <a href="https://buymeacoffee.com/jorjbarbosa"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy Me a Coffee"></a>
 </p>
 
 > [!WARNING]
-> This project is a work in progress. Expect bugs, crashes, and visual issues; the native renderer, now the default, is the newest part, and Xenos remains available through manual configuration if something does not look right. Keep a backup of your saves and report problems on the [Issues page](https://github.com/jorjbarbosa/naruto-rise-recomp/issues).
+> This port is a work in progress and is only built from source for now. Expect bugs, crashes and
+> visual issues, keep a backup of your saves, and report problems on the
+> [Issues page](https://github.com/jorjbarbosa/naruto-rise-recomp/issues).
 
 ## About
 
-A PC port of **Naruto: Rise of a Ninja**, originally released for Xbox 360. The project uses the [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) to translate the game's PowerPC code into C++ and compile it for native execution. The SDK runtime provides system services, audio, and input.
+A PC port of **Naruto: Rise of a Ninja** (Ubisoft Montreal, Xbox 360). [XenonRecomp](https://github.com/hedge-dev/XenonRecomp)
+translates the game's PowerPC code (`default.xex` and `AI2C.dll`) into C++, which is compiled for x64 and
+runs on a runtime written for this game: memory, kernel and XAM services, files, audio with an XMA decoder,
+input, and a renderer. The renderer draws the game's Direct3D calls with Direct3D 12 or Vulkan, through
+[Plume](https://github.com/renderbag/plume); [XenosRecomp](https://github.com/hedge-dev/XenosRecomp) translates
+the game's shaders when the port is built.
 
-The game can be drawn by two renderers, available in the executable: the **native renderer**, the default, which draws the game's Direct3D calls with Direct3D 12 or Vulkan and can present at 60 or 120 FPS, and **Xenos**, the SDK's emulation of the Xbox 360 GPU, as the alternative.
+The repository contains no game code or data. The translation is made from your own copy of the game, and
+the game's files are read from it at run time.
 
-Releases target **Windows x64** (ZIP) and **Linux x86-64** (AppImage, native renderer on Vulkan). Presets for other platforms exist, but do not represent complete or verified support for this port.
+This code base replaces the previous port, built on the ReXGlue SDK (v0.4.2-beta and earlier), whose
+releases stay available until this one has its own.
 
 > [!NOTE]
-> AI tools are used to assist the development of this project. The project's direction, technical decisions, and testing are the maintainer's, who reviews every change before it is published.
+> AI tools are used to assist the development of this project. The project's direction, technical
+> decisions, and testing are the maintainer's, who reviews every change before it is published.
 
 ## Features
 
 **Graphics**
 
-- **Two renderers:** the native renderer on Direct3D 12 or Vulkan (default) and Xenos as the alternative. See [Native renderer and 60 FPS](#native-renderer-and-60-fps).
-- **60 and 120 FPS** with the native renderer, keeping the game's logic at its original rate.
-- **21:9 and 32:9 ultrawide** with the Xenos renderer, with projection adjustments and anamorphic presentation; configured through `narutorise.toml`.
-- **Internal resolution from 1× to 4×** (also 1.5× with the native renderer), up to 16× anisotropic filtering, FXAA, FidelityFX CAS/FSR, fullscreen, and VSync.
-- **Native renderer options:** MSAA (2×, 4×, 8×), transparency antialiasing, brightness, frame latency, and triple buffering.
-- **Graphics card selection** for both renderers; hybrid laptops use the dedicated card by default.
+- **Direct3D 12** (default on Windows) or **Vulkan** (`ROAN_GPU_API=vulkan`, and the only one on Linux).
+- **Internal resolution** from 1× to 4× of the game's 1280×720 (fractions allowed), or **auto**: the size the
+  picture is shown at in the window. The picture is reduced to the window by area averaging.
+- **Ultrawide up to 32:9**: a window wider than 16:9 is filled at its own width, with the camera widened and
+  the menus, dialogues, videos and HUD kept in shape (or 16:9 with bars, if you prefer).
+- **Anti-aliasing**: the game's own 2× and 4× MSAA, or off, 2×, 4× or 8× in its place; **transparency
+  anti-aliasing** for the cut-out edges of leaves, grass and hair.
+- **Anisotropic filtering** up to 16× on the game's textures.
+- **Interface edges at the internal resolution**: the menus' vector shapes are drawn at the rendering size.
+- **Image fit**: aspect, stretch, or integer scaling.
+- **Frame rate**: the game's own, the monitor's refresh rate, or any rate from 31 to 240 FPS. The game's logic
+  keeps its original step (30 per second in the open world, 60 in fights); the frames in between are drawn by
+  interpolating objects, poses and the camera, so game speed and timing stay those of the console.
+- **Windowed or borderless**, switched with `Alt+Enter`; the window's size and place are kept.
 
-**Content and languages**
+**Port menu**
 
-- **DLC support**, with import from the setup screen or in-game menu and STFS package installation at game startup. Character DLCs use additional recompiled engine modules.
-- **Game language selection**, with English, French, German, Spanish, and Italian options in Settings → Game; available text and voices depend on your game files.
-- **External translation mods**, selected in the menu's game language list, with UTF-8 text replacements by ID and fallback to the original English text. Releases include the complete Brazilian Portuguese package. See the [translation mod guide](docs/translation-mods.md).
+- Opened with `Escape`, the controller's **Guide** button, or from the game's own **Options**. The game is
+  paused while it is open.
+- Pages **GAME**, **VIDEO**, **AUDIO** and **CONTROLS**; changes apply while playing, except the graphics card
+  and the game language, which apply at the next start.
+- Keyboard bindings: one or two keys per controller input, rebound in the CONTROLS page.
 
-**Menus and distribution**
+**Game and system**
 
-- **Open the game directly:** extract the ZIP, run `narutorise.exe`, and select your original Xbox 360 ISO or a complete extracted copy. The ISO is read in place.
-- **Setup screen** on first launch, for missing game files, or in safe mode (hold Shift while opening or use `--setup`).
-- **In-game menu** with Settings, DLC and Exit game: press `F1` or `Back+Start`. Both shortcuts are remappable. The game continues running while menu input is captured.
-- **Seven interface languages**, shared settings before and during the game, Show FPS, shader progress, update notices and desktop shortcut creation.
-- **ZIP distribution**, plus a temporary compatibility bridge for older installed copies.
-- **Native Linux AppImage** with the Vulkan renderer, on Wayland or X11.
-- **Local diagnostics:** each session keeps its log and, after a crash, a dump; **Settings → Advanced → Diagnostics** exports a session to a ZIP for bug reports. Sending crash reports is opt-in: the first start asks, and nothing is sent before the answer. See [Local diagnostics](docs/crash-reports.md).
-- **Shader caches:** bundled Xenos storage seeds the user cache; native shaders are translated at build time and embedded in the executable.
-
-## Native renderer and 60 FPS
-
-On Xbox 360, the game runs its logic in fixed steps: 30 per second in the open world and 60 in fights. The Xenos renderer keeps those rates. The native renderer can present more frames than the logic produces:
-
-| | Xenos | Native (default) |
-| --- | --- | --- |
-| How it draws | Emulates the Xbox 360 GPU and the command buffers the game writes for it | Intercepts the game's Direct3D calls and issues them with Direct3D 12 or Vulkan; the shaders are translated when the port is built |
-| Frame rate | The game's: 30, and 60 in fights | 30, 60 or 120 in Settings (up to 240 in `narutorise.toml`) |
-| Aspect ratio | 16:9, 21:9, and 32:9 | 16:9, with bars on wider monitors |
-| Options only in this renderer | Aspect ratio, dithering, `F1`/`F3` overlays | MSAA, transparency antialiasing, frame rate, brightness, frame latency, triple buffering |
-
-The native renderer is the default: choose Direct3D 12 or Vulkan and the **Frame rate** under **Settings → Display** (60 by default). Xenos is available by setting `renderer = "xenos"` in `narutorise.toml`; its path does not provide the native setup or in-game menu. Builds without the native renderer use Xenos ([build guide](docs/build-and-run.md#native-renderer-optional)).
-
-Above 30 FPS, the game's logic keeps its original step, and the renderer draws the frames in between by interpolating objects, characters' poses, and the camera between the last two logic steps. Game speed, physics, and timing stay those of the console. With VSync on, the rate does not exceed the monitor's refresh rate. The HUD minimap still updates at 30 FPS, and the image trails the logic by one step (up to about 33 ms in the open world).
-
-See [Renderers and frame rate](docs/renderers.md) for how it works, its limits, and its known issues, and [Configuration](docs/configuration.md#renderer) for every option.
+- **Game language**: English, French (text, voices and videos), Spanish, Italian and German (text).
+- **Game files** from the extracted folder, the path to its `default.xex`, the Xbox 360 disc image (read in
+  place), or a ZArchive (`.zar`).
+- **Saves** kept beside the executable, in `data/user/`.
+- **Audio**: master volume, output device, and mute while the window is in the background.
 
 ## Requirements
 
-- **Windows:** Windows x64, a GPU and driver compatible with Direct3D 12 or Vulkan (Xenos requires Direct3D 12), and the [Microsoft Visual C++ x64 Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe).
-- **Linux:** x86-64 with glibc 2.43 or newer (check with `ldd --version`), a Vulkan driver (Mesa or NVIDIA) and FUSE. On an older glibc the AppImage does not start; use the Windows ZIP through Proton there.
-- Your Xbox 360 ISO or a complete extracted copy, including `default.xex`. The source tree does not include game data or DLC packages.
-- An SDL-compatible controller is recommended. Keyboard and mouse can be configured in Settings → Controls; see [Keyboard and mouse](docs/configuration.md#keyboard-and-mouse).
+- **Windows x64** with a GPU and driver that support Direct3D 12 or Vulkan.
+- **Linux x86-64** (experimental, see [Status](#status)) with a Vulkan driver and **Linux 6.7 or newer**.
+- Your own copy of the Xbox 360 game: its disc image, or the extracted files with `default.xex`,
+  `AI2C.dll` and `xeshader.sdb`.
+- A controller is recommended; the keyboard works with the default bindings below.
 
-## Installing
+## Building
 
-Download `naruto-rise-recomp-win-amd64.zip` from the [Releases page](https://github.com/jorjbarbosa/naruto-rise-recomp/releases). Extract it to a writable folder and run `narutorise.exe`. Game data is supplied separately. The ZIP creates `data/` for preferences, logs, saves and DLC packages; `defaults/narutorise.toml` is the factory template. Settings → Advanced can show, open or change the data folder after restart. Linux AppImage uses the XDG data directory by default. See [Data folder and recovery](docs/data-folder.md).
+### Windows
 
-On first launch, choose your original Xbox 360 ISO or `default.xex` from a complete extracted copy. The game validates the supported revision and reads the ISO directly. Later launches follow the Show menu at startup preference. Hold **Shift** while opening, or run `narutorise.exe --setup`, to return to setup.
+- Visual Studio 2022 (or its Build Tools) with **C++ Clang tools for Windows** (clang-cl 19), CMake and Ninja.
+  The scripts load the developer environment themselves.
+- Git, with the submodules.
 
-Press **F1** or **Back+Start** while playing for Settings, DLC and Exit game. Create a desktop shortcut from **Settings → Advanced**. See the [DLC guide](docs/dlc.md) for additional content.
+```powershell
+git clone --recursive https://github.com/jorjbarbosa/naruto-rise-recomp.git
+cd naruto-rise-recomp
+# Put the extracted game files in game/ (default.xex, AI2C.dll, xeshader.sdb and the rest).
+.\scripts\recompile.ps1   # applies patches/, builds the recompilers, translates the game into build/ppc and build/shaders
+.\scripts\build.ps1       # builds build/runtime/roan-xenon.exe
+```
 
-On Linux, download `NarutoRise-<version>-x86_64.AppImage`, make it executable (`chmod +x`) and open it. Select the ISO or a complete game folder on first launch, or put the game files in `game/` beside the AppImage. Data goes to `~/.local/share/narutorise` (`$XDG_DATA_HOME`). Without FUSE, run it with `--appimage-extract-and-run`.
+`recompile.ps1` needs the extracted `default.xex`, `AI2C.dll` and `xeshader.sdb` in `game/`, and fails on any
+warning from the recompilers. Run it again after a change to `config/` or `patches/`; a change under `src/`
+only needs `build.ps1`. The first build compiles the whole generated code and takes a few minutes.
 
-## Updating
+### Linux
 
-The game checks GitHub Releases in the background and offers to open the release page. It does not download or install updates. Release eligibility follows GitHub's published/pre-release flag; a `beta` tag can still be eligible. Checks are cached; playing offline works.
+The same steps with the shell scripts, using the system's clang, CMake and Ninja:
 
-Close the game, download the new ZIP, and replace the package files while **keeping the active `data/` folder and `data_location.json` selection file**. Preserve `game/`, `game_root/`, saves, DLC and mods. All active mods and translations live in the active data folder's `mods/`; eligible old mods are copied there with originals preserved. Updates refresh only the immutable `defaults/mods/pt-br` seed and preserve active personalizations. To update an active translation, back it up and merge the new seed deliberately. See [data-folder recovery](docs/data-folder.md).
+```sh
+./patches/apply.sh
+./scripts/recompile.sh
+./scripts/build.sh        # builds build/runtime/roan-xenon
+```
 
-For an installed **0.3.0-beta** copy, use the separately attached `NarutoRiseInstaller.exe` compatibility bridge. The old launcher's updater can hand off to it using `/MODE=update`. It keeps the installation folder and user data, replaces the known shortcuts to open `narutorise.exe`, and removes the old launcher. You can also run the bridge manually, choose **Update an existing installation** and select the PC port folder. There is no ISO import step.
+## Running
 
-The bridge remains attached for several releases because older launchers check only the latest release. For a portable ZIP updated manually, the old `narutorise_launcher.exe` is left untouched; you may delete it. See the [packaging guide](packaging/README.md) for commands and migration tests.
+```powershell
+.\build\runtime\roan-xenon.exe [game]
+```
 
-On Linux, close the game and replace the AppImage file. The data folder stays where it is.
+`game` is the game folder, its `default.xex`, the disc image or a ZArchive. Without it, the `game/` folder of
+the repository is used. The settings and saves go to `data/user/` beside the executable.
 
-## Documentation
+| Action | Keyboard | Controller |
+| --- | --- | --- |
+| Port menu | `Escape` | Guide |
+| Windowed / borderless | `Alt+Enter` | |
+| A, B, X, Y | `Space`, `Left Shift`, `F`, `R` | |
+| Start, Back | `Enter`, `Backspace` | |
+| LB, RB, LT, RT | `Q`, `E`, `Z`, `C` | |
+| Left stick, right stick | `W` `A` `S` `D`, `I` `J` `K` `L` | |
+| Stick clicks (LS, RS) | `Tab`, `O` | |
+| D-pad | Arrow keys | |
 
-| Guide | Contents |
-| --- | --- |
-| [Build and run](docs/build-and-run.md) | Toolchain, SDK, code generation, compilation, the native renderer, and first launch |
-| [Configuration](docs/configuration.md) | Ultrawide, renderers, graphics, shortcuts, and user files |
-| [Renderers and frame rate](docs/renderers.md) | Xenos and native renderers, 60 and 120 FPS, and known issues |
-| [Data folder and recovery](docs/data-folder.md) | Where preferences, logs, saves and DLC live, migration and backups |
-| [DLCs and Title Updates](docs/dlc.md) | Content installation and additional module build |
-| [Local diagnostics](docs/crash-reports.md) | Session logs, crash dumps, export, and the crash report consent |
-| [Architecture and analysis](docs/architecture.md) | Project structure, technical workflow, and areas to address |
-| [Troubleshooting](docs/troubleshooting.md) | Build failures, runtime issues, and diagnostics |
-| [Packaging](packaging/README.md) | ZIP distribution and compatibility bridge |
+## Settings
 
-## Roadmap
+The port's settings live in `data/user/settings.toml`, written with comments on its first run. Most are also
+in the port menu. An environment variable overrides a setting for one run without writing it to the file.
 
-Planned work, in no particular order:
+| Setting | Variable | Values (default first) |
+| --- | --- | --- |
+| `video.resolution_scale` | `ROAN_RESOLUTION_SCALE` | `1` to `4` (fractions allowed), `"auto"` |
+| `video.msaa` | `ROAN_MSAA` | `"game"`, `1` (off), `2`, `4`, `8` |
+| `video.anisotropy` | `ROAN_ANISOTROPY` | `"game"`, `1` (off), `2`, `4`, `8`, `16` |
+| `video.transparency_aa` | `ROAN_TRANSPARENCY_AA` | `false`, `true` |
+| `video.ultrawide` | `ROAN_ULTRAWIDE` | `true`, `false` |
+| `video.image_fit` | `ROAN_IMAGE_FIT` | `aspect`, `stretch`, `integer` |
+| `video.frame_rate` | `ROAN_FRAME_RATE` | `"game"`, `"display"`, `31` to `240` |
+| `video.vsync` | `ROAN_VSYNC` | `true`, `false` |
+| `video.adapter` | `ROAN_ADAPTER` | `""` (the default card), or a card's name as the log shows it |
+| `window.mode` | | `windowed`, `borderless` |
+| `audio.volume` | | `100`, down to `0` |
+| `audio.device` | | `""` (the system's default), or a device's name as the log shows it |
+| `audio.mute_in_background` | | `false`, `true` |
+| `gamepad.dead_zone` | | `0` to `50` percent |
+| `game.language` | `ROAN_LANGUAGE` | `english`, `french`, `spanish`, `italian`, `german` |
+| `keyboard.*` | | one or two SDL key names per controller input |
 
-- **Linux on more systems.** The AppImage needs glibc 2.43; distributions with an older glibc and the Steam Deck still need a compatible build and testing.
-- **Ultrawide with the native renderer.** It currently draws at 16:9, with bars on wider monitors.
+For development, `ROAN_GPU_API` (`d3d12`, `vulkan`, `none`), `ROAN_GPU_DEBUG=1` (the D3D12 debug layer or the
+Vulkan validation layer) and `ROAN_TRACE=1` (kernel call tracing) are read from the environment only.
+`scripts/compare-gpu.ps1` replays recorded frames on both APIs and compares the images, and
+`scripts/profile.ps1` samples the running game.
+
+## Status
+
+The game boots, plays its videos, and runs its menus, the open world and fights on Direct3D 12 and Vulkan on
+Windows. Known gaps:
+
+- **Linux** builds and runs, but has only been tested without a renderer so far; Vulkan on a native Linux
+  install, controllers and audio there are next.
+- **Vulkan** has only been tested on AMD's driver.
+- **Ultrawide**: some HUD elements of the open world stay centered instead of at the screen's edges, and a
+  save's thumbnail taken in a wide window is squeezed.
+- **Controller bindings** cannot be changed yet; only the keyboard's.
+- With vsync off, the process may not exit after the window is closed.
+- There is no first-run setup screen yet: the game files are passed on the command line or placed in `game/`.
 
 ## Contributing
 
-Read the [technical analysis](docs/architecture.md) before changing the runtime or code generation files. When reporting an issue, include reproduction steps, version/build, CPU, GPU, driver, the renderer and frame rate you use, your configuration, and logs from `logs/` inside the active data folder shown in Settings → Advanced. After a crash, attach the ZIP from **Settings → Advanced → Diagnostics → Export previous session**. Also mention whether you use ultrawide, DLCs, or a Title Update.
+When reporting an issue, include the steps to reproduce it, your CPU, GPU and driver, the API (Direct3D 12 or
+Vulkan), your `settings.toml`, and the log.
 
-Keep game files, content packages, derived shader data, and generated recompiled code out of commits. SDK changes should include reproducible patches in `patches/sdk/`.
+Keep game files, derived shader data and the generated code (`build/`) out of commits. Changes to the
+submodules (XenonRecomp, XenosRecomp, Plume, SDL and the others) go in `patches/<submodule>/` as numbered
+patch files, documented in [`patches/README.md`](patches/README.md), never as commits inside the submodule.
 
 ## Support
 
-If you enjoy the project, you can [buy me a coffee](https://buymeacoffee.com/jorjbarbosa). It's optional and unlocks nothing; releases stay free for everyone.
+If you enjoy the project, you can [buy me a coffee](https://buymeacoffee.com/jorjbarbosa). It's optional and
+unlocks nothing; releases stay free for everyone.
 
 ## Credits
 
 **Testing**
 
-- [entityeternal](https://github.com/entityeternal), for testing the native renderer and frame rate builds and reporting issues.
-- [JellySnek](https://github.com/JellySnek), for helping the project since the beginning, reporting bugs and suggesting features.
+- [entityeternal](https://github.com/entityeternal), for testing the previous port's renderer and frame rate
+  builds and reporting issues.
+- [JellySnek](https://github.com/JellySnek), for helping the project since the beginning, reporting bugs and
+  suggesting features.
 - [tylerl567](https://github.com/tylerl567), for testing on the Steam Deck.
-- [rubenlopezgirao](https://github.com/rubenlopezgirao), for helping investigate crashes ([#72](https://github.com/jorjbarbosa/naruto-rise-recomp/issues/72)) to improve the game's stability.
+- [rubenlopezgirao](https://github.com/rubenlopezgirao), for helping investigate crashes
+  ([#72](https://github.com/jorjbarbosa/naruto-rise-recomp/issues/72)).
 
 **Projects and libraries**
 
-- [ReXGlue](https://github.com/rexglue/rexglue-sdk), recompilation SDK and runtime.
-- [Xenia](https://github.com/xenia-project/xenia) and [XenonRecomp](https://github.com/hedge-dev/XenonRecomp), foundations and references for the Xbox 360 recompilation ecosystem.
-- [XenosRecomp](https://github.com/hedge-dev/XenosRecomp), shader translation for the native renderer (forked in `tools/xenosrecomp/`), and [Plume](https://github.com/renderbag/plume) with [D3D12 Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/D3D12MemoryAllocator), its Direct3D 12 backend.
-- [SDL](https://github.com/libsdl-org/SDL), [Dear ImGui](https://github.com/ocornut/imgui), [AMD FidelityFX](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK), [extract-xiso](https://github.com/XboxDev/extract-xiso), and [Inno Setup](https://jrsoftware.org/isinfo.php).
+- [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) and [XenosRecomp](https://github.com/hedge-dev/XenosRecomp),
+  the code and shader recompilers.
+- [Plume](https://github.com/renderbag/plume), with [D3D12 Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/D3D12MemoryAllocator)
+  and [Vulkan Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator).
+- [SDL](https://github.com/libsdl-org/SDL), [FFmpeg](https://ffmpeg.org) (the XMA decoder),
+  [RmlUi](https://github.com/mikke89/RmlUi), [FreeType](https://freetype.org), [zlib](https://github.com/madler/zlib),
+  [zstd](https://github.com/facebook/zstd) and [toml++](https://github.com/marzer/tomlplusplus).
+- The Edo SZ font by Vic Fieger, used by the port menu.
 
 **References**
 
-- [Unleashed Recompiled](https://github.com/hedge-dev/UnleashedRecomp), the model for the native renderer's design and its graphics card option.
-- The Xenia Canary community and Hells Gate Recomp, references cited in the ultrawide implementation.
-- Ubisoft Montreal, for the original game. [Logo source](docs/assets/README.md).
+- [Xenia](https://github.com/xenia-project/xenia) and the Xenia Canary community, whose game patch for this
+  title showed where the game keeps its screen ratio.
+- [Unleashed Recompiled](https://github.com/hedge-dev/UnleashedRecomp), the model for the renderer's design.
+- [ReXGlue](https://github.com/rexglue/rexglue-sdk), on which the previous port was built.
+- Ubisoft Montreal, for the original game.
 
 ## License
 
-Copyright (C) 2026 Jorge Barbosa. The source code of this port is licensed under version 3 of the [GNU General Public License](LICENSE) (GPL-3.0-only). The v0.2.0-beta.1 release was published under the MIT License.
+Copyright (C) 2026 Jorge Barbosa. The source code of this port is licensed under version 3 of the GNU General
+Public License ([GPL-3.0-only](LICENSE)).
 
-Third-party code keeps its own license: the ReXGlue SDK (`sdk/`, BSD-3-Clause) and its dependencies, the XenosRecomp fork (`tools/xenosrecomp/`, MIT), Plume and D3D12 Memory Allocator (MIT), RmlUi (MIT), FreeType (FTL), and the embedded Roboto Condensed fonts (`app/ui/fonts/`, OFL-1.1). The developer extractor remains under its own license in `tools/extract-xiso/`. Release packages include the notices of every component they ship in `licenses/` ([component list](packaging/third-party-licenses.psd1)).
+Third-party code keeps its own license: the submodules under `tools/` and `thirdparty/` carry theirs, and the
+Edo SZ font is covered by `data/ui/fonts/Vic Fieger License.txt`.
 
-Naruto: Rise of a Ninja, its content, and its artwork and trademarks, including the game artwork in `launcher/assets/` and `docs/assets/`, belong to their respective owners and are not covered by this license. No game data is distributed with this project.
+Naruto: Rise of a Ninja, its content, artwork and trademarks belong to their respective owners and are not
+covered by this license. No game data is distributed with this project.
