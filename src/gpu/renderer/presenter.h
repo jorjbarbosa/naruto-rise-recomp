@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gpu/renderer/backdrop.h"
+#include "gpu/renderer/context.h"
 #include "gpu/renderer/renderer.h"
 
 #include <plume_render_interface.h>
@@ -12,10 +14,10 @@
 
 namespace gpu
 {
-    class Context;
     class Passes;
     struct ResolvedTexture;
     struct Settings;
+    class UiPass;
 
     // The swap chain of the game window. Owner thread only.
     class Presenter
@@ -36,7 +38,8 @@ namespace gpu
 
         // Submits the work recorded so far and presents the image, mapped through the gamma ramp,
         // shown stretch times wider than its own shape, in the largest rectangle of that shape the
-        // window holds, centered with black bars; black without an image.
+        // window holds, centered with black bars; black without an image. The UI's frame is drawn over
+        // the whole window (gpu/ui.h), and over the image the blur it asks for.
         // When the display can pace (vsync on, a swap chain with a sync interval, a window with an
         // area, refreshMillihertz within 1 Hz of a multiple k of 60 Hz) and vblanks != 0, the presents ask for vblanks x k refreshes since the
         // previous image (split into presents of at most four), so that while the interval stays the
@@ -44,8 +47,11 @@ namespace gpu
         // screen first. Otherwise the image is presented at once (at the next vertical blank with
         // vsync). shown(paced) runs once the first present is submitted, or at once when nothing could
         // be presented; paced tells whether the display paced it.
-        void Present(const Passes& passes, ResolvedTexture* image, float stretch, uint32_t vblanks,
+        void Present(const Passes& passes, UiPass& ui, ResolvedTexture* image, float stretch, uint32_t vblanks,
             uint32_t refreshMillihertz, const std::function<void(bool paced)>& shown);
+        // Whether the next presents wait for the vertical blank (on Vulkan, from the swap chain made
+        // again at the next present). Owner thread.
+        void SetVSync(bool vsync);
 
     private:
         explicit Presenter(Context& context, bool vsync);
@@ -53,7 +59,11 @@ namespace gpu
         void CreateFramebuffers();
         uint32_t RefreshMultiple(uint32_t refreshMillihertz);
         void WaitForRoom();
-        void Submit(const Passes& passes, ResolvedTexture* image, float stretch, uint32_t syncInterval);
+        // The gamma ramp in upload memory for the open command list.
+        Context::Upload UploadRamp();
+        // blur: the backdrop's alpha over the image, prepared by Present when above 0.
+        void Submit(const Passes& passes, UiPass& ui, ResolvedTexture* image, float stretch, float blur,
+            uint32_t syncInterval);
 
         Context& context_;
         bool vsync_;
@@ -70,6 +80,7 @@ namespace gpu
         // The submission that drew the last present: without a frame latency signal, the next present
         // waits for it.
         uint64_t presentSubmission_ = 0;
+        Backdrop backdrop_;
         bool presentFailed_ = false;
         bool acquireFailed_ = false;
         bool roomTimedOut_ = false;

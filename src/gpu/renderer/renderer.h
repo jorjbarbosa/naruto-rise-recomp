@@ -11,6 +11,7 @@
 #include <memory>
 #include <new>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -422,10 +423,10 @@ namespace gpu
         bool ReadResolved(uint32_t address, ResolvedImage& image);
 
         // Presents the texture resolved at the given GPU address, shown stretch times wider than its
-        // own shape (1: as it is) and fitted to the window (black when nothing was resolved there).
-        // Once the stretch has settled at a new value, the frames after it are rendered that much
-        // wider (the internal resolution's horizontal scale), so that the picture keeps the window's
-        // density.
+        // own shape (1: as it is) and fitted to the window (black when nothing was resolved there),
+        // with the host UI's newest frame over it (gpu/ui.h). Once the stretch has settled at a new
+        // value, the frames after it are rendered that much wider (the internal resolution's
+        // horizontal scale), so that the picture keeps the window's density.
         // When the display can pace (vsync on, a window with an area, refreshMillihertz within 1 Hz
         // of a multiple of 60 Hz) and vblanks != 0, the image is held for vblanks vertical blanks of
         // 60 Hz after the previous one; otherwise it is presented at once. Returns the number to pass
@@ -439,6 +440,11 @@ namespace gpu
         bool DisplayPaces() const;
         // The ramp the presents posted after it map the front buffer through.
         void SetGammaRamp(const GammaRamp& ramp);
+        // Whether the presents posted after it wait for the vertical blank (video.vsync).
+        void SetVSync(bool vsync);
+        // The graphics adapters as named in the log (and in video.adapter), once a renderer was
+        // created. Any thread.
+        static std::vector<std::string> AdapterNames();
 
         // Records the operations posted from now to the next Present into file (gpu/renderer/
         // recording.h), written at that Present. Only for a renderer created with

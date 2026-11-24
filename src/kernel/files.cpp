@@ -376,6 +376,12 @@ namespace kernel
         std::lock_guard lock(g_mountMutex);
         return g_mounts.contains(Lower(name));
     }
+
+    bool ContentMounted()
+    {
+        std::lock_guard lock(g_mountMutex);
+        return !g_mounts.empty();
+    }
 }
 
 // NtCreateFile(handle*, access, attributes, ioStatus, allocationSize*, fileAttributes, share,

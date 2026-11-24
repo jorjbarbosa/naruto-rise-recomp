@@ -1,0 +1,352 @@
+/* The port menu's look (V2 of the sketch: the game's own Options), shared by menu.rml, quit.rml and
+   rebind.rml. Game images are "game:<movie key>_I<id>" from Naruto_clip.SRA: 9e002bac is
+   Menu_Option, 9e002963 is GenericWindow. body[entry] is the way the menu was reached and
+   body[input] the device last used (ui/ui.h). The rows are built by src/ui/pages.cpp. */
+
+body {
+    width: 100%;
+    height: 100%;
+    font-family: "Edo SZ";
+    font-size: 30dp;
+    color: #ffffff;
+}
+
+/* The 1280x720 stage, centred; the window's extra width or height is the backdrop's. */
+#stage {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 1280dp;
+    height: 720dp;
+    margin-left: -640dp;
+    margin-top: -360dp;
+}
+
+/* The prompts follow the device: the pad's buttons, or the keys for the keyboard and the mouse. */
+body[input=pad] .key-only { display: none; }
+body[input=keyboard] .pad-only, body[input=mouse] .pad-only { display: none; }
+.cap {
+    display: inline-block;
+    padding: 0 8dp;
+    margin: 0 6dp;
+    height: 30dp;
+    line-height: 30dp;
+    font-size: 20dp;
+    vertical-align: middle;
+    border-radius: 6dp;
+    background-color: #fff6d0;
+    color: #33291a;
+    font-effect: none;
+}
+
+/* ---- The menu ---- */
+
+/* From the game's Options: opaque paper over the whole window. Over the game (the key): the blurred
+   game image, darkened a little. */
+body.menu[entry=options] {
+    decorator: vertical-gradient(#fff1a4 #ffe56b);
+}
+body.menu[entry=key] {
+    background-color: #00000060;
+}
+
+.strip {
+    position: absolute;
+    top: -2dp;
+    width: 30dp;
+    height: 724dp;
+    decorator: image(game:9e002bac_I102);
+}
+/* Menu_Option's intro at 60 frames per second: the columns slide in over frames 5 to 11, the band
+   with the title from 18 to 24, the prompts rise from 23 to 28 (assets.md section 3). */
+#strip-left { left: 0; animation: 0.1167s 0.0667s cubic-out 1 slide-left; }
+#strip-right { right: 0; animation: 0.1167s 0.0667s cubic-out 1 slide-right; }
+@keyframes slide-left { from { transform: translateX(-116dp); } to { transform: translateX(0dp); } }
+@keyframes slide-right { from { transform: translateX(116dp); } to { transform: translateX(0dp); } }
+
+#title-band {
+    position: absolute;
+    left: 30dp;
+    top: 26dp;
+    width: 400dp;
+    height: 52dp;
+    background-color: #33291a;
+    animation: 0.1167s 0.3s cubic-out 1 band-in;
+}
+#title-splat {
+    position: absolute;
+    left: 360dp;
+    top: -8dp;
+    width: 156dp;
+    height: 120dp;
+    decorator: image(game:9e002bac_I10F);
+    animation: 0.1167s 0.2s cubic-out 1 band-in;
+}
+#title {
+    position: absolute;
+    left: 64dp;
+    top: 30dp;
+    font-size: 40dp;
+    animation: 0.1167s 0.3s cubic-out 1 band-in;
+}
+@keyframes band-in { from { transform: translateX(-460dp); opacity: 0; } to { transform: translateX(0dp); opacity: 1; } }
+
+.label {
+    color: #1e8bff;
+    font-effect: outline(3dp #ffffff);
+}
+
+#tabs {
+    position: absolute;
+    left: 560dp;
+    top: 34dp;
+    width: 680dp;
+    height: 46dp;
+    line-height: 46dp;
+    text-align: center;
+}
+.tab {
+    display: inline-block;
+    margin: 0 14dp;
+    font-size: 30dp;
+    cursor: pointer;
+}
+.tab:hover { color: #6fb6ff; }
+.tab.selected {
+    font-size: 38dp;
+    color: #ffc21a;
+    font-effect: outline(3dp #b3260a);
+}
+.tab-step { display: inline-block; cursor: pointer; vertical-align: middle; }
+.icon { display: inline-block; vertical-align: middle; }
+.icon.lb { width: 60dp; height: 24dp; decorator: image(game:9e002963_I9); }
+.icon.rb { width: 60dp; height: 24dp; decorator: image(game:9e002963_IB); }
+
+.panel {
+    position: absolute;
+    border-radius: 24dp;
+    background-color: #1e0e0080;
+    animation: 0.2s 0.15s linear-out 1 fade-in;
+}
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+#rows { left: 56dp; top: 104dp; width: 760dp; height: 488dp; padding: 14dp 0; overflow-y: auto; }
+#description { left: 840dp; top: 104dp; width: 324dp; height: 486dp; padding: 30dp 30dp 0 30dp; }
+
+scrollbarvertical { width: 10dp; margin-right: 8dp; }
+scrollbarvertical slidertrack { background-color: #00000030; border-radius: 5dp; }
+scrollbarvertical sliderbar { background-color: #1e8bff; border-radius: 5dp; min-height: 30dp; }
+
+.row {
+    display: block;
+    position: relative;
+    height: 44dp;
+    line-height: 44dp;
+    padding-left: 48dp;
+    tab-index: auto;
+    nav: auto;
+    focus: auto;
+    cursor: pointer;
+    color: #1e8bff;
+    font-effect: outline(3dp #ffffff);
+}
+.row .name { display: inline-block; }
+.row .tag {
+    display: inline-block;
+    margin-left: 10dp;
+    font-size: 14dp;
+    color: #ffb13b;
+    font-effect: none;
+    vertical-align: top;
+}
+.row .cloud {
+    position: absolute;
+    left: -6dp;
+    top: 4dp;
+    width: 56dp;
+    height: 36dp;
+    decorator: image(game:9e002bac_IF4);
+    visibility: hidden;
+    animation: 1.0833s linear-in-out infinite alternate pulse;
+}
+@keyframes pulse { from { transform: scale(0.8); } to { transform: scale(1.1); } }
+.row.current { color: #ffc21a; font-effect: outline(3dp #b3260a); }
+.row.current .cloud { visibility: visible; }
+.row.locked, .row.locked.current { color: #9a9080; font-effect: outline(2dp #5a5040); }
+
+/* The value column. */
+.row .value {
+    position: absolute;
+    left: 420dp;
+    top: 0;
+    width: 320dp;
+    height: 44dp;
+    font-size: 26dp;
+    color: #fff6d0;
+    font-effect: outline(2dp #3a2010);
+}
+.row.locked .value { color: #b0a890; }
+.value .text { display: inline-block; width: 220dp; text-align: center; }
+.value .arrow {
+    display: inline-block;
+    width: 46dp;
+    height: 30dp;
+    vertical-align: middle;
+    decorator: image(game:9e002bac_IF6);
+    visibility: hidden;
+}
+.value .arrow.left { decorator: image(game:9e002bac_IF6 flip-horizontal); }
+.row.current .value .arrow { visibility: visible; }
+.row.locked .value .arrow { visibility: hidden; }
+.value .pick {
+    display: inline-block;
+    width: 44dp;
+    height: 44dp;
+    line-height: 44dp;
+    margin-right: 46dp;
+    text-align: center;
+    font-size: 22dp;
+    border-radius: 22dp;
+    background-color: #8c8c8c;
+    color: #ffffff;
+}
+.value .pick.on { background-color: #e36a00; color: #ffe94a; }
+.row.locked .value .pick.on { background-color: #9a7a50; }
+.value .bar {
+    display: inline-block;
+    width: 250dp;
+    height: 30dp;
+    vertical-align: middle;
+    decorator: image(game:9e002bac_I120);
+}
+.value .bar .fill { display: block; height: 30dp; overflow: hidden; }
+.value .bar .full { display: block; width: 250dp; height: 30dp; decorator: image(game:9e002bac_I123); }
+.value .number { display: inline-block; width: 60dp; margin-left: 10dp; text-align: right; font-size: 22dp; }
+.value .slot {
+    display: inline-block;
+    width: 140dp;
+    height: 34dp;
+    line-height: 34dp;
+    margin: 5dp 10dp 0 0;
+    text-align: center;
+    font-size: 20dp;
+    border-radius: 8dp;
+    background-color: #33291a90;
+    cursor: pointer;
+}
+.value .slot:hover, .row.current .value .slot.chosen { background-color: #e36a00; color: #ffe94a; }
+
+#description h2 {
+    display: block;
+    font-size: 32dp;
+    color: #ffc21a;
+    font-effect: outline(3dp #b3260a);
+    margin-bottom: 16dp;
+}
+#description p {
+    display: block;
+    font-size: 19dp;
+    line-height: 26dp;
+    color: #fff6d0;
+    margin-bottom: 14dp;
+}
+#description #desc-values { color: #8fd0ff; }
+#description #desc-note { position: absolute; left: 30dp; top: 430dp; width: 324dp; color: #a6e36a; }
+#description #desc-note.restart { color: #ffb13b; }
+
+/* The button prompts at the bottom. */
+.prompt {
+    position: absolute;
+    top: 630dp;
+    height: 44dp;
+    line-height: 44dp;
+    font-size: 28dp;
+    font-effect: outline(2dp #3a2010);
+    cursor: pointer;
+    animation: 0.0833s 0.38s cubic-out 1 rise;
+}
+@keyframes rise { from { transform: translateY(130dp); } to { transform: translateY(0dp); } }
+.prompt .button {
+    display: inline-block;
+    width: 44dp;
+    height: 44dp;
+    vertical-align: middle;
+}
+.prompt .b { decorator: image(game:9e002bac_I131); }
+.prompt .x { decorator: image(game:9e002963_I5); }
+.prompt:hover { color: #ffc21a; }
+#prompt-back { left: 56dp; }
+#prompt-back .button { margin-right: 6dp; }
+#prompt-reset { right: 64dp; }
+#prompt-reset .button { margin-left: 6dp; }
+
+/* ---- Windows (quit.rml, rebind.rml): the game's GenericWindow scroll, over what is behind as it is ----
+   Every part where the movie (Menu/GenericWindow, its frames 29 to 32, scale 1) draws it: the rollers
+   (sprite 118 at x 163.8 and 1172.7, y 350.6: cap, body stretched 2.266 times, foot), their shade on
+   the paper (navy at 20%), the paper (x 139 to 1141), the swirl bands, the title, the text, B with its
+   word at the bottom left and the word with A at the bottom right. The DDS images are padded to
+   multiples of 4 with opaque texels, so each part is a sprite of the image's real size. No choices of
+   its own: A and B are the answers. The font is not the game's (One Stroke Script LET). */
+
+@spritesheet window-cap { src: game:9e002963_I6B; roller-cap: 0px 0px 146px 138px; }
+@spritesheet window-body { src: game:9e002963_I6C; roller-body: 0px 0px 141px 135px; }
+@spritesheet window-foot { src: game:9e002963_I6A; roller-foot: 0px 0px 138px 121px; }
+@spritesheet window-paper { src: game:9e002963_I7E; paper: 0px 0px 211px 119px; }
+
+#scroll {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 1280dp;
+    height: 720dp;
+    animation: 0.15s cubic-out 1 window-in;
+}
+@keyframes window-in { from { opacity: 0; } to { opacity: 1; } }
+#scroll .part { position: absolute; }
+
+#paper { left: 139dp; top: 138dp; width: 1002dp; height: 426dp; decorator: image(paper); }
+/* The whole image, repeated (a sprite cannot repeat): its last row is padding, 1 dp over the paper. */
+.band { left: 162.5dp; width: 955dp; height: 36dp; decorator: image(game:9e002963_I82 repeat-x); }
+#band-top { top: 108.6dp; }
+#band-bottom { top: 558.6dp; }
+.shade { top: 108.8dp; height: 484.8dp; }
+#shade-left { left: 207dp; width: 27dp; background-color: #0d124533; }
+#shade-left-edge { left: 234dp; width: 6dp; decorator: horizontal-gradient(#0d124533 #0d124500); }
+#shade-right-edge { left: 1052dp; width: 6dp; decorator: horizontal-gradient(#0d124500 #0d124533); }
+#shade-right { left: 1058dp; width: 18dp; background-color: #0d124533; }
+
+.roller-body { top: 204.6dp; width: 141dp; height: 305.9dp; decorator: image(roller-body); }
+.roller-top { top: 71.6dp; width: 146dp; height: 138dp; decorator: image(roller-cap); }
+.roller-bottom { top: 508.5dp; width: 138dp; height: 121dp; decorator: image(roller-foot); }
+#roller-left-body { left: 66.8dp; }
+#roller-left-top { left: 65.8dp; }
+#roller-left-bottom { left: 63.9dp; }
+#roller-right-body { left: 1075.7dp; }
+#roller-right-top { left: 1074.7dp; }
+#roller-right-bottom { left: 1072.8dp; }
+
+#scroll h1, #scroll p {
+    position: absolute;
+    text-align: center;
+    color: #1a1208;
+}
+#scroll h1 { left: 240dp; top: 142dp; width: 801dp; font-size: 42dp; }
+#scroll p { left: 220dp; top: 190dp; width: 840dp; font-size: 28dp; line-height: 34dp; }
+
+.answer {
+    position: absolute;
+    top: 518dp;
+    height: 38dp;
+    line-height: 38dp;
+    font-size: 30dp;
+    color: #1a1208;
+    cursor: pointer;
+}
+.answer:hover { color: #c0480a; }
+.answer .button { position: absolute; top: 3dp; width: 32dp; height: 32dp; }
+.answer .a { decorator: image(game:9e002963_I1); }
+.answer .b { decorator: image(game:9e002963_I3); }
+/* B at x 214, its word from 252; the word ends at 1031, A at 1033. */
+#answer-back { left: 214dp; padding-left: 38dp; }
+#answer-back .button { left: 0; }
+#answer-ok { left: 303dp; width: 728dp; text-align: right; }
+#answer-ok .button { left: 730dp; }

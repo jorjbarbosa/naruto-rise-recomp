@@ -15,17 +15,18 @@
 #include "host/timing.h"
 #include "log.h"
 #include "memory.h"
+#include "settings/settings.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
+#include <string>
 
 namespace game::interpolation::clock
 {
     namespace
     {
-        constexpr uint32_t kMinRate = 31;
-        constexpr uint32_t kMaxRate = 240;
         // A valid fixed period, seconds.
         constexpr float kMinPeriod = 1e-4f;
         constexpr float kMaxPeriod = 0.25f;
@@ -66,7 +67,9 @@ namespace game::interpolation::clock
         };
         Window g_window;
 
-        int64_t g_rate = -1;     // ROAN_FRAME_RATE, read once; 0: off
+        int64_t g_rate = -1;     // video.frame_rate, read once, then RequestRate's; 0: off
+        constexpr int64_t kNoRequest = -1;
+        std::atomic<int64_t> g_requestedRate{ kNoRequest };
 
         double Seconds()
         {
@@ -265,16 +268,44 @@ namespace game::interpolation::clock
     {
         if (g_rate < 0)
         {
-            const char* value = std::getenv("ROAN_FRAME_RATE");
-            int rate = value != nullptr ? std::atoi(value) : 0;
-            if (rate > int(kMaxRate))
-            {
-                Log("clock: ROAN_FRAME_RATE %d above %u, using %u", rate, kMaxRate, kMaxRate);
-                rate = int(kMaxRate);
-            }
-            g_rate = rate >= int(kMinRate) ? rate : 0;
+            g_rate = int64_t(::settings::FrameRate());
         }
         return g_rate != 0;
+    }
+
+    void RequestRate(uint32_t rate)
+    {
+        g_requestedRate.store(int64_t(rate), std::memory_order_release);
+    }
+
+    void IterationStart()
+    {
+        int64_t rate = g_requestedRate.exchange(kNoRequest, std::memory_order_acquire);
+        if (rate == kNoRequest)
+            return;
+        Enabled(); // the setting's rate, if this is the first iteration
+        if (rate == g_rate)
+            return;
+        bool was = g_rate != 0;
+        g_rate = rate;
+        g_decided = false;
+        g_started = false; // the timeline starts again with a tick
+        if (rate == 0)
+        {
+            // Off: every iteration a tick, paced at the title's interval again.
+            if (was)
+            {
+                double now = Seconds();
+                if (g_window.iterations != 0)
+                    Report(now);
+                gpu::SetPaceRate(0);
+            }
+            uint32_t timeline = g_frame.timeline; // a later timeline is still a new one
+            g_frame = Frame{};
+            g_frame.timeline = timeline;
+            g_pace = ~0u;
+        }
+        Log("clock: frame rate %s", rate == 0 ? "off (the game's own)" : std::to_string(rate).c_str());
     }
 
     const Frame& Current()

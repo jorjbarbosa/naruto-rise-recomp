@@ -169,6 +169,41 @@ else()
     target_link_libraries(ffmpeg_avutil PUBLIC m atomic)
 endif()
 
+# zlib's inflate, for the entries of Naruto_clip.SRA (src/ui/game_archive.cpp).
+set(ZLIB_DIR "${CMAKE_SOURCE_DIR}/thirdparty/zlib")
+add_library(zlib_inflate STATIC
+    "${ZLIB_DIR}/adler32.c" "${ZLIB_DIR}/crc32.c" "${ZLIB_DIR}/inffast.c" "${ZLIB_DIR}/inflate.c"
+    "${ZLIB_DIR}/inftrees.c" "${ZLIB_DIR}/uncompr.c" "${ZLIB_DIR}/zutil.c")
+target_include_directories(zlib_inflate PUBLIC "${ZLIB_DIR}")
+target_compile_definitions(zlib_inflate PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS)
+target_compile_options(zlib_inflate PRIVATE -Wno-everything)
+
+# FreeType for RmlUi's font engine: outline fonts only, so none of its optional libraries.
+set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
+set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
+add_subdirectory("${CMAKE_SOURCE_DIR}/thirdparty/freetype" freetype EXCLUDE_FROM_ALL)
+target_compile_options(freetype PRIVATE -Wno-everything)
+# RmlUi takes any target of this name (its CMake/Dependencies.cmake checks the target).
+add_library(Freetype::Freetype ALIAS freetype)
+
+# RmlUi: the host UI's documents, style sheets and layout (src/ui).
+set(RMLUI_FONT_ENGINE "freetype" CACHE STRING "" FORCE)
+set(RMLUI_SAMPLES OFF CACHE BOOL "" FORCE)
+set(RMLUI_LUA_BINDINGS OFF CACHE BOOL "" FORCE)
+set(RMLUI_LOTTIE_PLUGIN OFF CACHE BOOL "" FORCE)
+set(RMLUI_SVG_PLUGIN OFF CACHE BOOL "" FORCE)
+set(RMLUI_TRACY_PROFILING OFF CACHE BOOL "" FORCE)
+set(RMLUI_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
+set(RMLUI_COMPILER_OPTIONS OFF CACHE BOOL "" FORCE)
+set(RMLUI_INSTALL_TARGETS_DIR "" CACHE STRING "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+add_subdirectory("${CMAKE_SOURCE_DIR}/thirdparty/RmlUi" rmlui EXCLUDE_FROM_ALL)
+target_compile_options(rmlui_core PRIVATE -Wno-everything)
+
 # Every kernel/XAM import of the recompiled modules gets a weak logging stub (src/kernel/stubs.cpp);
 # the runtime overrides the implemented ones. The list comes from the generated headers.
 set(IMPORT_NAMES "")
@@ -232,6 +267,10 @@ add_gpu_shader(present_ps kPresentPs present_ps.hlsl ps_6_0)
 add_gpu_shader(resolve_color_ms_ps kResolveColorMsPs resolve_ps.hlsl ps_6_0 OPTIONS -DMULTISAMPLE=1)
 add_gpu_shader(resolve_depth_ps kResolveDepthPs resolve_ps.hlsl ps_6_0 OPTIONS -DDEPTH=1)
 add_gpu_shader(resolve_depth_ms_ps kResolveDepthMsPs resolve_ps.hlsl ps_6_0 OPTIONS -DDEPTH=1 -DMULTISAMPLE=1)
+add_gpu_shader(copy_ps kCopyPs copy_ps.hlsl ps_6_0)
+add_gpu_shader(blur_ps kBlurPs blur_ps.hlsl ps_6_0)
+add_gpu_shader(ui_vs kUiVs ui_vs.hlsl vs_6_0 SPIRV_OPTIONS -fvk-invert-y)
+add_gpu_shader(ui_ps kUiPs ui_ps.hlsl ps_6_0)
 
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/*.cpp"
@@ -249,7 +288,8 @@ endif()
 add_executable(roan-xenon ${SOURCES} ${GPU_SHADER_HEADERS} ${PPC_MODULE_OBJECTS} $<TARGET_OBJECTS:shader_cache>)
 target_include_directories(roan-xenon PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_BINARY_DIR}/generated"
     "${PPC_OUTPUT_DIR}" "${XENOS_THIRDPARTY_DIR}/xxHash")
-target_link_libraries(roan-xenon PRIVATE ppc_common XenonUtils plume zstd_decompress smolv SDL3::SDL3-static ffmpeg_avcodec)
+target_link_libraries(roan-xenon PRIVATE ppc_common XenonUtils plume zstd_decompress smolv SDL3::SDL3-static ffmpeg_avcodec
+    tomlplusplus::tomlplusplus RmlUi::Core zlib_inflate)
 target_compile_options(roan-xenon PRIVATE -Wno-unused-parameter -Wno-null-arithmetic)
 # Windows only: dbghelp for the crash report, debug information inside the objects and the 16 MB
 # stack of the main thread.
@@ -266,6 +306,12 @@ else()
         "LINKER:--export-dynamic-symbol=sub_*")
 endif()
 set_target_properties(roan-xenon PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+# The UI's own files (fonts, documents, style sheets) beside the executable, in data/ui. A target of
+# its own that runs at every build: a change to them alone does not relink the executable.
+add_custom_target(roan-xenon-ui-data ALL
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${CMAKE_SOURCE_DIR}/data/ui" "${CMAKE_BINARY_DIR}/data/ui"
+    VERBATIM)
+add_dependencies(roan-xenon roan-xenon-ui-data)
 
 # The sampling profiler (tools/sampler, scripts/profile.ps1): Windows only, and out of the default
 # build, so build.ps1 builds the runtime alone.

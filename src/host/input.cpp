@@ -3,10 +3,14 @@
 #include "host/input.h"
 
 #include "log.h"
+#include "settings/settings.h"
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
+#include <array>
 #include <bitset>
+#include <cmath>
 #include <mutex>
 
 namespace host
@@ -57,39 +61,32 @@ namespace host
             { SDL_GAMEPAD_BUTTON_NORTH, kY },
         };
 
-        struct KeyBinding
+        using settings::PadInput;
+        constexpr size_t kPadInputs = size_t(PadInput::Count);
+
+        // The pad buttons the keyboard drives, with their bits; ApplyKeyboard handles the triggers and
+        // the stick directions on its own.
+        struct ButtonInput
         {
-            SDL_Scancode key;
+            PadInput input;
             uint16_t bit;
         };
-
-        // Default keyboard map. Arrows drive the D-pad and WASD the left stick, so the menus work
-        // whichever of the two they read.
-        constexpr KeyBinding kKeyButtons[] = {
-            { SDL_SCANCODE_UP, kDpadUp },
-            { SDL_SCANCODE_DOWN, kDpadDown },
-            { SDL_SCANCODE_LEFT, kDpadLeft },
-            { SDL_SCANCODE_RIGHT, kDpadRight },
-            { SDL_SCANCODE_RETURN, kStart },
-            { SDL_SCANCODE_BACKSPACE, kBack },
-            { SDL_SCANCODE_TAB, kLeftThumb },
-            { SDL_SCANCODE_O, kRightThumb },
-            { SDL_SCANCODE_Q, kLeftShoulder },
-            { SDL_SCANCODE_E, kRightShoulder },
-            { SDL_SCANCODE_SPACE, kA },
-            { SDL_SCANCODE_LSHIFT, kB },
-            { SDL_SCANCODE_F, kX },
-            { SDL_SCANCODE_R, kY },
+        constexpr ButtonInput kButtonInputs[] = {
+            { PadInput::A, kA },
+            { PadInput::B, kB },
+            { PadInput::X, kX },
+            { PadInput::Y, kY },
+            { PadInput::Start, kStart },
+            { PadInput::Back, kBack },
+            { PadInput::LeftShoulder, kLeftShoulder },
+            { PadInput::RightShoulder, kRightShoulder },
+            { PadInput::LeftThumb, kLeftThumb },
+            { PadInput::RightThumb, kRightThumb },
+            { PadInput::DpadUp, kDpadUp },
+            { PadInput::DpadDown, kDpadDown },
+            { PadInput::DpadLeft, kDpadLeft },
+            { PadInput::DpadRight, kDpadRight },
         };
-        constexpr SDL_Scancode kKeyLeftTrigger = SDL_SCANCODE_Z;
-        constexpr SDL_Scancode kKeyRightTrigger = SDL_SCANCODE_C;
-
-        struct StickKeys
-        {
-            SDL_Scancode left, right, down, up;
-        };
-        constexpr StickKeys kKeyLeftStick = { SDL_SCANCODE_A, SDL_SCANCODE_D, SDL_SCANCODE_S, SDL_SCANCODE_W };
-        constexpr StickKeys kKeyRightStick = { SDL_SCANCODE_J, SDL_SCANCODE_L, SDL_SCANCODE_K, SDL_SCANCODE_I };
 
         struct Slot
         {
@@ -108,6 +105,10 @@ namespace host
         std::mutex g_mutex;
         Slot g_slots[kInputSlots];
         std::bitset<SDL_SCANCODE_COUNT> g_keys;
+        // The keyboard's keys per pad input (0: an empty slot) and the stick dead zone (a fraction of
+        // full deflection), from the store (ApplyInputSettings).
+        std::array<std::array<uint16_t, 2>, kPadInputs> g_bindings{};
+        float g_deadZone = 0.0f;
         // Starts false: SDL reports the focus the window gets when it is created.
         bool g_focused = false;
         // Set by StopInput: the process is about to exit, so the motors stay off.
@@ -125,6 +126,25 @@ namespace host
             return v == -32768 ? int16_t(32767) : int16_t(-v);
         }
 
+        // Radial dead zone on one stick, in SDL's axes: inside it the stick is centred; outside, the
+        // deflection is rescaled so the edge of the zone is 0 and full deflection stays full.
+        void ApplyDeadZone(int16_t& x, int16_t& y)
+        {
+            if (g_deadZone <= 0.0f)
+                return;
+            float fx = float(x) / 32767.0f, fy = float(y) / 32767.0f;
+            float magnitude = std::sqrt(fx * fx + fy * fy);
+            if (magnitude <= g_deadZone)
+            {
+                x = 0;
+                y = 0;
+                return;
+            }
+            float scale = std::min(1.0f, (magnitude - g_deadZone) / (1.0f - g_deadZone)) / magnitude;
+            x = int16_t(std::clamp(fx * scale * 32767.0f, -32768.0f, 32767.0f));
+            y = int16_t(std::clamp(fy * scale * 32767.0f, -32768.0f, 32767.0f));
+        }
+
         PadState ReadGamepad(SDL_Gamepad* gamepad)
         {
             PadState pad;
@@ -136,38 +156,55 @@ namespace host
             // Triggers range over 0-32767.
             pad.leftTrigger = uint8_t(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) >> 7);
             pad.rightTrigger = uint8_t(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) >> 7);
-            pad.thumbLX = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTX);
-            pad.thumbLY = FlipAxis(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTY));
-            pad.thumbRX = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTX);
-            pad.thumbRY = FlipAxis(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTY));
+            int16_t lx = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTX);
+            int16_t ly = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTY);
+            int16_t rx = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTX);
+            int16_t ry = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTY);
+            ApplyDeadZone(lx, ly);
+            ApplyDeadZone(rx, ry);
+            pad.thumbLX = lx;
+            pad.thumbLY = FlipAxis(ly);
+            pad.thumbRX = rx;
+            pad.thumbRY = FlipAxis(ry);
             return pad;
         }
 
-        // Full deflection towards the held key; opposite keys cancel out.
-        int16_t KeyAxis(SDL_Scancode negative, SDL_Scancode positive)
+        // Whether a key bound to the pad input is held.
+        bool Held(PadInput input)
         {
-            return int16_t((g_keys[positive] ? 32767 : 0) - (g_keys[negative] ? 32767 : 0));
+            for (uint16_t key : g_bindings[size_t(input)])
+            {
+                if (key != 0 && key < SDL_SCANCODE_COUNT && g_keys[key])
+                    return true;
+            }
+            return false;
+        }
+
+        // Full deflection towards the held direction; opposite directions cancel out.
+        int16_t KeyAxis(PadInput negative, PadInput positive)
+        {
+            return int16_t((Held(positive) ? 32767 : 0) - (Held(negative) ? 32767 : 0));
         }
 
         // Overlays the keyboard on a pad state: buttons add up, a held key wins over the analog value.
         void ApplyKeyboard(PadState& pad)
         {
-            for (const KeyBinding& binding : kKeyButtons)
+            for (const ButtonInput& button : kButtonInputs)
             {
-                if (g_keys[binding.key])
-                    pad.buttons |= binding.bit;
+                if (Held(button.input))
+                    pad.buttons |= button.bit;
             }
-            if (g_keys[kKeyLeftTrigger])
+            if (Held(PadInput::LeftTrigger))
                 pad.leftTrigger = 255;
-            if (g_keys[kKeyRightTrigger])
+            if (Held(PadInput::RightTrigger))
                 pad.rightTrigger = 255;
-            if (int16_t x = KeyAxis(kKeyLeftStick.left, kKeyLeftStick.right))
+            if (int16_t x = KeyAxis(PadInput::LeftStickLeft, PadInput::LeftStickRight))
                 pad.thumbLX = x;
-            if (int16_t y = KeyAxis(kKeyLeftStick.down, kKeyLeftStick.up))
+            if (int16_t y = KeyAxis(PadInput::LeftStickDown, PadInput::LeftStickUp))
                 pad.thumbLY = y;
-            if (int16_t x = KeyAxis(kKeyRightStick.left, kKeyRightStick.right))
+            if (int16_t x = KeyAxis(PadInput::RightStickLeft, PadInput::RightStickRight))
                 pad.thumbRX = x;
-            if (int16_t y = KeyAxis(kKeyRightStick.down, kKeyRightStick.up))
+            if (int16_t y = KeyAxis(PadInput::RightStickDown, PadInput::RightStickUp))
                 pad.thumbRY = y;
         }
 
@@ -295,6 +332,21 @@ namespace host
                 UpdateSlot(i);
                 ApplyRumble(slot);
             }
+        }
+    }
+
+    void ApplyInputSettings()
+    {
+        std::lock_guard lock(g_mutex);
+        for (size_t i = 0; i < kPadInputs; i++)
+            g_bindings[i] = settings::KeyboardKeys(PadInput(i));
+        g_deadZone = float(settings::DeadZone()) / 100.0f;
+        for (int i = 0; i < kInputSlots; i++)
+        {
+            Slot& slot = g_slots[i];
+            if (slot.gamepad != nullptr)
+                slot.fromGamepad = ReadGamepad(slot.gamepad);
+            UpdateSlot(i);
         }
     }
 

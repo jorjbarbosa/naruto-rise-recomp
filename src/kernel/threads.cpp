@@ -3,6 +3,7 @@
 #include "kernel/kernel.h"
 
 #include "host/input.h"
+#include "host/quit.h"
 #include "host/thread.h"
 #include "host/timing.h"
 #include "loader.h"
@@ -250,10 +251,8 @@ GUEST_FUNC(ExTerminateThread)
     TRACE("ExTerminateThread: thread %u, code %08X", thread ? thread->id : 0, ctx.r3.u32);
     if (thread == nullptr || thread->name == "main")
     {
-        host::StopInput();
-        PrintImportSummary();
         Log("main thread terminated (code %08X)", ctx.r3.u32);
-        std::_Exit(0);
+        host::QuitFromGuest("the game's main thread ended");
     }
     SignalObject(thread->object);
     host::ExitCurrentThread(ctx.r3.u32);

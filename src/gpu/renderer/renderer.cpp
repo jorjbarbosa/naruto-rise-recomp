@@ -14,6 +14,7 @@
 #include "gpu/renderer/scale.h"
 #include "gpu/renderer/targets.h"
 #include "gpu/renderer/textures.h"
+#include "gpu/renderer/ui_pass.h"
 #include "gpu/settings.h"
 #include "host/thread.h"
 #include "log.h"
@@ -37,6 +38,10 @@ namespace gpu
     {
         // The draws the owner receives together.
         constexpr size_t kDrawBatch = 32;
+
+        // The adapters' names, for Renderer::AdapterNames.
+        std::mutex g_adapterMutex;
+        std::vector<std::string> g_adapterNames;
 
         // The constant ring of each stage. A frame of the heaviest scene seen (4,000 draws) hands out
         // about 2 MB of vertex constants and 0.6 MB of pixel constants, and the capture runs at most
@@ -197,6 +202,7 @@ namespace gpu
         std::unique_ptr<Textures> textures;
         std::unique_ptr<Buffers> buffers;
         std::unique_ptr<Draws> draws;
+        std::unique_ptr<UiPass> ui;
         std::unique_ptr<Presenter> presenter;
         std::unique_ptr<FrameRecorder> recorder; // Settings::recordFrames
         Renderer::BeforePost beforePost;
@@ -360,8 +366,13 @@ namespace gpu
         impl->api = CreateInterface(settings);
         if (!impl->api)
             return nullptr;
-        for (const std::string& name : impl->api->getDeviceNames())
+        std::vector<std::string> adapters = impl->api->getDeviceNames();
+        for (const std::string& name : adapters)
             Log("gpu: adapter \"%s\"", name.c_str());
+        {
+            std::lock_guard lock(g_adapterMutex);
+            g_adapterNames = std::move(adapters);
+        }
 
         std::unique_ptr<plume::RenderDevice> device = impl->api->createDevice(settings.adapter);
         if (!device)
@@ -385,6 +396,7 @@ namespace gpu
         const SampleCounts samples = ChooseSampleCounts(settings.msaa, impl->context->Device());
         impl->descriptors = std::make_unique<Descriptors>(*impl->context);
         impl->passes = std::make_unique<Passes>(*impl->context, Presenter::kFormat);
+        impl->ui = std::make_unique<UiPass>(*impl->context, *impl->passes, Presenter::kFormat);
         impl->targets = std::make_unique<Targets>(*impl->context, *impl->passes, *impl->descriptors, scale, samples);
         if (settings.transparencyAa)
             Log("gpu: transparency anti-aliasing on the alpha-tested draws of multisampled targets");
@@ -512,7 +524,9 @@ namespace gpu
         impl_->Record([&](FrameRecorder& recorder) { recorder.Present(frontAddress); });
         uint64_t present = impl_->presentsPosted.fetch_add(1) + 1;
         if (!impl_->Post([impl = impl_.get(), frontAddress, stretch, vblanks, refreshMillihertz, present] {
-                impl->presenter->Present(*impl->passes, impl->targets->Resolved(frontAddress), stretch, vblanks, refreshMillihertz,
+                impl->ui->BeginPresent();
+                impl->presenter->Present(*impl->passes, *impl->ui, impl->targets->Resolved(frontAddress), stretch,
+                    vblanks, refreshMillihertz,
                     [&](bool paced) {
                         impl->displayPaces = paced;
                         {
@@ -525,6 +539,7 @@ namespace gpu
                         }
                         impl->presentDone.notify_all();
                     });
+                impl->ui->EndPresent();
                 impl->FollowWindow(stretch);
             }))
             return 0;
@@ -542,6 +557,17 @@ namespace gpu
     bool Renderer::DisplayPaces() const
     {
         return impl_->displayPaces;
+    }
+
+    void Renderer::SetVSync(bool vsync)
+    {
+        impl_->Post([impl = impl_.get(), vsync] { impl->presenter->SetVSync(vsync); });
+    }
+
+    std::vector<std::string> Renderer::AdapterNames()
+    {
+        std::lock_guard lock(g_adapterMutex);
+        return g_adapterNames;
     }
 
     void Renderer::SetGammaRamp(const GammaRamp& ramp)

@@ -5,13 +5,13 @@
 
 #include "gpu/renderer/backend.h"
 #include "gpu/renderer/context.h"
+#include "gpu/renderer/level_copy.h"
 #include "gpu/renderer/targets.h"
 #include "gpu/textures/formats.h"
 #include "log.h"
 
 
 #include <algorithm>
-#include <cstring>
 
 namespace gpu
 {
@@ -134,15 +134,9 @@ namespace gpu
                 // Host rows: texels when decompressed, otherwise blocks.
                 uint32_t rows = format->Decompresses() ? height : guest.heightBlocks;
                 uint32_t rowBytes = (format->Decompresses() ? width : guest.widthBlocks) * format->hostBytes;
-                constexpr uint32_t kRowAlignment = Context::kTextureRowAlignment;
-                uint32_t pitch = (rowBytes + kRowAlignment - 1) / kRowAlignment * kRowAlignment;
-                Context::Upload staging = context_.Allocate(uint64_t(pitch) * rows, Context::kTexturePlacementAlignment);
-                for (uint32_t row = 0; row < rows; row++)
-                    memcpy(staging.data + uint64_t(row) * pitch, data.data() + size_t(row) * rowBytes, rowBytes);
-                uint32_t rowWidth = pitch / format->hostBytes * (format->HostCompressed() ? format->block : 1);
-                list.copyTextureRegion(plume::RenderTextureCopyLocation::Subresource(texture->texture.get(), level, face),
-                    plume::RenderTextureCopyLocation::PlacedFootprint(staging.buffer, format->host, width, height, 1,
-                        rowWidth, staging.offset));
+                CopyLevel(context_, list, *texture->texture, level, face, format->host, width, height,
+                    { data.data(), rowBytes, rows, format->HostCompressed() ? uint32_t(format->block) : 1u,
+                        format->hostBytes });
             }
         }
     }

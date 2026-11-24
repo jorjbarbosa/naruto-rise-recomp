@@ -386,6 +386,21 @@ namespace gpu
         return plume::RenderShaderFormat::SPIRV;
     }
 
+    std::unique_ptr<plume::RenderShader> CreatePassShader(plume::RenderDevice& device, std::span<const unsigned char> dxil,
+        std::span<const unsigned char> spirv)
+    {
+        if (ShaderFormat(device) == plume::RenderShaderFormat::DXIL)
+        {
+            if (dxil.empty())
+                Fatal("gpu: this build has no DXIL pass shaders");
+            return device.createShader(dxil.data(), dxil.size(), "main", plume::RenderShaderFormat::DXIL);
+        }
+        // The header's bytes have no alignment, and Vulkan reads SPIR-V as 32-bit words.
+        std::vector<uint32_t> words((spirv.size() + 3) / 4);
+        memcpy(words.data(), spirv.data(), spirv.size());
+        return device.createShader(words.data(), spirv.size(), "main", plume::RenderShaderFormat::SPIRV);
+    }
+
     bool KeepsPipelineCache(plume::RenderDevice& device)
     {
         return dynamic_cast<plume::VulkanDevice*>(&device) != nullptr;

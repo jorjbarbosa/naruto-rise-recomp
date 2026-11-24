@@ -105,10 +105,11 @@ namespace gpu
 
         FrameLimiter g_limiter;
 
-        // The settings of the process, read at the first use. Any thread.
-        const Settings& EnvironmentSettings()
+        // The settings of the process, read at the first use (after the settings store is loaded).
+        // Any thread.
+        const Settings& ProcessSettings()
         {
-            static const Settings settings = Settings::FromEnvironment();
+            static const Settings settings = Settings::FromStore();
             return settings;
         }
     }
@@ -122,7 +123,7 @@ namespace gpu
     {
         if (g_renderer)
             return;
-        Settings settings = EnvironmentSettings();
+        Settings settings = ProcessSettings();
         if (!settings.renderer)
         {
             Log("gpu: no renderer (ROAN_GPU_API=none)");
@@ -196,7 +197,7 @@ namespace gpu
     float WideStretch()
     {
         uint32_t width = 0, height = 0;
-        if (!EnvironmentSettings().ultrawide || !host::WindowPixelSize(width, height))
+        if (!ProcessSettings().ultrawide || !host::WindowPixelSize(width, height))
             return 1.0f;
         // The window's width over the width of a 16:9 picture of its height.
         float stretch = float(width) * 9.0f / (float(height) * 16.0f);

@@ -14,7 +14,16 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
+
+// The DXIL and SPIR-V of a pass shader by its array name (CMakeLists.txt, add_gpu_shader), for
+// CreatePassShader; the DXIL is empty where D3D12 is not built.
+#ifdef ROAN_D3D12
+#define PASS_SHADER_CODE(name) std::span<const unsigned char>(name), std::span<const unsigned char>(name##Spirv)
+#else
+#define PASS_SHADER_CODE(name) std::span<const unsigned char>(), std::span<const unsigned char>(name##Spirv)
+#endif
 
 namespace gpu
 {
@@ -45,6 +54,12 @@ namespace gpu
 
     // The shader format the device takes: DXIL on D3D12, SPIR-V on Vulkan.
     plume::RenderShaderFormat ShaderFormat(plume::RenderDevice& device);
+
+    // A shader of the renderer's own (src/gpu/renderer/shaders) in the device's format, from the DXIL
+    // and SPIR-V the build made of it (PASS_SHADER_CODE). Fatal when the device takes DXIL and the
+    // build has none.
+    std::unique_ptr<plume::RenderShader> CreatePassShader(plume::RenderDevice& device, std::span<const unsigned char> dxil,
+        std::span<const unsigned char> spirv);
 
     // The pipeline cache, where the application keeps the driver's compiled pipelines between runs
     // (Vulkan; D3D12 drivers keep their own). Its file holds the cache's data behind a header that

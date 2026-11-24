@@ -135,7 +135,7 @@ namespace gpu
         RecordedFrame frame;
         if (!ReadRecordedFrame(file, frame))
             return 1;
-        Settings settings = Settings::FromEnvironment();
+        Settings settings = Settings::FromStore();
         if (!settings.renderer)
         {
             Log("replay: error: ROAN_GPU_API=none, and a replay needs a renderer");

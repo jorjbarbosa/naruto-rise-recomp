@@ -5,14 +5,19 @@
 // ROAN_REPLAY=<recording> ROAN_REPLAY_OUT=<folder> draws a recorded frame instead (gpu/replay.h).
 
 #include "apu/xma.h"
+#include "game/game_options.h"
+#include "game/menu_entries.h"
 #include "gpu/replay.h"
 #include "host/debug.h"
 #include "host/input.h"
 #include "host/paths.h"
+#include "host/quit.h"
 #include "host/thread.h"
 #include "host/window.h"
 #include "kernel/kernel.h"
 #include "loader.h"
+#include "settings/settings.h"
+#include "ui/ui.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -61,7 +66,7 @@ namespace
         Log("running _xstart");
         kernel::RunMainThread(_xstart, kernel::g_module.stackSize);
         Log("_xstart returned");
-        host::RequestQuit();
+        host::Quit("_xstart returned");
     }
 }
 
@@ -90,7 +95,7 @@ int main(int argc, char** argv)
             Log("error: ROAN_REPLAY needs ROAN_REPLAY_OUT, the folder its images go to");
             return 1;
         }
-        if (!host::CreateMainWindow("roan-xenon replay", 1280, 720))
+        if (!host::CreateMainWindow("roan-xenon replay"))
             return 1;
         std::_Exit(gpu::RunReplay(replay, output));
     }
@@ -101,14 +106,21 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    kernel::SetPaths(gameDir.string(), (exeDir / "data" / "user").string());
+    fs::path userDir = exeDir / "data" / "user";
+    kernel::SetPaths(gameDir.string(), userDir.string());
+    // Before the executable, the window, the renderer and the guest read any setting.
+    settings::Load(userDir / "settings.toml");
     if (!LoadExecutable(gameDir / "default.xex"))
         return 1;
     // XAudioInitialize reads the XMA context base early in the title's startup.
     apu::InitializeXma();
 
-    if (!host::CreateMainWindow("roan-xenon", 1280, 720))
+    if (!host::CreateMainWindow("roan-xenon"))
         return 1;
+    settings::SetDisplayRefreshSource(host::DisplayRefreshMillihertz);
+    // Without it the game runs with no menus of the port's (logged), and its own Options.
+    if (ui::Initialize(host::MainWindow(), exeDir / "data" / "ui", gameDir))
+        game::menu::Install();
 
     if (!host::StartDetachedThread(host::kRecompiledStackSize, GuestMain))
     {
@@ -117,9 +129,10 @@ int main(int argc, char** argv)
     }
 
     if (host::RunEventLoop())
-        Log("window closed");
-    host::StopInput();
-    kernel::PrintImportSummary();
-    // Plain exit: guest threads are still running, so no static destructors.
-    std::_Exit(0);
+        host::Quit("window closed");
+    // The game's options changed in the menu and not saved yet (a quit with the menu open): the game
+    // saves them on its own thread, which still runs unless it is the one quitting.
+    game::options::SaveBeforeQuit(2.0);
+    // Every exit ends here: the window's, the menu's and the guest's (host/quit.h).
+    host::FinishQuit();
 }

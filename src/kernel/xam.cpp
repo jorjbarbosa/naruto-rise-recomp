@@ -3,6 +3,7 @@
 #include "kernel/xam.h"
 
 #include "host/input.h"
+#include "host/quit.h"
 #include "kernel/kernel.h"
 
 #include <deque>
@@ -257,18 +258,13 @@ GUEST_FUNC(XamLoaderSetLaunchData) { ctx.r3.u64 = X_ERROR_SUCCESS; }
 
 GUEST_FUNC(XamLoaderLaunchTitle)
 {
-    host::StopInput();
-    PrintImportSummary();
     Log("XamLoaderLaunchTitle(\"%s\"): the game wants to start another program", mem::String(ctx.r3.u32));
-    std::_Exit(0);
+    host::QuitFromGuest("the game launched another program");
 }
 
 GUEST_FUNC(XamLoaderTerminateTitle)
 {
-    host::StopInput();
-    PrintImportSummary();
-    Log("XamLoaderTerminateTitle: the game asked to quit");
-    std::_Exit(0);
+    host::QuitFromGuest("XamLoaderTerminateTitle, the game asked to quit");
 }
 
 // XamGetExecutionId(XEX_EXECUTION_ID**): points to the execution info of the XEX header.

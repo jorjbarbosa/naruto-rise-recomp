@@ -6,6 +6,7 @@
 #include "gpu/renderer/context.h"
 #include "gpu/renderer/passes.h"
 #include "gpu/renderer/targets.h"
+#include "gpu/renderer/ui_pass.h"
 #include "gpu/settings.h"
 #include "log.h"
 
@@ -28,13 +29,24 @@ namespace gpu
         constexpr uint32_t kRateToleranceMillihertz = 1000;
     }
 
-    Presenter::Presenter(Context& context, bool vsync) : context_(context), vsync_(vsync)
+    Presenter::Presenter(Context& context, bool vsync) : context_(context), vsync_(vsync), backdrop_(context)
     {
         // The identity ramp: 8-bit index i to 10-bit i * 1023 / 255, which the 8-bit back buffer
         // rounds back to i.
         for (uint32_t i = 0; i < 256; i++)
             for (uint32_t channel = 0; channel < 3; channel++)
                 ramp_[4 * i + channel] = (i * 1023 + 127) / 255;
+    }
+
+    void Presenter::SetVSync(bool vsync)
+    {
+        if (vsync == vsync_)
+            return;
+        vsync_ = vsync;
+        // Vulkan picks the present mode at the next resize, which needsResize asks for now.
+        swapChain_->setVsyncEnabled(vsync);
+        refreshMillihertz_ = 0; // the next present logs how frames are paced now
+        Log("gpu: vsync %s", vsync ? "on" : "off");
     }
 
     void Presenter::SetGammaRamp(const GammaRamp& ramp)
@@ -138,7 +150,16 @@ namespace gpu
         }
     }
 
-    void Presenter::Submit(const Passes& passes, ResolvedTexture* image, float stretch, uint32_t syncInterval)
+    Context::Upload Presenter::UploadRamp()
+    {
+        static_assert(sizeof(ramp_) == Passes::kRampBytes);
+        Context::Upload ramp = context_.Allocate(Passes::kRampBytes, Context::kConstantAlignment);
+        memcpy(ramp.data, ramp_.data(), sizeof(ramp_));
+        return ramp;
+    }
+
+    void Presenter::Submit(const Passes& passes, UiPass& ui, ResolvedTexture* image, float stretch, float blur,
+        uint32_t syncInterval)
     {
         plume::RenderCommandSemaphore* acquired = nullptr;
         uint32_t slot = 0;
@@ -169,6 +190,8 @@ namespace gpu
         plume::RenderCommandList& list = context_.Commands();
         if (image != nullptr)
             Targets::MakeReadable(list, *image);
+        uint32_t width = swapChain_->getWidth();
+        uint32_t height = swapChain_->getHeight();
         list.barriers(plume::RenderBarrierStage::GRAPHICS,
             plume::RenderTextureBarrier(backBuffer, plume::RenderTextureLayout::COLOR_WRITE));
         list.setFramebuffer(framebuffers_[index].get());
@@ -176,8 +199,6 @@ namespace gpu
         if (image != nullptr)
         {
             // The largest rectangle of the shown image's aspect ratio, centered.
-            uint32_t width = swapChain_->getWidth();
-            uint32_t height = swapChain_->getHeight();
             double shownWidth = double(image->width) * stretch;
             double scale = std::min(double(width) / shownWidth, double(height) / image->height);
             uint32_t fitWidth = std::clamp(uint32_t(std::lround(shownWidth * scale)), 1u, width);
@@ -188,11 +209,12 @@ namespace gpu
             const plume::RenderRect scissor(int32_t(x), int32_t(y), int32_t(x + fitWidth), int32_t(y + fitHeight));
             list.setViewports(&viewport, 1);
             list.setScissors(&scissor, 1);
-            static_assert(sizeof(ramp_) == Passes::kRampBytes);
-            Context::Upload ramp = context_.Allocate(Passes::kRampBytes, Context::kConstantAlignment);
-            memcpy(ramp.data, ramp_.data(), sizeof(ramp_));
-            passes.Present(list, *image->sampling, ramp.Reference());
+            passes.Present(list, *image->sampling, UploadRamp().Reference());
+            if (blur > 0.0f)
+                backdrop_.Compose(list, passes, blur);
         }
+        // Over the whole window, black bars included; not through the gamma ramp.
+        ui.Draw(list, width, height);
         list.barriers(plume::RenderBarrierStage::NONE,
             plume::RenderTextureBarrier(backBuffer, plume::RenderTextureLayout::PRESENT));
         plume::RenderCommandSemaphore* rendered = acquired != nullptr ? rendered_[index].get() : nullptr;
@@ -208,7 +230,7 @@ namespace gpu
         }
     }
 
-    void Presenter::Present(const Passes& passes, ResolvedTexture* image, float stretch, uint32_t vblanks,
+    void Presenter::Present(const Passes& passes, UiPass& ui, ResolvedTexture* image, float stretch, uint32_t vblanks,
         uint32_t refreshMillihertz, const std::function<void(bool paced)>& shown)
     {
         if (swapChain_->needsResize())
@@ -228,11 +250,21 @@ namespace gpu
             return;
         }
 
+        // The blurred image behind the UI, made once for all the presents of this image: the targets
+        // keep it across the submissions.
+        const float blur = image != nullptr ? ui.Blur() : 0.0f;
+        if (blur > 0.0f)
+        {
+            plume::RenderCommandList& list = context_.Commands();
+            Targets::MakeReadable(list, *image);
+            backdrop_.Prepare(list, passes, *image, UploadRamp().Reference());
+        }
+
         uint32_t refreshes = vblanks * RefreshMultiple(refreshMillihertz);
         if (refreshes == 0)
         {
             WaitForRoom();
-            Submit(passes, image, stretch, vsync_ ? 1 : 0);
+            Submit(passes, ui, image, stretch, blur, vsync_ ? 1 : 0);
             shown(false);
             return;
         }
@@ -244,7 +276,7 @@ namespace gpu
         for (uint32_t i = 0; i < presents; i++)
         {
             WaitForRoom();
-            Submit(passes, image, stretch, refreshes / presents + (i < refreshes % presents ? 1 : 0));
+            Submit(passes, ui, image, stretch, blur, refreshes / presents + (i < refreshes % presents ? 1 : 0));
             if (i == 0)
                 shown(true);
         }
