@@ -19,6 +19,7 @@
 #include "host/timing.h"
 #include "host/window.h"
 #include "kernel/kernel.h"
+#include "settings/settings.h"
 
 #include <algorithm>
 #include <atomic>
@@ -197,7 +198,7 @@ namespace gpu
     float WideStretch()
     {
         uint32_t width = 0, height = 0;
-        if (!ProcessSettings().ultrawide || !host::WindowPixelSize(width, height))
+        if (!::settings::Ultrawide() || !host::WindowPixelSize(width, height))
             return 1.0f;
         // The window's width over the width of a 16:9 picture of its height.
         float stretch = float(width) * 9.0f / (float(height) * 16.0f);

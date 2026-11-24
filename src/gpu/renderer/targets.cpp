@@ -191,6 +191,15 @@ namespace gpu
             RetireSurface(surfaces_.begin()->first);
     }
 
+    void Targets::SetSampleCounts(const SampleCounts& samples)
+    {
+        if (samples == samples_)
+            return;
+        samples_ = samples;
+        while (!surfaces_.empty())
+            RetireSurface(surfaces_.begin()->first);
+    }
+
     void Targets::RetireSurface(uint32_t key)
     {
         auto it = surfaces_.find(key);

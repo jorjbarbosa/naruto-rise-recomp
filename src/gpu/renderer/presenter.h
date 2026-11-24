@@ -31,14 +31,23 @@ namespace gpu
         // The ramp later presents map the image through; the identity until the title sets one.
         void SetGammaRamp(const GammaRamp& ramp);
 
-        // The size of the swap chain's images, the window's drawing area as the last present saw it;
-        // 0 while the window has no area (minimized).
-        uint32_t Width() const { return swapChain_->getWidth(); }
-        uint32_t Height() const { return swapChain_->getHeight(); }
+        // A rectangle of the swap chain's images (the window's drawing area as the last present saw
+        // it), in pixels.
+        struct Area
+        {
+            uint32_t x = 0, y = 0;
+            uint32_t width = 0, height = 0;
+        };
+        // Where an image of that size, shown stretch times wider than its own shape, goes in the
+        // window under the image fit: the largest rectangle of that shape, centered (Aspect); the whole
+        // window (Stretch); or the largest whole multiple of that shape's size, centered, as Aspect
+        // when not even 1 fits (Integer). Empty while the window has no area.
+        Area Shown(uint32_t imageWidth, uint32_t imageHeight, float stretch) const;
+        // The image fit of the next presents (Settings::imageFit).
+        void SetImageFit(ImageFit fit);
 
         // Submits the work recorded so far and presents the image, mapped through the gamma ramp,
-        // shown stretch times wider than its own shape, in the largest rectangle of that shape the
-        // window holds, centered with black bars; black without an image. The UI's frame is drawn over
+        // in the Shown area, with black bars around it; black without an image. The UI's frame is drawn over
         // the whole window (gpu/ui.h), and over the image the blur it asks for.
         // When the display can pace (vsync on, a swap chain with a sync interval, a window with an
         // area, refreshMillihertz within 1 Hz of a multiple k of 60 Hz) and vblanks != 0, the presents ask for vblanks x k refreshes since the
@@ -67,6 +76,7 @@ namespace gpu
 
         Context& context_;
         bool vsync_;
+        ImageFit fit_{};
         std::unique_ptr<plume::RenderSwapChain> swapChain_;
         std::vector<std::unique_ptr<plume::RenderFramebuffer>> framebuffers_;
         // With UsesPresentSemaphores: the semaphores the acquires signal, used in turn, each with the

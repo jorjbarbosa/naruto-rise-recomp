@@ -36,6 +36,9 @@ namespace gpu
         // (0: the title's).
         Textures(Context& context, Targets& targets, Descriptors& descriptors, uint32_t anisotropy);
 
+        // The filter of the trilinear fetches from now on, as in the constructor; moves Changes().
+        void SetAnisotropy(uint32_t anisotropy);
+
         // Creates the texture on first use and records the copy of every level and face.
         void Upload(const TextureUpload& upload);
         // Releases the textures uploaded from the GPU addresses [begin, end), once the GPU no longer
@@ -46,7 +49,8 @@ namespace gpu
         // hold for the draws that follow in the command list while Changes() stays the same.
         TextureBinding Bind(plume::RenderCommandList& list, const DrawTexture& texture);
         // A number that moves whenever Bind may answer differently for the same texture or has to
-        // record its barrier again: an upload, a release, or a change to the resolved textures.
+        // record its barrier again: an upload, a release, a filter change, or a change to the resolved
+        // textures.
         uint64_t Changes() const;
 
     private:
@@ -69,6 +73,6 @@ namespace gpu
         // The anisotropic field of SamplerState::filter the trilinear fetches take (0: the title's).
         uint32_t anisotropyField_ = 0;
         std::map<Key, std::unique_ptr<Texture>> textures_; // ordered by address, for Release
-        uint64_t changes_ = 0; // uploads and releases
+        uint64_t changes_ = 0; // uploads, releases and filter changes
     };
 }

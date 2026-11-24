@@ -60,6 +60,8 @@ namespace gpu
             return count;
         }
 
+        bool operator==(const SampleCounts&) const = default;
+
     private:
         uint32_t asked_ = 0;
         uint32_t supported_ = ~0u;
@@ -87,6 +89,9 @@ namespace gpu
         // at the new size on first use; a resolved texture is sampled as it is until its next
         // resolve replaces it (EnsureResolved).
         void SetScale(const Scale& scale);
+        // Makes the surfaces with other sample counts, between frames: they are retired and come back
+        // with the new count on first use. Resolved textures are single-sampled and stay.
+        void SetSampleCounts(const SampleCounts& samples);
 
         void Clear(const ClearOp& op);
         void Resolve(const ResolveOp& op);
@@ -159,7 +164,7 @@ namespace gpu
         const Passes& passes_;
         Descriptors& descriptors_;
         Scale scale_;
-        const SampleCounts samples_;
+        SampleCounts samples_;
         std::unordered_map<uint32_t, Surface> surfaces_;
         std::unordered_map<uint32_t, ResolvedAddress> resolved_;
         uint64_t resolvedChanges_ = 0;

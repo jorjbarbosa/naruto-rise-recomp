@@ -95,6 +95,8 @@ int main(int argc, char** argv)
             Log("error: ROAN_REPLAY needs ROAN_REPLAY_OUT, the folder its images go to");
             return 1;
         }
+        // The images depend on the environment only, never on the user's settings file.
+        settings::LoadDefaults();
         if (!host::CreateMainWindow("roan-xenon replay"))
             return 1;
         std::_Exit(gpu::RunReplay(replay, output));

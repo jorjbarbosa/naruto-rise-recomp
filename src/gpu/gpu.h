@@ -25,8 +25,8 @@ namespace gpu
     constexpr float kMinWideStretch = 1.01f;
     constexpr float kMaxWideStretch = 2.0f;
     // How many times wider than its own 16:9 the guest's frame is shown: the window's shape over 16:9
-    // from kMinWideStretch to kMaxWideStretch, and 1 for a narrower window, no window or
-    // ROAN_ULTRAWIDE=0. The guest always renders 1280x720: the Swap stretches the front buffer by
+    // from kMinWideStretch to kMaxWideStretch, and 1 for a narrower window, no window or the setting
+    // video.ultrawide off. The guest always renders 1280x720: the Swap stretches the front buffer by
     // this, and the game squeezes what it draws by the same amount (game/widescreen.cpp). Any thread.
     float WideStretch();
     // A span of a viewport's width, as shares of it from its left side.

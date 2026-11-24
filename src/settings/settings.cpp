@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -35,6 +36,8 @@ namespace settings
         constexpr int64_t kDisplayRate = -1;
         // The stored position of "center".
         constexpr int64_t kCenter = INT64_MIN;
+        // A Scale is stored in hundredths; "auto" as 0.
+        constexpr int64_t kScaleUnit = 100;
 
         enum class Kind : uint8_t
         {
@@ -45,6 +48,8 @@ namespace settings
             Text,     // a string
             Choice,   // one of the option's choices (or its alias), stored as its index
             Keys,     // an array of one or two SDL scancode names ("" for an empty slot), stored packed
+            Scale,    // "auto" (0), or a number from minimum to maximum hundredths, stored in hundredths; outside, clamped
+            Level,    // "game" (0), or one of the option's levels
         };
 
         // When a change applies, for the menu pages (phase 6).
@@ -66,7 +71,8 @@ namespace settings
             std::span<const char* const> choices = {};
             const char* alias = nullptr; // Choice: another name read as choices[aliasIndex]
             int64_t aliasIndex = 0;
-            int64_t minimum = 0, maximum = 0; // Integer, Position
+            std::span<const int64_t> levels = {}; // Level
+            int64_t minimum = 0, maximum = 0;     // Integer, Position, Scale
             const char* comment = nullptr;    // written above the key; lines separated by '\n'
         };
 
@@ -82,12 +88,22 @@ namespace settings
         constexpr uint32_t kXdkLanguages[] = { 1, 4, 5, 6, 3 };
         // In the order of WindowMode.
         constexpr const char* kWindowModes[] = { "windowed", "borderless" };
+        // In the order of ImageFit.
+        constexpr const char* kImageFits[] = { "aspect", "stretch", "integer" };
+        constexpr int64_t kMultisamplingLevels[] = { 1, 2, 4, 8 };
+        constexpr int64_t kAnisotropyLevels[] = { 1, 2, 4, 8, 16 };
 
         enum Id : size_t
         {
             kVSync,
             kFrameRate,
             kAdapter,
+            kResolutionScale,
+            kMultisampling,
+            kAnisotropy,
+            kTransparencyAa,
+            kUltrawide,
+            kImageFit,
             kWindowMode,
             kWindowWidth,
             kWindowHeight,
@@ -119,6 +135,28 @@ namespace settings
                 .apply = Apply::Restart, .defaultText = "",
                 .comment = "Graphics adapter, as named in the log; \"\": the default one. Applies at the next start.\n"
                            "ROAN_ADAPTER" },
+            { .table = "video", .key = "resolution_scale", .variable = "ROAN_RESOLUTION_SCALE", .kind = Kind::Scale,
+                .defaultNumber = kScaleUnit, .minimum = kScaleUnit, .maximum = 4 * kScaleUnit,
+                .comment = "The internal resolution as a multiple of the game's 1280x720, 1 to 4 (fractions allowed: 1.5\n"
+                           "is 1920x1080); \"auto\": the size the picture is shown at in the window. ROAN_RESOLUTION_SCALE" },
+            { .table = "video", .key = "msaa", .variable = "ROAN_MSAA", .kind = Kind::Level,
+                .levels = kMultisamplingLevels,
+                .comment = "\"game\": the game's own multisampling (2x and 4x); 1 (off), 2, 4, 8: in place of it, lowered\n"
+                           "to what the graphics card supports. ROAN_MSAA" },
+            { .table = "video", .key = "anisotropy", .variable = "ROAN_ANISOTROPY", .kind = Kind::Level,
+                .levels = kAnisotropyLevels,
+                .comment = "\"game\": the game's own texture filters; 1 (off), 2, 4, 8, 16: the anisotropic filter of the\n"
+                           "game's textures. ROAN_ANISOTROPY" },
+            { .table = "video", .key = "transparency_aa", .variable = "ROAN_TRANSPARENCY_AA", .kind = Kind::Bool,
+                .comment = "Smooth the cut-out edges of leaves, grass and hair (alpha to coverage) where multisampling\n"
+                           "is on. true, false. ROAN_TRANSPARENCY_AA" },
+            { .table = "video", .key = "ultrawide", .variable = "ROAN_ULTRAWIDE", .kind = Kind::Bool, .defaultNumber = 1,
+                .comment = "Fill a window wider than 16:9 (up to 32:9) instead of showing bars. true, false.\n"
+                           "ROAN_ULTRAWIDE" },
+            { .table = "video", .key = "image_fit", .variable = "ROAN_IMAGE_FIT", .kind = Kind::Choice,
+                .choices = kImageFits,
+                .comment = "How the picture fills the window: aspect (the largest rectangle of its shape), stretch (the\n"
+                           "whole window), integer (the largest whole multiple of its size, else aspect). ROAN_IMAGE_FIT" },
 
             { .table = "window", .key = "mode", .kind = Kind::Choice, .choices = kWindowModes,
                 .alias = "fullscreen", .aliasIndex = 1,
@@ -189,7 +227,9 @@ namespace settings
 
         struct Value
         {
-            int64_t number = 0; // every kind but Text: Bool 0/1, Rate (0 game, -1 display), Choice index, Keys packed
+            // Every kind but Text: Bool 0/1, Rate (0 game, -1 display), Choice index, Keys packed, Scale
+            // hundredths (0 auto), Level (0 game).
+            int64_t number = 0;
             std::string text;   // Text
 
             bool operator==(const Value&) const = default;
@@ -290,6 +330,15 @@ namespace settings
                     text += ", " + Quote(KeyName(KeyAt(value.number, 1)));
                 return text + "]";
             }
+            case Kind::Scale:
+            {
+                if (value.number == 0)
+                    return "\"auto\"";
+                char text[32];
+                std::snprintf(text, sizeof(text), "%g", double(value.number) / kScaleUnit);
+                return text;
+            }
+            case Kind::Level: return value.number == 0 ? "\"game\"" : std::to_string(value.number);
             }
             return {};
         }
@@ -358,6 +407,37 @@ namespace settings
             return !digits.empty() && *end == '\0';
         }
 
+        bool ParseNumber(std::string_view text, double& number)
+        {
+            std::string digits(text);
+            char* end = nullptr;
+            number = std::strtod(digits.c_str(), &end);
+            return !digits.empty() && *end == '\0';
+        }
+
+        // A scale, rounded to the hundredth.
+        Parsed ScaleFromNumber(const Option& option, double scale, Value& value)
+        {
+            if (!std::isfinite(scale))
+                return Parsed::Invalid;
+            double hundredths = std::round(scale * kScaleUnit);
+            int64_t clamped = int64_t(std::clamp(hundredths, double(option.minimum), double(option.maximum)));
+            value.number = clamped;
+            if (double(clamped) == hundredths)
+                return Parsed::Ok;
+            Log("settings: %s %g outside %g to %g, using %g", Name(option).c_str(), scale,
+                double(option.minimum) / kScaleUnit, double(option.maximum) / kScaleUnit, double(clamped) / kScaleUnit);
+            return Parsed::Adjusted;
+        }
+
+        Parsed LevelFromNumber(const Option& option, int64_t level, Value& value)
+        {
+            if (std::find(option.levels.begin(), option.levels.end(), level) == option.levels.end())
+                return Parsed::Invalid;
+            value.number = level;
+            return Parsed::Ok;
+        }
+
         // A value from text: the environment, and the strings of the file.
         Parsed FromText(const Option& option, std::string_view text, Value& value)
         {
@@ -408,6 +488,23 @@ namespace settings
                 return Parsed::Invalid;
             case Kind::Keys:
                 return Parsed::Invalid;
+            case Kind::Scale:
+            {
+                if (Equal(text, "auto"))
+                {
+                    value.number = 0;
+                    return Parsed::Ok;
+                }
+                double scale = 0.0;
+                return ParseNumber(text, scale) ? ScaleFromNumber(option, scale, value) : Parsed::Invalid;
+            }
+            case Kind::Level:
+                if (Equal(text, "game"))
+                {
+                    value.number = 0;
+                    return Parsed::Ok;
+                }
+                return ParseInteger(text, number) ? LevelFromNumber(option, number, value) : Parsed::Invalid;
             }
             return Parsed::Invalid;
         }
@@ -472,6 +569,21 @@ namespace settings
             case Kind::Keys:
                 if (const auto* array = node.as_array())
                     return KeysFromArray(*array, value);
+                return Parsed::Invalid;
+            case Kind::Scale:
+                if (const auto* integer = node.as_integer())
+                    return ScaleFromNumber(option, double(integer->get()), value);
+                if (const auto* floating = node.as_floating_point())
+                    return ScaleFromNumber(option, floating->get(), value);
+                // "auto"; a number in a string is not accepted.
+                if (const auto* string = node.as_string(); string != nullptr && Equal(string->get(), "auto"))
+                    return FromText(option, string->get(), value);
+                return Parsed::Invalid;
+            case Kind::Level:
+                if (const auto* integer = node.as_integer())
+                    return LevelFromNumber(option, integer->get(), value);
+                if (const auto* string = node.as_string(); string != nullptr && Equal(string->get(), "game"))
+                    return FromText(option, string->get(), value);
                 return Parsed::Invalid;
             }
             return Parsed::Invalid;
@@ -673,6 +785,12 @@ namespace settings
             case Setting::VSync: return kVSync;
             case Setting::FrameRate: return kFrameRate;
             case Setting::Adapter: return kAdapter;
+            case Setting::ResolutionScale: return kResolutionScale;
+            case Setting::Multisampling: return kMultisampling;
+            case Setting::Anisotropy: return kAnisotropy;
+            case Setting::TransparencyAa: return kTransparencyAa;
+            case Setting::Ultrawide: return kUltrawide;
+            case Setting::ImageFit: return kImageFit;
             case Setting::Volume: return kVolume;
             case Setting::AudioDevice: return kAudioDevice;
             case Setting::MuteInBackground: return kMuteInBackground;
@@ -686,6 +804,42 @@ namespace settings
         {
             const Option& option = kOptions[id];
             return Value{ option.defaultNumber, option.defaultText != nullptr ? option.defaultText : "" };
+        }
+
+        // The effective values: the stored ones, then the variables that are set. Logs the values not at
+        // their defaults.
+        void ApplyEnvironment()
+        {
+            g_effective = g_stored;
+            for (size_t i = 0; i < kCount; i++)
+            {
+                const Option& option = kOptions[i];
+                const char* variable = option.variable != nullptr ? std::getenv(option.variable) : nullptr;
+                if (variable == nullptr)
+                    continue;
+                Value value = g_effective[i];
+                if (FromText(option, variable, value) == Parsed::Invalid)
+                {
+                    Log("settings: %s=%s is not valid for %s, ignored", option.variable, variable, Name(option).c_str());
+                    continue;
+                }
+                g_effective[i] = value;
+                g_overridden[i] = true;
+            }
+
+            // The values not at their defaults, so the line stays short.
+            Values defaults = Defaults();
+            std::string summary;
+            for (size_t i = 0; i < kCount; i++)
+            {
+                if (g_effective[i] == defaults[i] && !g_overridden[i])
+                    continue;
+                summary += summary.empty() ? "" : ", ";
+                summary += Name(kOptions[i]) + " = " + ValueText(kOptions[i], g_effective[i]);
+                if (g_overridden[i])
+                    summary += std::string(" (") + kOptions[i].variable + ")";
+            }
+            Log("settings: %s", summary.empty() ? "all at their defaults" : (summary + "; the rest at their defaults").c_str());
         }
     }
 
@@ -740,39 +894,19 @@ namespace settings
             break;
         }
 
-        g_effective = g_stored;
-        for (size_t i = 0; i < kCount; i++)
-        {
-            const Option& option = kOptions[i];
-            const char* variable = option.variable != nullptr ? std::getenv(option.variable) : nullptr;
-            if (variable == nullptr)
-                continue;
-            Value value = g_effective[i];
-            if (FromText(option, variable, value) == Parsed::Invalid)
-            {
-                Log("settings: %s=%s is not valid for %s, ignored", option.variable, variable, Name(option).c_str());
-                continue;
-            }
-            g_effective[i] = value;
-            g_overridden[i] = true;
-        }
-
-        // The values not at their defaults, so the line stays short.
-        Values defaults = Defaults();
-        std::string summary;
-        for (size_t i = 0; i < kCount; i++)
-        {
-            if (g_effective[i] == defaults[i] && !g_overridden[i])
-                continue;
-            summary += summary.empty() ? "" : ", ";
-            summary += Name(kOptions[i]) + " = " + ValueText(kOptions[i], g_effective[i]);
-            if (g_overridden[i])
-                summary += std::string(" (") + kOptions[i].variable + ")";
-        }
-        Log("settings: %s", summary.empty() ? "all at their defaults" : (summary + "; the rest at their defaults").c_str());
-
+        ApplyEnvironment();
         if (rewrite && !g_newer && !g_unreadable)
             Save();
+    }
+
+    void LoadDefaults()
+    {
+        g_file.clear();
+        g_stored = Defaults();
+        g_overridden = {};
+        g_document = {};
+        g_changed = false;
+        ApplyEnvironment();
     }
 
     bool Save()
@@ -838,6 +972,36 @@ namespace settings
     const std::string& Adapter()
     {
         return g_effective[kAdapter].text;
+    }
+
+    float ResolutionScale()
+    {
+        return float(Number(kResolutionScale)) / float(kScaleUnit);
+    }
+
+    uint32_t Multisampling()
+    {
+        return uint32_t(Number(kMultisampling));
+    }
+
+    uint32_t Anisotropy()
+    {
+        return uint32_t(Number(kAnisotropy));
+    }
+
+    bool TransparencyAa()
+    {
+        return Number(kTransparencyAa) != 0;
+    }
+
+    bool Ultrawide()
+    {
+        return Number(kUltrawide) != 0;
+    }
+
+    ImageFit GetImageFit()
+    {
+        return ImageFit(Number(kImageFit));
     }
 
     WindowMode GetWindowMode()
@@ -965,6 +1129,43 @@ namespace settings
     void SetAdapter(const std::string& adapter)
     {
         Set(kAdapter, Value{ 0, adapter });
+    }
+
+    void SetResolutionScale(float scale)
+    {
+        const Option& option = kOptions[kResolutionScale];
+        int64_t hundredths = scale == 0.0f ? 0
+            : std::clamp<int64_t>(int64_t(std::llround(double(scale) * kScaleUnit)), option.minimum, option.maximum);
+        Set(kResolutionScale, Value{ hundredths });
+    }
+
+    void SetMultisampling(uint32_t samples)
+    {
+        Value value;
+        if (samples == 0 || LevelFromNumber(kOptions[kMultisampling], samples, value) == Parsed::Ok)
+            Set(kMultisampling, value);
+    }
+
+    void SetAnisotropy(uint32_t anisotropy)
+    {
+        Value value;
+        if (anisotropy == 0 || LevelFromNumber(kOptions[kAnisotropy], anisotropy, value) == Parsed::Ok)
+            Set(kAnisotropy, value);
+    }
+
+    void SetTransparencyAa(bool on)
+    {
+        Set(kTransparencyAa, Value{ on ? 1 : 0 });
+    }
+
+    void SetUltrawide(bool on)
+    {
+        Set(kUltrawide, Value{ on ? 1 : 0 });
+    }
+
+    void SetImageFit(ImageFit fit)
+    {
+        Set(kImageFit, Value{ int64_t(fit) });
     }
 
     Language StoredGameLanguage()

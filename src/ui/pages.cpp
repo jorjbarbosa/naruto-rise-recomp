@@ -7,6 +7,7 @@
 #include "game/menu_entries.h"
 #include "gpu/gpu.h"
 #include "gpu/renderer/renderer.h"
+#include "gpu/settings.h"
 #include "host/audio.h"
 #include "host/input.h"
 #include "host/window.h"
@@ -20,6 +21,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <functional>
 #include <string>
@@ -130,6 +132,36 @@ namespace ui::pages
             game::interpolation::clock::RequestRate(settings::FrameRate());
         }
 
+        void ApplyResolutionScale()
+        {
+            if (gpu::Renderer* renderer = gpu::ActiveRenderer())
+                renderer->SetResolutionScale(settings::ResolutionScale());
+        }
+
+        void ApplyMultisampling()
+        {
+            if (gpu::Renderer* renderer = gpu::ActiveRenderer())
+                renderer->SetMultisampling(settings::Multisampling());
+        }
+
+        void ApplyAnisotropy()
+        {
+            if (gpu::Renderer* renderer = gpu::ActiveRenderer())
+                renderer->SetAnisotropy(settings::Anisotropy());
+        }
+
+        void ApplyTransparencyAa()
+        {
+            if (gpu::Renderer* renderer = gpu::ActiveRenderer())
+                renderer->SetTransparencyAa(settings::TransparencyAa());
+        }
+
+        void ApplyImageFit()
+        {
+            if (gpu::Renderer* renderer = gpu::ActiveRenderer())
+                renderer->SetImageFit(gpu::ToImageFit(settings::GetImageFit()));
+        }
+
         std::string LockedBy(Setting setting)
         {
             if (!settings::IsOverridden(setting))
@@ -213,6 +245,47 @@ namespace ui::pages
             return rates;
         }
 
+        // The resolution scales offered (0: auto), with a stored one that is not among them in its place.
+        std::vector<float> ResolutionScales()
+        {
+            std::vector<float> scales = { 0.0f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f };
+            float stored = settings::ResolutionScale();
+            if (std::find(scales.begin(), scales.end(), stored) == scales.end())
+                scales.insert(std::find_if(scales.begin() + 1, scales.end(), [&](float scale) { return scale > stored; }),
+                    stored);
+            return scales;
+        }
+
+        std::string ScaleName(float scale)
+        {
+            if (scale == 0.0f)
+                return "AUTO";
+            char text[32];
+            std::snprintf(text, sizeof(text), "%gX (%dP)", double(scale), int(std::lround(720.0 * scale)));
+            return text;
+        }
+
+        // A row choosing one of a list of numbers, 0 shown as zeroName and the others as "<n>X".
+        Row LevelChoice(std::string label, std::string description, Setting setting, std::vector<uint32_t> levels,
+            const char* zeroName, uint32_t (*get)(), void (*set)(uint32_t), void (*apply)())
+        {
+            auto names = [levels, zeroName] {
+                std::vector<std::string> out;
+                for (uint32_t level : levels)
+                    out.push_back(level == 0 ? zeroName : level == 1 ? "OFF" : std::to_string(level) + "X");
+                return out;
+            };
+            auto index = [levels, get] {
+                auto at = std::find(levels.begin(), levels.end(), get());
+                return at == levels.end() ? 0 : int(at - levels.begin());
+            };
+            auto choose = [levels, set](int i) {
+                if (i >= 0 && i < int(levels.size()))
+                    set(levels[size_t(i)]);
+            };
+            return PortChoice(std::move(label), std::move(description), setting, names, index, choose, apply);
+        }
+
         std::vector<Row> GameRows()
         {
             std::vector<Row> rows;
@@ -247,7 +320,7 @@ namespace ui::pages
 
             Row size;
             size.label = "WINDOW SIZE";
-            size.description = "The window's size in windowed mode. The game draws at 1280 x 720 and is scaled to it.";
+            size.description = "The window's size in windowed mode.";
             size.choices = [] {
                 std::vector<std::string> names;
                 for (const host::WindowSize& size : host::WindowSizes())
@@ -313,6 +386,62 @@ namespace ui::pages
                 ApplyFrameRate));
 
             rows.push_back(GameBar("BRIGHTNESS", "The game's brightness.", game::options::kBrightness, 6, 2, 10));
+
+            rows.push_back(PortChoice("RESOLUTION",
+                "The resolution the game is drawn at, as a multiple of its own 1280 x 720; in a window wider than "
+                "16:9 the width grows with the picture. AUTO: the size the picture is shown at in the window. "
+                "Higher is sharper and smoother, and costs more of the graphics card.",
+                Setting::ResolutionScale,
+                [] {
+                    std::vector<std::string> names;
+                    for (float scale : ResolutionScales())
+                        names.push_back(ScaleName(scale));
+                    return names;
+                },
+                [] {
+                    std::vector<float> scales = ResolutionScales();
+                    return int(std::find(scales.begin(), scales.end(), settings::ResolutionScale()) - scales.begin());
+                },
+                [](int index) {
+                    std::vector<float> scales = ResolutionScales();
+                    if (index >= 0 && index < int(scales.size()))
+                        settings::SetResolutionScale(scales[size_t(index)]);
+                },
+                ApplyResolutionScale));
+
+            rows.push_back(LevelChoice("ANTI-ALIASING",
+                "Multisampling: smooths the edges of polygons. GAME: the game's own (4x on the scene). Lowered to "
+                "what the graphics card supports.",
+                Setting::Multisampling, { 0, 1, 2, 4, 8 }, "GAME", settings::Multisampling,
+                settings::SetMultisampling, ApplyMultisampling));
+
+            Row transparency = PortChoice("TRANSPARENCY AA",
+                "Smooths the cut-out edges of leaves, grass and hair, where anti-aliasing is on.",
+                Setting::TransparencyAa, nullptr, [] { return settings::TransparencyAa() ? 1 : 0; },
+                [](int value) { settings::SetTransparencyAa(value != 0); }, ApplyTransparencyAa);
+            transparency.control = Control::Toggle;
+            rows.push_back(std::move(transparency));
+
+            rows.push_back(LevelChoice("TEXTURE FILTERING",
+                "Anisotropic filtering: keeps the ground and walls sharp when seen at a grazing angle. GAME: the "
+                "game's own filters.",
+                Setting::Anisotropy, { 0, 1, 2, 4, 8, 16 }, "GAME", settings::Anisotropy, settings::SetAnisotropy,
+                ApplyAnisotropy));
+
+            Row wide = PortChoice("WIDE PICTURE",
+                "In a window wider than 16:9 (up to 32:9), the picture fills it and shows more on the sides. Off, "
+                "the picture keeps 16:9.",
+                Setting::Ultrawide, nullptr, [] { return settings::Ultrawide() ? 1 : 0; },
+                [](int value) { settings::SetUltrawide(value != 0); }, nullptr);
+            wide.control = Control::Toggle;
+            rows.push_back(std::move(wide));
+
+            rows.push_back(PortChoice("IMAGE FIT",
+                "How the picture fills the window. KEEP ASPECT: as large as its shape allows. STRETCH: the whole "
+                "window. INTEGER: a whole multiple of its size, for sharp pixels.",
+                Setting::ImageFit, [] { return std::vector<std::string>{ "KEEP ASPECT", "STRETCH", "INTEGER" }; },
+                [] { return int(settings::GetImageFit()); },
+                [](int index) { settings::SetImageFit(settings::ImageFit(index)); }, ApplyImageFit));
 
             rows.push_back(PortChoice("GRAPHICS CARD", "The graphics card the game draws with.", Setting::Adapter,
                 [] {

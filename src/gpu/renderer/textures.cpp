@@ -155,9 +155,16 @@ namespace gpu
     Textures::Textures(Context& context, Targets& targets, Descriptors& descriptors, uint32_t anisotropy)
         : context_(context), targets_(targets), descriptors_(descriptors)
     {
+        SetAnisotropy(anisotropy);
+    }
+
+    void Textures::SetAnisotropy(uint32_t anisotropy)
+    {
         // 1:1 is 1, each doubling one more.
+        anisotropyField_ = 0;
         for (uint32_t ratio = anisotropy; ratio != 0; ratio >>= 1)
             anisotropyField_++;
+        changes_++;
     }
 
     uint64_t Textures::Changes() const

@@ -49,6 +49,32 @@ namespace gpu
         Log("gpu: vsync %s", vsync ? "on" : "off");
     }
 
+    void Presenter::SetImageFit(ImageFit fit)
+    {
+        fit_ = fit;
+    }
+
+    Presenter::Area Presenter::Shown(uint32_t imageWidth, uint32_t imageHeight, float stretch) const
+    {
+        uint32_t width = swapChain_->getWidth();
+        uint32_t height = swapChain_->getHeight();
+        if (width == 0 || height == 0 || imageWidth == 0 || imageHeight == 0)
+            return {};
+        if (fit_ == ImageFit::Stretch)
+            return { 0, 0, width, height };
+        double shownWidth = double(imageWidth) * stretch;
+        double scale = std::min(double(width) / shownWidth, double(height) / imageHeight);
+        // The largest whole multiple, when at least the image's own size fits.
+        if (fit_ == ImageFit::Integer && scale >= 1.0)
+            scale = std::floor(scale);
+        Area area;
+        area.width = std::clamp(uint32_t(std::lround(shownWidth * scale)), 1u, width);
+        area.height = std::clamp(uint32_t(std::lround(imageHeight * scale)), 1u, height);
+        area.x = (width - area.width) / 2;
+        area.y = (height - area.height) / 2;
+        return area;
+    }
+
     void Presenter::SetGammaRamp(const GammaRamp& ramp)
     {
         for (uint32_t channel = 0; channel < 3; channel++)
@@ -59,6 +85,7 @@ namespace gpu
     std::unique_ptr<Presenter> Presenter::Create(Context& context, void* window, const Settings& settings)
     {
         std::unique_ptr<Presenter> presenter(new Presenter(context, settings.vsync));
+        presenter->fit_ = settings.imageFit;
         plume::RenderSwapChain* swapChain = (presenter->swapChain_ = CreateSwapChain(context.Queue(),
             static_cast<plume::RenderWindow>(window), kFormat, kSwapBuffers, kFrameLatency)).get();
         if (!IsCreated(swapChain))
@@ -198,15 +225,11 @@ namespace gpu
         list.clearColor(0, plume::RenderColor(0.0f, 0.0f, 0.0f, 1.0f));
         if (image != nullptr)
         {
-            // The largest rectangle of the shown image's aspect ratio, centered.
-            double shownWidth = double(image->width) * stretch;
-            double scale = std::min(double(width) / shownWidth, double(height) / image->height);
-            uint32_t fitWidth = std::clamp(uint32_t(std::lround(shownWidth * scale)), 1u, width);
-            uint32_t fitHeight = std::clamp(uint32_t(std::lround(image->height * scale)), 1u, height);
-            uint32_t x = (width - fitWidth) / 2;
-            uint32_t y = (height - fitHeight) / 2;
-            const plume::RenderViewport viewport{ float(x), float(y), float(fitWidth), float(fitHeight) };
-            const plume::RenderRect scissor(int32_t(x), int32_t(y), int32_t(x + fitWidth), int32_t(y + fitHeight));
+            const Area shown = Shown(image->width, image->height, stretch);
+            const plume::RenderViewport viewport{ float(shown.x), float(shown.y), float(shown.width),
+                float(shown.height) };
+            const plume::RenderRect scissor(int32_t(shown.x), int32_t(shown.y), int32_t(shown.x + shown.width),
+                int32_t(shown.y + shown.height));
             list.setViewports(&viewport, 1);
             list.setScissors(&scissor, 1);
             passes.Present(list, *image->sampling, UploadRamp().Reference());

@@ -17,6 +17,7 @@
 
 namespace gpu
 {
+    enum class ImageFit;
     struct Settings;
 
     // A guest render target or depth-stencil surface. The host keeps one persistent texture per
@@ -442,6 +443,17 @@ namespace gpu
         void SetGammaRamp(const GammaRamp& ramp);
         // Whether the presents posted after it wait for the vertical blank (video.vsync).
         void SetVSync(bool vsync);
+
+        // The image quality settings while running (the settings page), as in Settings. The resolution
+        // scale and the sample count apply between frames once they have stayed the same for a moment,
+        // as a window resize does (the surfaces are made again on first use, and a new sample count
+        // makes its pipelines at the draws that need them); the others apply to what is posted after
+        // them.
+        void SetResolutionScale(float scale);
+        void SetMultisampling(uint32_t msaa);
+        void SetAnisotropy(uint32_t anisotropy);
+        void SetTransparencyAa(bool on);
+        void SetImageFit(ImageFit fit);
         // The graphics adapters as named in the log (and in video.adapter), once a renderer was
         // created. Any thread.
         static std::vector<std::string> AdapterNames();

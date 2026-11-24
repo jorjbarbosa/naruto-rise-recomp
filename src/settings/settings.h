@@ -11,7 +11,7 @@
 // value, or the variable's when it is set: what the accessors return). Load runs on the main thread
 // before any other thread exists. Afterwards the values change through the setters, on the main
 // thread (the window's as it moves, the others from the menu pages). The window's values and the text
-// values are read on the main thread only; the numbers (bool, rate, integer, choice, keys) may be read
+// values are read on the main thread only; the numbers (bool, rate, integer, choice, keys, scale, level) may be read
 // from any thread. A setter changes the stored value, and the effective one unless the option applies
 // at the next start; it does not apply the change: the caller tells the value's owner. Before Load the
 // accessors return the defaults.
@@ -38,6 +38,14 @@ namespace settings
         Borderless, // fullscreen on the window's monitor, without a display mode change
     };
 
+    // How the picture fills the window.
+    enum class ImageFit : uint8_t
+    {
+        Aspect,  // the largest rectangle of its shape, with bars
+        Stretch, // the whole window
+        Integer, // the largest whole multiple of its size that fits, else as Aspect
+    };
+
     // The pad inputs the keyboard can drive, in the order of the [keyboard] table.
     enum class PadInput : uint8_t
     {
@@ -60,6 +68,9 @@ namespace settings
     // invalid or lacked a key (a file of a newer version is never written). Logs the values that are
     // not at their defaults. Main thread, once, before the window, the renderer and the guest start.
     void Load(const std::filesystem::path& file);
+    // The defaults with the environment applied, without a file (never written): for a replay, whose
+    // images must not depend on the user's settings. Main thread, once, in place of Load.
+    void LoadDefaults();
 
     // Writes the stored values to the file given to Load, keeping the keys this build does not know.
     // Main thread. False when nothing was written (logged).
@@ -78,6 +89,21 @@ namespace settings
     uint32_t FrameRate();
     // video.adapter: the graphics adapter as named in the log; empty for the default one.
     const std::string& Adapter();
+    // video.resolution_scale: the internal resolution over the title's 1280x720, 1 to 4 to the
+    // hundredth; 0 for "auto" (the size the picture is shown at).
+    float ResolutionScale();
+    // video.msaa: the sample count in place of the title's multisampled ones (1, 2, 4, 8); 0 for the
+    // title's.
+    uint32_t Multisampling();
+    // video.anisotropy: the anisotropic filter of the title's trilinear fetches (1, 2, 4, 8, 16); 0
+    // for the title's.
+    uint32_t Anisotropy();
+    // video.transparency_aa: alpha to coverage for the alpha-tested draws into multisampled targets.
+    bool TransparencyAa();
+    // video.ultrawide: a window wider than 16:9 is filled.
+    bool Ultrawide();
+    // video.image_fit.
+    ImageFit GetImageFit();
 
     // window.*: main thread only.
     WindowMode GetWindowMode();
@@ -112,6 +138,12 @@ namespace settings
         VSync,
         FrameRate,
         Adapter,
+        ResolutionScale,
+        Multisampling,
+        Anisotropy,
+        TransparencyAa,
+        Ultrawide,
+        ImageFit,
         Volume,
         AudioDevice,
         MuteInBackground,
@@ -133,6 +165,14 @@ namespace settings
     // The stored adapter and language: what the next start uses.
     const std::string& StoredAdapter();
     void SetAdapter(const std::string& adapter);
+    // 0 for "auto"; otherwise clamped to 1 to 4 and rounded to the hundredth.
+    void SetResolutionScale(float scale);
+    // 0 for the title's; a value that is not a level is ignored.
+    void SetMultisampling(uint32_t samples);
+    void SetAnisotropy(uint32_t anisotropy);
+    void SetTransparencyAa(bool on);
+    void SetUltrawide(bool on);
+    void SetImageFit(ImageFit fit);
     Language StoredGameLanguage();
     void SetGameLanguage(Language language);
     void SetVolume(uint32_t volume);

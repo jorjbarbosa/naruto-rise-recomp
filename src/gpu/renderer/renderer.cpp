@@ -59,9 +59,8 @@ namespace gpu
             return samples;
         }
 
-        // How long the scale the window asks for must stay the same before the targets follow it: a
-        // resize drags the window through many sizes, and each change of scale makes the surfaces
-        // again.
+        // How long the mode the window and the settings ask for must stay the same before the targets
+        // follow it: each change of scale or sample count makes the surfaces again.
         constexpr auto kShapeSettle = std::chrono::milliseconds(300);
 
         // The scale of the resolution scale asked for in a picture stretched that much wider than
@@ -208,46 +207,49 @@ namespace gpu
         Renderer::BeforePost beforePost;
 
         // What the targets are made for (owner thread): the vertical resolution scale and the stretch
-        // of the picture (gpu::WideStretch), the horizontal one being their product.
-        struct ScaleMode
+        // of the picture (gpu::WideStretch), the horizontal one being their product, and the sample
+        // count asked for (Settings::msaa).
+        struct TargetMode
         {
             float factor = 1.0f;
             float stretch = 1.0f;
-            bool operator==(const ScaleMode&) const = default;
+            uint32_t msaa = 0;
+            bool operator==(const TargetMode&) const = default;
         };
 
-        // The scale follows the window (owner thread): Settings::resolutionScale, the mode the targets
-        // are made for, and a mode waiting to settle.
+        // The targets follow the window and the settings (owner thread): Settings::resolutionScale
+        // and msaa as last set, the mode the targets are made for, and a mode waiting to settle.
         float resolutionScale = 1.0f;
-        ScaleMode mode;
-        std::optional<ScaleMode> pendingMode;
+        uint32_t msaa = 0;
+        TargetMode mode;
+        std::optional<TargetMode> pendingMode;
         std::chrono::steady_clock::time_point pendingSince;
 
-        // The mode the window asks for: the settings' factor, or with auto the size the picture of
-        // that stretch is shown at (the largest rectangle of its shape in the window) over the
-        // title's, from 1 to 4. A window without an area keeps the current factor.
-        ScaleMode WantedMode(float stretch) const
+        // The mode the window and the settings ask for: the settings' factor, or with auto the height
+        // the picture of that stretch is shown at in the window (Presenter::Shown) over the title's,
+        // from 1 to 4. A window without an area keeps the current factor.
+        TargetMode WantedMode(float stretch) const
         {
-            ScaleMode wanted{ resolutionScale, stretch };
+            TargetMode wanted{ resolutionScale, stretch, msaa };
             if (resolutionScale != Settings::kAutoResolutionScale)
                 return wanted;
-            uint32_t width = presenter->Width();
-            uint32_t height = presenter->Height();
-            if (width == 0 || height == 0)
+            Presenter::Area shown = presenter->Shown(kVideoWidth, kVideoHeight, stretch);
+            if (shown.height == 0)
             {
                 wanted.factor = mode.factor;
                 return wanted;
             }
-            float shown = std::min(float(width) / (kVideoWidth * stretch), float(height) / kVideoHeight);
-            wanted.factor = std::clamp(shown, Settings::kMinResolutionScale, Settings::kMaxResolutionScale);
+            wanted.factor = std::clamp(float(shown.height) / kVideoHeight, Settings::kMinResolutionScale,
+                Settings::kMaxResolutionScale);
             return wanted;
         }
 
-        // After a present: once the window has asked for another mode for kShapeSettle, the targets
-        // and the draws are made at its scale, from the next frame on.
-        void FollowWindow(float stretch)
+        // After a present: once another mode has been asked for for kShapeSettle (a resize drags the
+        // window through many sizes, the settings page steps through the choices between), the
+        // targets and the draws are made in it from the next frame on.
+        void AfterPresent(float stretch)
         {
-            ScaleMode wanted = WantedMode(stretch);
+            TargetMode wanted = WantedMode(stretch);
             if (wanted == mode)
             {
                 pendingMode.reset();
@@ -262,11 +264,16 @@ namespace gpu
             }
             if (now - pendingSince < kShapeSettle)
                 return;
+            if (wanted.msaa != mode.msaa)
+                targets->SetSampleCounts(ChooseSampleCounts(wanted.msaa, context->Device()));
+            if (wanted.factor != mode.factor || wanted.stretch != mode.stretch)
+            {
+                Scale scale = ChooseScale(wanted.factor, wanted.stretch, context->Device());
+                targets->SetScale(scale);
+                draws->SetScale(scale);
+            }
             mode = wanted;
             pendingMode.reset();
-            Scale scale = ChooseScale(mode.factor, mode.stretch, context->Device());
-            targets->SetScale(scale);
-            draws->SetScale(scale);
         }
 
         // Presents: numbered as they are posted, and the last one the owner handed to the swap chain.
@@ -391,9 +398,10 @@ namespace gpu
         if (!impl->presenter)
             return nullptr;
         impl->resolutionScale = settings.resolutionScale;
+        impl->msaa = settings.msaa;
         impl->mode = impl->WantedMode(1.0f);
         const Scale scale = ChooseScale(impl->mode.factor, impl->mode.stretch, impl->context->Device());
-        const SampleCounts samples = ChooseSampleCounts(settings.msaa, impl->context->Device());
+        const SampleCounts samples = ChooseSampleCounts(impl->mode.msaa, impl->context->Device());
         impl->descriptors = std::make_unique<Descriptors>(*impl->context);
         impl->passes = std::make_unique<Passes>(*impl->context, Presenter::kFormat);
         impl->ui = std::make_unique<UiPass>(*impl->context, *impl->passes, Presenter::kFormat);
@@ -540,7 +548,7 @@ namespace gpu
                         impl->presentDone.notify_all();
                     });
                 impl->ui->EndPresent();
-                impl->FollowWindow(stretch);
+                impl->AfterPresent(stretch);
             }))
             return 0;
         return present;
@@ -562,6 +570,40 @@ namespace gpu
     void Renderer::SetVSync(bool vsync)
     {
         impl_->Post([impl = impl_.get(), vsync] { impl->presenter->SetVSync(vsync); });
+    }
+
+    void Renderer::SetResolutionScale(float scale)
+    {
+        impl_->Post([impl = impl_.get(), scale] { impl->resolutionScale = scale; });
+    }
+
+    void Renderer::SetMultisampling(uint32_t msaa)
+    {
+        impl_->Post([impl = impl_.get(), msaa] { impl->msaa = msaa; });
+    }
+
+    void Renderer::SetAnisotropy(uint32_t anisotropy)
+    {
+        impl_->Post([impl = impl_.get(), anisotropy] {
+            if (anisotropy != 0)
+                Log("gpu: anisotropic filtering %ux on the title's trilinear textures", anisotropy);
+            else
+                Log("gpu: texture filters as the title asks");
+            impl->textures->SetAnisotropy(anisotropy);
+        });
+    }
+
+    void Renderer::SetTransparencyAa(bool on)
+    {
+        impl_->Post([impl = impl_.get(), on] {
+            Log("gpu: transparency anti-aliasing %s", on ? "on" : "off");
+            impl->draws->SetTransparencyAa(on);
+        });
+    }
+
+    void Renderer::SetImageFit(ImageFit fit)
+    {
+        impl_->Post([impl = impl_.get(), fit] { impl->presenter->SetImageFit(fit); });
     }
 
     std::vector<std::string> Renderer::AdapterNames()

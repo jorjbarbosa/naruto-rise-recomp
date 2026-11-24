@@ -49,6 +49,8 @@ namespace gpu
         void Draw(DrawOp& op);
         // The scale of the draws that follow, the targets' (Targets::SetScale).
         void SetScale(const Scale& scale);
+        // Settings::transparencyAa for the draws that follow.
+        void SetTransparencyAa(bool on) { transparencyAa_ = on; }
 
     private:
         // The constants of a stage uploaded for a draw of the open command list, which the draws after
@@ -105,7 +107,7 @@ namespace gpu
         const ConstantRing& vertexRing_;
         const ConstantRing& pixelRing_;
         Scale scale_;
-        const bool transparencyAa_;
+        bool transparencyAa_;
         std::unique_ptr<plume::RenderPipelineLayout> layout_;
         std::unique_ptr<Pipelines> pipelines_; // after layout_, which it uses
         ConstantUpload vertexConstants_;
