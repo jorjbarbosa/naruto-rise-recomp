@@ -21,6 +21,7 @@ namespace gpu
     {
         static constexpr float kMinResolutionScale = 1.0f;
         static constexpr float kMaxResolutionScale = 4.0f;
+        static constexpr float kAutoResolutionScale = 0.0f;
 
         // ROAN_GPU_API=d3d12|vulkan|none. d3d12 or vulkan picks the API; none turns the renderer off
         // (renderer below). Any other value, and d3d12 where it is not built (ROAN_D3D12, Windows only;
@@ -40,8 +41,9 @@ namespace gpu
         // ROAN_ULTRAWIDE=0: the picture stays 16:9, with bars in a window of another shape. Otherwise
         // a window wider than 16:9 is filled (gpu::WideStretch).
         bool ultrawide = true;
-        // ROAN_RESOLUTION_SCALE=<1 to 4>: the internal resolution, as a factor of the title's 1280x720
-        // (fractions allowed: 1.5 is 1920x1080). Out of range or not a number: logged, kept at 1.
+        // ROAN_RESOLUTION_SCALE=<1 to 4>|auto: the internal resolution, as a factor of the title's
+        // 1280x720 (fractions allowed: 1.5 is 1920x1080); auto (kAutoResolutionScale) follows the size
+        // the picture is shown at in the window, from 1 to 4. Anything else: logged, kept at 1.
         // Lowered to what the device's textures allow (Renderer::Create).
         float resolutionScale = 1.0f;
         // ROAN_MSAA=1|2|4|8: the sample count of every surface the title makes multisampled (its own
@@ -103,10 +105,12 @@ namespace gpu
             {
                 char* end = nullptr;
                 float scale = std::strtof(value, &end);
-                if (end != value && *end == '\0' && scale >= kMinResolutionScale && scale <= kMaxResolutionScale)
+                if (std::strcmp(value, "auto") == 0)
+                    settings.resolutionScale = kAutoResolutionScale;
+                else if (end != value && *end == '\0' && scale >= kMinResolutionScale && scale <= kMaxResolutionScale)
                     settings.resolutionScale = scale;
                 else
-                    Log("gpu: ROAN_RESOLUTION_SCALE=%s is not a number from %g to %g; the scale stays 1", value,
+                    Log("gpu: ROAN_RESOLUTION_SCALE=%s is not auto or a number from %g to %g; the scale stays 1", value,
                         double(kMinResolutionScale), double(kMaxResolutionScale));
             }
             if (const char* value = std::getenv("ROAN_MSAA"))

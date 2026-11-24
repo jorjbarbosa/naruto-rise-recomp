@@ -29,6 +29,11 @@ namespace gpu
         // The ramp later presents map the image through; the identity until the title sets one.
         void SetGammaRamp(const GammaRamp& ramp);
 
+        // The size of the swap chain's images, the window's drawing area as the last present saw it;
+        // 0 while the window has no area (minimized).
+        uint32_t Width() const { return swapChain_->getWidth(); }
+        uint32_t Height() const { return swapChain_->getHeight(); }
+
         // Submits the work recorded so far and presents the image, mapped through the gamma ramp,
         // shown stretch times wider than its own shape, in the largest rectangle of that shape the
         // window holds, centered with black bars; black without an image.

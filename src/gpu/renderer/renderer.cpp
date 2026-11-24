@@ -54,8 +54,8 @@ namespace gpu
             return samples;
         }
 
-        // How long the shape the presents ask for must stay the same before the scale follows it: a
-        // resize drags the window through many shapes, and each change of scale makes the surfaces
+        // How long the scale the window asks for must stay the same before the targets follow it: a
+        // resize drags the window through many sizes, and each change of scale makes the surfaces
         // again.
         constexpr auto kShapeSettle = std::chrono::milliseconds(300);
 
@@ -201,34 +201,64 @@ namespace gpu
         std::unique_ptr<FrameRecorder> recorder; // Settings::recordFrames
         Renderer::BeforePost beforePost;
 
-        // The scale follows the shape the presents ask for (owner thread): the resolution scale of
-        // the settings, times the stretch the targets are made for, and a stretch waiting to settle.
+        // What the targets are made for (owner thread): the vertical resolution scale and the stretch
+        // of the picture (gpu::WideStretch), the horizontal one being their product.
+        struct ScaleMode
+        {
+            float factor = 1.0f;
+            float stretch = 1.0f;
+            bool operator==(const ScaleMode&) const = default;
+        };
+
+        // The scale follows the window (owner thread): Settings::resolutionScale, the mode the targets
+        // are made for, and a mode waiting to settle.
         float resolutionScale = 1.0f;
-        float scaleStretch = 1.0f;
-        std::optional<float> pendingStretch;
+        ScaleMode mode;
+        std::optional<ScaleMode> pendingMode;
         std::chrono::steady_clock::time_point pendingSince;
 
-        // After a present: once the stretch has stayed at another value for kShapeSettle, the
-        // targets and the draws are made at the scale of it, from the next frame on.
-        void FollowShape(float stretch)
+        // The mode the window asks for: the settings' factor, or with auto the size the picture of
+        // that stretch is shown at (the largest rectangle of its shape in the window) over the
+        // title's, from 1 to 4. A window without an area keeps the current factor.
+        ScaleMode WantedMode(float stretch) const
         {
-            if (stretch == scaleStretch)
+            ScaleMode wanted{ resolutionScale, stretch };
+            if (resolutionScale != Settings::kAutoResolutionScale)
+                return wanted;
+            uint32_t width = presenter->Width();
+            uint32_t height = presenter->Height();
+            if (width == 0 || height == 0)
             {
-                pendingStretch.reset();
+                wanted.factor = mode.factor;
+                return wanted;
+            }
+            float shown = std::min(float(width) / (kVideoWidth * stretch), float(height) / kVideoHeight);
+            wanted.factor = std::clamp(shown, Settings::kMinResolutionScale, Settings::kMaxResolutionScale);
+            return wanted;
+        }
+
+        // After a present: once the window has asked for another mode for kShapeSettle, the targets
+        // and the draws are made at its scale, from the next frame on.
+        void FollowWindow(float stretch)
+        {
+            ScaleMode wanted = WantedMode(stretch);
+            if (wanted == mode)
+            {
+                pendingMode.reset();
                 return;
             }
             auto now = std::chrono::steady_clock::now();
-            if (pendingStretch != stretch)
+            if (pendingMode != wanted)
             {
-                pendingStretch = stretch;
+                pendingMode = wanted;
                 pendingSince = now;
                 return;
             }
             if (now - pendingSince < kShapeSettle)
                 return;
-            scaleStretch = stretch;
-            pendingStretch.reset();
-            Scale scale = ChooseScale(resolutionScale, stretch, context->Device());
+            mode = wanted;
+            pendingMode.reset();
+            Scale scale = ChooseScale(mode.factor, mode.stretch, context->Device());
             targets->SetScale(scale);
             draws->SetScale(scale);
         }
@@ -350,7 +380,8 @@ namespace gpu
         if (!impl->presenter)
             return nullptr;
         impl->resolutionScale = settings.resolutionScale;
-        const Scale scale = ChooseScale(impl->resolutionScale, impl->scaleStretch, impl->context->Device());
+        impl->mode = impl->WantedMode(1.0f);
+        const Scale scale = ChooseScale(impl->mode.factor, impl->mode.stretch, impl->context->Device());
         const SampleCounts samples = ChooseSampleCounts(settings.msaa, impl->context->Device());
         impl->descriptors = std::make_unique<Descriptors>(*impl->context);
         impl->passes = std::make_unique<Passes>(*impl->context, Presenter::kFormat);
@@ -494,7 +525,7 @@ namespace gpu
                         }
                         impl->presentDone.notify_all();
                     });
-                impl->FollowShape(stretch);
+                impl->FollowWindow(stretch);
             }))
             return 0;
         return present;
