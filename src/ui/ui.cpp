@@ -9,6 +9,7 @@
 #include "host/quit.h"
 #include "host/timing.h"
 #include "log.h"
+#include "ui/font_effects.h"
 #include "ui/game_archive.h"
 #include "ui/input.h"
 #include "ui/pages.h"
@@ -216,8 +217,15 @@ namespace ui
             state.width = width;
             state.height = height;
             state.context->SetDimensions(Rml::Vector2i(width, height));
-            state.context->SetDensityIndependentPixelRatio(
-                std::min(float(width) / kStageWidth, float(height) / kStageHeight));
+            float ratio = std::min(float(width) / kStageWidth, float(height) / kStageHeight);
+            state.context->SetDensityIndependentPixelRatio(ratio);
+            // The font effects' lengths are fixed when a style sheet is parsed (font_effects.h).
+            if (font_effects::SetDensityRatio(ratio))
+            {
+                Rml::Factory::ClearStyleSheetCache();
+                for (const Layer& layer : state.stack)
+                    layer.document->ReloadStyleSheet();
+            }
         }
 
         // Whether an element belongs to the top document (the only one input reaches).
@@ -553,6 +561,7 @@ namespace ui
             Log("ui: error: RmlUi does not start, no menus");
             return false;
         }
+        font_effects::Register();
 
         int fonts = 0;
         std::error_code error;
