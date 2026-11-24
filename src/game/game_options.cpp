@@ -3,6 +3,7 @@
 #include "game/game_options.h"
 
 #include "game/addresses.h"
+#include "game/guest_call.h"
 #include "loader.h"
 #include "log.h"
 #include "memory.h"
@@ -25,8 +26,8 @@ namespace game::options
 {
     namespace
     {
-        // The guest stack the procedures run on: this far below the main step's frame, with a scratch
-        // area for their results above their own frames.
+        // The guest stack the procedures run on (GuestCall): this far below the main step's frame,
+        // with a scratch area for their results above their own frames.
         constexpr uint32_t kStackGap = 1024;
         constexpr uint32_t kScratch = 512;
         // XN_SYS_UI 0 puts back the vibration switch the game saved when it paused (game-side-findings.md
@@ -52,16 +53,6 @@ namespace game::options
         std::atomic<bool> g_reapplyVibration{ false };
         bool g_changed = false;           // host main thread
         bool g_vibrationSet = false;      // host main thread: since Watch(true)
-
-        // A context for calling the procedures from the main step: the caller's registers, a stack
-        // below its frame.
-        PPCContext CallContext(const PPCContext& ctx, uint32_t& scratch)
-        {
-            PPCContext call = ctx;
-            call.r1.u64 = (ctx.r1.u32 - kStackGap) & ~15u;
-            scratch = call.r1.u32 + kScratch;
-            return call;
-        }
     }
 
     void Watch(bool watching)
@@ -161,8 +152,9 @@ namespace game::options
         if (queue.empty() && g_applyLater.empty() && !save && !watching)
             return;
 
-        uint32_t scratch = 0;
-        PPCContext call = CallContext(ctx, scratch);
+        GuestCall guest(ctx, kStackGap, kScratch);
+        PPCContext& call = guest.Context();
+        const uint32_t scratch = guest.Scratch();
         // fn_Option_SetValue (store, int* changed, index, value): clamps, stores and applies.
         for (auto [index, value] : queue)
         {

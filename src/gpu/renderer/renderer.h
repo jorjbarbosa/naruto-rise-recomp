@@ -439,6 +439,9 @@ namespace gpu
         // Whether the display paced the last present: a hint for the caller to wait for the next one
         // instead of pacing itself. Any thread.
         bool DisplayPaces() const;
+        // The vertical scale of the internal resolution the frames are drawn at now (Scale::Y; the
+        // horizontal one is it times the wide stretch). It changes between frames. Any thread.
+        float VerticalScale() const;
         // The ramp the presents posted after it map the front buffer through.
         void SetGammaRamp(const GammaRamp& ramp);
         // Whether the presents posted after it wait for the vertical blank (video.vsync).

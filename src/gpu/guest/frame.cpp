@@ -34,6 +34,7 @@ namespace gpu
 
         std::unique_ptr<Renderer> g_renderer;
         std::atomic<uint32_t> g_paceRate{ 0 }; // SetPaceRate
+        std::atomic<float> g_renderScale{ 1.0f }; // RenderScale: the renderer's, taken at each Swap
 
         // The title's presentation interval in 60 Hz vblanks; 0 for D3DPRESENT_INTERVAL_IMMEDIATE.
         uint32_t VblankInterval(uint32_t interval)
@@ -182,6 +183,8 @@ namespace gpu
         uint64_t present = g_renderer
             ? g_renderer->Present(front.address, WideStretch(), rate != 0 ? 0 : vblanks, host::DisplayRefreshMillihertz())
             : 0;
+        if (g_renderer)
+            g_renderScale.store(g_renderer->VerticalScale(), std::memory_order_relaxed);
         guest::EndTextureFrame();
         guest::EndBufferFrame();
         guest::EndWatchFrame();
@@ -193,6 +196,11 @@ namespace gpu
     void SetPaceRate(uint32_t rate)
     {
         g_paceRate.store(rate, std::memory_order_relaxed);
+    }
+
+    float RenderScale()
+    {
+        return g_renderScale.load(std::memory_order_relaxed);
     }
 
     float WideStretch()

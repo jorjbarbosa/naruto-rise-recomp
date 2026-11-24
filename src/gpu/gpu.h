@@ -29,6 +29,10 @@ namespace gpu
     // video.ultrawide off. The guest always renders 1280x720: the Swap stretches the front buffer by
     // this, and the game squeezes what it draws by the same amount (game/widescreen.cpp). Any thread.
     float WideStretch();
+    // The vertical scale of the internal resolution the frames are drawn at, over the guest's 1280x720
+    // (Renderer::VerticalScale), as of the last Swap; 1 before the first and without a renderer. It
+    // changes once a change of the window or of the setting has settled. Any thread.
+    float RenderScale();
     // A span of a viewport's width, as shares of it from its left side.
     struct DrawClip
     {

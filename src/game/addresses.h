@@ -74,8 +74,16 @@
 #define JADE_INTERFACE_MOVIE_DRAW sub_826A42B8 // draws a Flash movie item (r3 item, r4 the placement it is in)
 #define JADE_INTERFACE_IMAGE_DRAW sub_8264F1A0 // draws an item that is one quad (r3 item, r4 the placement it is in)
 #define JADE_INTERFACE_TEXT_DRAW sub_8264F768  // draws a text item (r3 item, r4 the placement it is in)
+#define JADE_MOVIE_DISPLAY sub_826B03E0        // the engine's movie wrapper displays its movie (r3 wrapper): places it, then the view's Display
 #define JADE_VIDEO_QUAD sub_820EC008           // a Bink video item's frame as a quad of the frame's size in device pixels (r3 video)
 #define JADE_VERTEX_ALLOCATE sub_82101C00      // r3 = room for a geometry's vertices in the frame's vertex memory (r3 geometry, r4 bytes, r5 stride)
+
+// Scaleform GFx 2.x, linked into default.xex (interface_resolution.cpp;
+// docs/development/plans/image-quality/e7-interface-resolution.md). The game never sets a viewport:
+// GFx's SetLevelMovie (821E05E0) sets each movie's to its stage size when the movie gets its level 0.
+#define GFX_SET_VIEWPORT sub_821E13B0  // GFxMovieRoot::SetViewport (r3 movie, r4 the GViewport), vtable +80
+#define GFX_MOVIE_DESTROY sub_821E2E70 // ~GFxMovieRoot (r3 movie), from the deleting destructor at vtable +0
+
 // The renderer's draw records: every draw the engine asks for fills one in the packet being built and
 // submits it; the render thread makes the device's draw of each record of the packet it was handed.
 #define JADE_RECORD_SUBMIT sub_820E7D40        // adds the packet's current record to its pass (r3 packet)
@@ -210,6 +218,31 @@ namespace game::jade
         constexpr uint32_t kNameFlags = 4;   // of the string object
         constexpr uint32_t kNameWide = 8;    // in kNameFlags: 16-bit characters
         constexpr uint32_t kMovie = 124;     // a movie item's movie, 0 until it is open
+    }
+
+    // The engine's movie wrapper (a movie item's kMovie).
+    namespace movie
+    {
+        constexpr uint32_t kView = 96; // its GFxMovieRoot, 0 until it is created
+    }
+
+    // GFx's GViewport, as SetViewport takes it: 13 words.
+    namespace gfx_viewport
+    {
+        constexpr uint32_t kBufferWidth = 0; // integers, pixels, as the rest up to kScale
+        constexpr uint32_t kBufferHeight = 4;
+        constexpr uint32_t kLeft = 8;
+        constexpr uint32_t kTop = 12;
+        constexpr uint32_t kWidth = 16;
+        constexpr uint32_t kHeight = 20;
+        constexpr uint32_t kScissorLeft = 24;
+        constexpr uint32_t kScissorTop = 28;
+        constexpr uint32_t kScissorWidth = 32;
+        constexpr uint32_t kScissorHeight = 36;
+        constexpr uint32_t kScale = 40;       // float
+        constexpr uint32_t kAspectRatio = 44; // float
+        constexpr uint32_t kFlags = 48;
+        constexpr uint32_t kSize = 52;
     }
 
     // A placement of the interface: 4 floats, left, top, width and height as shares of the screen.

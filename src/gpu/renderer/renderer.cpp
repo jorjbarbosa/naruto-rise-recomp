@@ -224,6 +224,7 @@ namespace gpu
         TargetMode mode;
         std::optional<TargetMode> pendingMode;
         std::chrono::steady_clock::time_point pendingSince;
+        std::atomic<float> verticalScale{ 1.0f }; // the targets' Scale::Y, for Renderer::VerticalScale
 
         // The mode the window and the settings ask for: the settings' factor, or with auto the height
         // the picture of that stretch is shown at in the window (Presenter::Shown) over the title's,
@@ -271,6 +272,7 @@ namespace gpu
                 Scale scale = ChooseScale(wanted.factor, wanted.stretch, context->Device());
                 targets->SetScale(scale);
                 draws->SetScale(scale);
+                verticalScale = scale.Y();
             }
             mode = wanted;
             pendingMode.reset();
@@ -401,6 +403,7 @@ namespace gpu
         impl->msaa = settings.msaa;
         impl->mode = impl->WantedMode(1.0f);
         const Scale scale = ChooseScale(impl->mode.factor, impl->mode.stretch, impl->context->Device());
+        impl->verticalScale = scale.Y();
         const SampleCounts samples = ChooseSampleCounts(impl->mode.msaa, impl->context->Device());
         impl->descriptors = std::make_unique<Descriptors>(*impl->context);
         impl->passes = std::make_unique<Passes>(*impl->context, Presenter::kFormat);
@@ -565,6 +568,11 @@ namespace gpu
     bool Renderer::DisplayPaces() const
     {
         return impl_->displayPaces;
+    }
+
+    float Renderer::VerticalScale() const
+    {
+        return impl_->verticalScale.load(std::memory_order_relaxed);
     }
 
     void Renderer::SetVSync(bool vsync)
