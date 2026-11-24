@@ -42,6 +42,29 @@ namespace gpu
         bool readable = false;
     };
 
+    // The host sample count of the guest surfaces of each count: the title's own, or the one the
+    // settings ask for in place of every count above 1, each lowered to the largest the device
+    // supports (single-sampled surfaces stay so).
+    class SampleCounts
+    {
+    public:
+        SampleCounts() = default;
+        // asked: Settings::msaa (0: the title's counts). supported: SurfaceSampleCounts.
+        SampleCounts(uint32_t asked, uint32_t supported) : asked_(asked), supported_(supported) {}
+
+        uint32_t For(uint32_t guest) const
+        {
+            uint32_t count = guest <= 1 ? 1 : asked_ != 0 ? asked_ : guest;
+            while (count > 1 && (supported_ & count) == 0)
+                count >>= 1;
+            return count;
+        }
+
+    private:
+        uint32_t asked_ = 0;
+        uint32_t supported_ = ~0u;
+    };
+
     // The host side of the guest surfaces and of the texture memory they are resolved into, at the
     // internal resolution: the operations come in guest pixels and are mapped through the Scale.
     // Owner thread only.
@@ -54,11 +77,11 @@ namespace gpu
         static constexpr plume::RenderFormat kDepthFormat = plume::RenderFormat::D32_FLOAT_S8_UINT;
         // Host format of the textures resolved from depth surfaces (a render target of the resolve pass).
         static constexpr plume::RenderFormat kResolvedDepthFormat = plume::RenderFormat::R32_FLOAT;
-        // Sample counts of the guest surfaces besides 1 (the Xenos has 2x and 4x MSAA).
-        static constexpr uint32_t kMultisampleCounts[] = { 2, 4 };
+        Targets(Context& context, const Passes& passes, Descriptors& descriptors, Scale scale, SampleCounts samples)
+            : context_(context), passes_(passes), descriptors_(descriptors), scale_(scale), samples_(samples) {}
 
-        Targets(Context& context, const Passes& passes, Descriptors& descriptors, Scale scale)
-            : context_(context), passes_(passes), descriptors_(descriptors), scale_(scale) {}
+        // The sample count of the host surface of a guest surface with that many samples.
+        uint32_t HostSamples(uint32_t guest) const { return samples_.For(guest); }
 
         // Makes the targets at another scale, between frames. The surfaces are retired and come back
         // at the new size on first use; a resolved texture is sampled as it is until its next
@@ -96,6 +119,7 @@ namespace gpu
         struct Surface
         {
             SurfaceDesc desc;
+            uint32_t samples = 1; // the host texture's (HostSamples)
             std::unique_ptr<plume::RenderTexture> texture;
             std::unique_ptr<plume::RenderTextureView> view; // the color, or the depth plane
             std::unique_ptr<plume::RenderFramebuffer> framebuffer;
@@ -135,6 +159,7 @@ namespace gpu
         const Passes& passes_;
         Descriptors& descriptors_;
         Scale scale_;
+        const SampleCounts samples_;
         std::unordered_map<uint32_t, Surface> surfaces_;
         std::unordered_map<uint32_t, ResolvedAddress> resolved_;
         uint64_t resolvedChanges_ = 0;

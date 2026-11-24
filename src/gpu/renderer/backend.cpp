@@ -264,20 +264,6 @@ namespace gpu
             format(Targets::kColorFormat, kSampled | kCopied | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT);
             format(Targets::kResolvedDepthFormat, kSampled | kCopied | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT);
             format(Targets::kDepthFormat, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
-            for (uint32_t samples : Targets::kMultisampleCounts)
-            {
-                auto sampleCount = [&](VkSampleCountFlags counts, const char* name) {
-                    if ((counts & samples) != 0)
-                        return;
-                    Log("gpu: error: the Vulkan device has no %ux in %s", samples, name);
-                    ok = false;
-                };
-                sampleCount(limits.framebufferColorSampleCounts, "framebufferColorSampleCounts");
-                sampleCount(limits.framebufferDepthSampleCounts, "framebufferDepthSampleCounts");
-                sampleCount(limits.framebufferStencilSampleCounts, "framebufferStencilSampleCounts");
-                sampleCount(limits.sampledImageColorSampleCounts, "sampledImageColorSampleCounts");
-                sampleCount(limits.sampledImageDepthSampleCounts, "sampledImageDepthSampleCounts");
-            }
 
             Log("gpu: present wait %s", capabilities.presentWait ? "available" : "unavailable");
             return ok;
@@ -335,6 +321,19 @@ namespace gpu
             FilterD3D12DebugMessages(device);
 #endif
         return true;
+    }
+
+    uint32_t SurfaceSampleCounts(plume::RenderDevice& device)
+    {
+        if (const auto* vulkan = dynamic_cast<const plume::VulkanDevice*>(&device))
+        {
+            const VkPhysicalDeviceLimits& limits = vulkan->physicalDeviceProperties.limits;
+            return limits.framebufferColorSampleCounts & limits.framebufferDepthSampleCounts &
+                limits.framebufferStencilSampleCounts & limits.sampledImageColorSampleCounts &
+                limits.sampledImageDepthSampleCounts;
+        }
+        return device.getSampleCountsSupported(Targets::kColorFormat) &
+            device.getSampleCountsSupported(Targets::kDepthFormat);
     }
 
     bool IsCreated(const plume::RenderBuffer* buffer)

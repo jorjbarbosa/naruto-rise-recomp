@@ -108,17 +108,18 @@ namespace gpu
         plume::RenderDevice& device = context_.Device();
         Surface surface;
         surface.desc = desc;
+        surface.samples = HostSamples(desc.samples);
         if (desc.depth)
         {
             surface.texture = device.createTexture(plume::RenderTextureDesc::DepthTarget(scale_.Width(desc.width),
-                scale_.Height(desc.height), kDepthFormat, Multisampling(desc.samples)));
+                scale_.Height(desc.height), kDepthFormat, Multisampling(surface.samples)));
             surface.view = surface.texture->createTextureView(plume::RenderTextureViewDesc::Texture2D(kDepthFormat));
             surface.framebuffer = device.createFramebuffer(plume::RenderFramebufferDesc(nullptr, 0, surface.texture.get()));
         }
         else
         {
             surface.texture = device.createTexture(plume::RenderTextureDesc::ColorTarget(scale_.Width(desc.width),
-                scale_.Height(desc.height), kColorFormat, Multisampling(desc.samples)));
+                scale_.Height(desc.height), kColorFormat, Multisampling(surface.samples)));
             surface.view = surface.texture->createTextureView(plume::RenderTextureViewDesc::Texture2D(kColorFormat));
             const plume::RenderTexture* attachment = surface.texture.get();
             surface.framebuffer = device.createFramebuffer(plume::RenderFramebufferDesc(&attachment, 1));
@@ -310,11 +311,11 @@ namespace gpu
         int32_t sample)
     {
         plume::RenderCommandList& list = context_.Commands();
-        if (source.desc.depth || (source.desc.samples > 1 && sample >= 0))
+        if (source.desc.depth || (source.samples > 1 && sample >= 0))
         {
             ResolvePass(source, dest, region, destX, destY, sample);
         }
-        else if (source.desc.samples > 1)
+        else if (source.samples > 1)
         {
             Barrier(list, plume::RenderBarrierStage::COPY, source.texture.get(), plume::RenderTextureLayout::RESOLVE_SOURCE);
             Barrier(list, plume::RenderBarrierStage::COPY, dest, plume::RenderTextureLayout::RESOLVE_DEST);
@@ -356,7 +357,7 @@ namespace gpu
     {
         if (!source.sampling)
             source.sampling = passes_.CreateTextureSet(*source.texture, source.view.get());
-        uint32_t samples = source.desc.samples;
+        uint32_t samples = source.samples;
         Passes::Resolve kind = !source.desc.depth ? Passes::Resolve::ColorSample
             : samples > 1                         ? Passes::Resolve::DepthMultisample
                                                   : Passes::Resolve::Depth;

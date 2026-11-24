@@ -108,7 +108,7 @@ namespace gpu
         key.pixelShader = op.pixelShader;
         key.input = op.input->id;
         key.state = op.state;
-        key.samples = op.color.key != 0 ? op.color.samples : op.depth.samples;
+        key.samples = targets_.HostSamples(op.color.key != 0 ? op.color.samples : op.depth.samples);
         key.targets = (op.color.key != 0 ? 1 : 0) | (op.depth.key != 0 ? 2 : 0);
         // Without a depth-stencil target the depth and stencil state does not reach the pipeline.
         if (op.depth.key == 0)

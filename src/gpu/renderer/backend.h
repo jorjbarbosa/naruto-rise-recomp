@@ -26,10 +26,15 @@ namespace gpu
     std::unique_ptr<plume::RenderInterface> CreateInterface(const Settings& settings);
 
     // Readies a new device for the renderer and logs what it reports. On Vulkan it checks every
-    // feature, limit, format feature and sample count the translated shaders and the renderer rely
-    // on, since Plume enables what the device has but requires none of it. False when the device cannot run the renderer (each missing
+    // feature, limit and format feature the translated shaders and the renderer rely on, since Plume
+    // enables what the device has but requires none of it (sample counts are lowered to what the
+    // device has instead: SurfaceSampleCounts). False when the device cannot run the renderer (each missing
     // item logged).
     bool PrepareDevice(plume::RenderDevice& device, const Settings& settings);
+
+    // The sample counts (plume::RenderSampleCount bits) a surface can have on the device: drawn into
+    // in both surface formats, and read by the resolve passes.
+    uint32_t SurfaceSampleCounts(plume::RenderDevice& device);
 
     // Whether the API created the object: Plume hands back an object even when the API refused to
     // create it. False for null.

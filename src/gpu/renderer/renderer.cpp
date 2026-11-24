@@ -43,6 +43,17 @@ namespace gpu
         // about two frames ahead of the owner.
         constexpr uint64_t kConstantRingBytes = 8 << 20;
 
+        // The surfaces' sample counts for Settings::msaa, logged with what the device lowered.
+        SampleCounts ChooseSampleCounts(uint32_t msaa, plume::RenderDevice& device)
+        {
+            SampleCounts samples(msaa, SurfaceSampleCounts(device));
+            if (msaa == 0)
+                Log("gpu: multisampling as the title asks (2x as %ux, 4x as %ux)", samples.For(2), samples.For(4));
+            else
+                Log("gpu: multisampling %ux in place of the title's 2x and 4x (asked %ux)", samples.For(4), msaa);
+            return samples;
+        }
+
         // How long the shape the presents ask for must stay the same before the scale follows it: a
         // resize drags the window through many shapes, and each change of scale makes the surfaces
         // again.
@@ -340,9 +351,10 @@ namespace gpu
             return nullptr;
         impl->resolutionScale = settings.resolutionScale;
         const Scale scale = ChooseScale(impl->resolutionScale, impl->scaleStretch, impl->context->Device());
+        const SampleCounts samples = ChooseSampleCounts(settings.msaa, impl->context->Device());
         impl->descriptors = std::make_unique<Descriptors>(*impl->context);
         impl->passes = std::make_unique<Passes>(*impl->context, Presenter::kFormat);
-        impl->targets = std::make_unique<Targets>(*impl->context, *impl->passes, *impl->descriptors, scale);
+        impl->targets = std::make_unique<Targets>(*impl->context, *impl->passes, *impl->descriptors, scale, samples);
         impl->textures = std::make_unique<Textures>(*impl->context, *impl->targets, *impl->descriptors);
         impl->buffers = std::make_unique<Buffers>(*impl->context);
         impl->draws = std::make_unique<Draws>(*impl->context, *impl->targets, *impl->descriptors, *impl->textures,

@@ -44,6 +44,10 @@ namespace gpu
         // (fractions allowed: 1.5 is 1920x1080). Out of range or not a number: logged, kept at 1.
         // Lowered to what the device's textures allow (Renderer::Create).
         float resolutionScale = 1.0f;
+        // ROAN_MSAA=1|2|4|8: the sample count of every surface the title makes multisampled (its own
+        // are 2 and 4; single-sampled ones stay so); 0, the default, keeps the title's. Lowered to
+        // what the device supports (Renderer::Create). Any other value: logged, kept at 0.
+        uint32_t msaa = 0;
         std::string adapter;     // ROAN_ADAPTER=<name>: adapter as listed in the log (default: Plume's choice)
         std::filesystem::path pipelineList; // the pipeline list file (Pipelines); empty: none
         std::filesystem::path pipelineCache; // the driver's pipeline cache file, on Vulkan (Pipelines); empty: none
@@ -96,6 +100,14 @@ namespace gpu
                 else
                     Log("gpu: ROAN_RESOLUTION_SCALE=%s is not a number from %g to %g; the scale stays 1", value,
                         double(kMinResolutionScale), double(kMaxResolutionScale));
+            }
+            if (const char* value = std::getenv("ROAN_MSAA"))
+            {
+                if (std::strcmp(value, "1") == 0 || std::strcmp(value, "2") == 0 || std::strcmp(value, "4") == 0 ||
+                    std::strcmp(value, "8") == 0)
+                    settings.msaa = uint32_t(std::atoi(value));
+                else
+                    Log("gpu: ROAN_MSAA=%s is not 1, 2, 4 or 8; the title's sample counts are kept", value);
             }
             if (const char* value = std::getenv("ROAN_ADAPTER"))
                 settings.adapter = value;
