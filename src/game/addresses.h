@@ -84,6 +84,12 @@
 #define GFX_SET_VIEWPORT sub_821E13B0  // GFxMovieRoot::SetViewport (r3 movie, r4 the GViewport), vtable +80
 #define GFX_MOVIE_DESTROY sub_821E2E70 // ~GFxMovieRoot (r3 movie), from the deleting destructor at vtable +0
 
+// The game's GFx renderer (vtable 82085798, built by 825E8778; widescreen_shapes.cpp,
+// docs/development/plans/wide-interface/study.md): GFx draws every movie through it, shape by shape.
+#define GFX_RENDERER_SET_MATRIX sub_825E8490   // SetMatrix (r3 renderer, r4 the shape's 2x3 matrix to the stage, in twips), vtable +20
+#define GFX_RENDERER_SET_VERTICES sub_825E9130 // SetVertexData (r3 renderer, r4 vertices, r5 count, r6 format), vtable +40
+#define GFX_RENDERER_DRAW_SHAPE sub_825E8060   // DrawIndexedTriList (r3 renderer, r4 base vertex, r5 first, r6 count, r7 first index, r8 triangles), vtable +52
+
 // The renderer's draw records: every draw the engine asks for fills one in the packet being built and
 // submits it; the render thread makes the device's draw of each record of the packet it was handed.
 #define JADE_RECORD_SUBMIT sub_820E7D40        // adds the packet's current record to its pass (r3 packet)
@@ -149,8 +155,9 @@ namespace game::jade
     // The D3D device lock ([kDeviceLock]), recursive per thread.
     namespace device_lock
     {
-        constexpr uint32_t kOwner = 4; // the owner's thread id, -1 when free
-        constexpr uint32_t kCount = 8; // recursion count
+        constexpr uint32_t kOwner = 4;   // the owner's thread id, -1 when free
+        constexpr uint32_t kCount = 8;   // recursion count
+        constexpr uint32_t kDevice = 16; // the D3D device the record draws use (821024A8)
     }
 
     // The time structure ([kTime]).
@@ -243,6 +250,25 @@ namespace game::jade
         constexpr uint32_t kAspectRatio = 44; // float
         constexpr uint32_t kFlags = 48;
         constexpr uint32_t kSize = 52;
+    }
+
+    // The game's GFx renderer: the fill its DrawIndexedTriList draws with, and the vertices GFx hands it.
+    namespace gfx_renderer
+    {
+        constexpr uint32_t kFillMode = 436; // 1 a color, 2 a bitmap, 3 gouraud (with kTexture: a bitmap faded by the vertices)
+        constexpr uint32_t kFillBitmap = 2;
+        constexpr uint32_t kFillGouraud = 3;
+        constexpr uint32_t kTexture = 544;  // the bitmap's texture; 0 for a gouraud fill without one
+        // A bitmap's texture coordinates from the shape's: u = a x + b y + c over the texture's width,
+        // v likewise over its height (floats; FillStyleBitmap, 825E8398).
+        constexpr uint32_t kTextureU[3] = { 492, 496, 504 };
+        constexpr uint32_t kTextureV[3] = { 508, 512, 520 };
+        constexpr uint32_t kWrap = 548; // 0 the bitmap repeats, 2 it is clamped
+        constexpr uint32_t kWrapRepeat = 0;
+        // SetVertexData's formats: x and y as 16-bit integers (twips), then a color, or a color and a factor.
+        constexpr uint32_t kVertexXY = 1;
+        constexpr uint32_t kVertexXYColor = 3;
+        constexpr uint32_t kVertexXYColorFactor = 4;
     }
 
     // A placement of the interface: 4 floats, left, top, width and height as shares of the screen.

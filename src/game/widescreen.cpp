@@ -2,16 +2,21 @@
 // stretches over the window (gpu::WideStretch). Here the game squeezes what it draws by the same
 // amount, so that it comes out with its own proportions: the cameras see a wider field, and the
 // interface's movies, images, texts and videos keep their shape in a 16:9 frame of the picture,
-// except the ones made to span the screen, which stay stretched over it.
+// except the ones made to span the screen, which stay stretched over it. Inside some framed movies,
+// the shapes made to span the screen (a dialogue's box) go over it too (widescreen_shapes.cpp).
 
 #include "game/widescreen.h"
 
 #include "game/addresses.h"
+#include "game/guest_call.h"
+#include "game/widescreen_shapes.h"
 #include "gpu/gpu.h"
+#include "gpu/guest/addresses.h"
 #include "kernel/kernel.h"
 
 #include <atomic>
 #include <bit>
+#include <cmath>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -25,6 +30,7 @@ DECLARE_ORIGINAL(JADE_VIDEO_QUAD);
 DECLARE_ORIGINAL(JADE_VERTEX_ALLOCATE);
 DECLARE_ORIGINAL(JADE_RECORD_SUBMIT);
 DECLARE_ORIGINAL(JADE_RECORD_DRAW);
+PPC_EXTERN_FUNC(D3D_CLEAR);
 
 namespace
 {
@@ -123,9 +129,20 @@ namespace
             uint32_t begin = 0;
             uint32_t end = 0;
             gpu::DrawClip clip;
+            bool blackOutside = false; // the target is cleared to black outside clip before the draw
         };
         std::vector<Range> ranges;
     };
+
+    // The render target the interface and the videos are drawn into, in the guest's pixels.
+    constexpr int32_t kTargetWidth = 1280;
+    constexpr int32_t kTargetHeight = 720;
+    // ClearF's flag for render target 0.
+    constexpr uint32_t kClearTarget0 = 1;
+    // The guest stack ClearF runs on when JADE_RECORD_DRAW's hook calls it (GuestCall): this far below
+    // the hook caller's frame, with its rectangle and color above its own frame.
+    constexpr uint32_t kStackGap = 256;
+    constexpr uint32_t kScratch = 128;
 
     thread_local Item t_item;
     // Inside JADE_VIDEO_QUAD: the vertices it allocated.
@@ -218,6 +235,52 @@ namespace
         return { (1.0f - 1.0f / stretch) * margin, 0.0f, 1.0f / stretch, 1.0f };
     }
 
+    // Whether the video quad JADE_VIDEO_QUAD wrote spans the screen's width (clip space, before the
+    // squeeze): a video that fills the screen, as the cutscenes and the memory clips do.
+    bool VideoSpansScreen()
+    {
+        float left = 1.0f, right = -1.0f;
+        for (uint32_t i = 0; i < jade::video_quad::kVertices; i++)
+        {
+            float x = LoadFloat(t_videoVertices + jade::video_quad::kStride * i);
+            left = std::min(left, x);
+            right = std::max(right, x);
+        }
+        return left <= -0.99f && right >= 0.99f;
+    }
+
+    // Clears the device's render target to black outside a span of its width, through the title's own
+    // ClearF: what the game draws behind a video is hidden by it in a 16:9 picture, and must stay hidden
+    // beside it in a wide one. On the render thread, from JADE_RECORD_DRAW's hook.
+    void ClearOutside(PPCContext& ctx, uint8_t* base, const gpu::DrawClip& keep)
+    {
+        uint32_t device = mem::Load32(mem::Load32(jade::kDeviceLock) + jade::device_lock::kDevice);
+        int32_t left = int32_t(std::lround(kTargetWidth * keep.left));
+        int32_t right = int32_t(std::lround(kTargetWidth * keep.right));
+        const int32_t bands[2][4] = { { 0, 0, left, kTargetHeight }, { right, 0, kTargetWidth, kTargetHeight } };
+        game::GuestCall call(ctx, kStackGap, kScratch);
+        uint32_t color = call.Scratch();
+        uint32_t rect = color + 16;
+        const float black[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+        for (uint32_t i = 0; i < 4; i++)
+            StoreFloat(color + 4 * i, black[i]);
+        for (const auto& band : bands)
+        {
+            if (band[2] <= band[0])
+                continue;
+            for (uint32_t i = 0; i < 4; i++)
+                mem::Store32(rect + 4 * i, uint32_t(band[i]));
+            PPCContext& clear = call.Context();
+            clear.r3.u64 = device;
+            clear.r4.u64 = kClearTarget0;
+            clear.r5.u64 = rect;
+            clear.r6.u64 = color;
+            clear.f1.f64 = 0.0;
+            clear.r8.u64 = 0;
+            D3D_CLEAR(clear, base);
+        }
+    }
+
     // Draws an item inside a frame instead of the whole screen. With a clip, the draws it submits are
     // clipped to it.
     void DrawFramed(PPCContext& ctx, uint8_t* base, PPCFunc* original, const Frame& frame, bool unlessCovering = false,
@@ -286,7 +349,8 @@ PPC_FUNC(JADE_INTERFACE_PLACE)
 PPC_FUNC(JADE_INTERFACE_MOVIE_DRAW)
 {
     float stretch = g_stretch.load(std::memory_order_relaxed);
-    Shape shape = stretch == 1.0f ? Shape::Stretched : ShapeOf(MovieName(ctx.r3.u32));
+    std::string movie = stretch == 1.0f ? std::string() : MovieName(ctx.r3.u32);
+    Shape shape = stretch == 1.0f ? Shape::Stretched : ShapeOf(movie);
     switch (shape)
     {
     case Shape::Stretched:
@@ -299,7 +363,9 @@ PPC_FUNC(JADE_INTERFACE_MOVIE_DRAW)
     {
         Frame frame = NarrowFrame(stretch, 0.5f);
         gpu::DrawClip clip{ frame.left, frame.left + frame.width };
+        game::widescreen::BeginShapes(movie, stretch);
         DrawFramed(ctx, base, ORIGINAL(JADE_INTERFACE_MOVIE_DRAW), frame, false, &clip);
+        game::widescreen::EndShapes();
         break;
     }
     case Shape::Edges:
@@ -375,23 +441,45 @@ PPC_FUNC(JADE_VERTEX_ALLOCATE)
 }
 
 // The submission of the draw record being filled (820E7D40; r3 the packet): every draw the engine
-// asks for ends here. Hooked to mark the records of a movie drawn in a frame, whose art runs past it.
+// asks for ends here. Hooked to mark the records of a movie drawn in a frame, whose art runs past it,
+// except the shapes widescreen_shapes.cpp draws over the whole picture; and the record of a video
+// that fills the screen, to be drawn on black beside the 16:9 frame it is squeezed into.
 PPC_FUNC(JADE_RECORD_SUBMIT)
 {
-    uint32_t record = t_item.clipped ? mem::Load32(ctx.r3.u32 + jade::packet::kCurrentRecord) : 0;
+    Marks::Range mark;
+    bool marked = false;
+    if (t_item.clipped && !game::widescreen::DrawingWideShape())
+    {
+        mark.clip = t_item.clip;
+        marked = true;
+    }
+    else if (t_videoQuad && t_videoVertices != 0 && VideoSpansScreen())
+    {
+        Frame frame = NarrowFrame(g_stretch.load(std::memory_order_relaxed), 0.5f);
+        mark.clip = { frame.left, frame.left + frame.width };
+        mark.blackOutside = true;
+        marked = true;
+    }
+    uint32_t record = marked ? mem::Load32(ctx.r3.u32 + jade::packet::kCurrentRecord) : 0;
     Marks* marks = record != 0 ? MarksOf(ctx.r3.u32) : nullptr;
     if (marks != nullptr)
     {
-        if (!marks->ranges.empty() && marks->ranges.back().end == record && marks->ranges.back().clip == t_item.clip)
-            marks->ranges.back().end += jade::packet::kRecordSize;
+        Marks::Range* last = marks->ranges.empty() ? nullptr : &marks->ranges.back();
+        if (last != nullptr && last->end == record && last->clip == mark.clip && last->blackOutside == mark.blackOutside)
+            last->end += jade::packet::kRecordSize;
         else
-            marks->ranges.push_back({ record, record + jade::packet::kRecordSize, t_item.clip });
+        {
+            mark.begin = record;
+            mark.end = record + jade::packet::kRecordSize;
+            marks->ranges.push_back(mark);
+        }
     }
     ORIGINAL(JADE_RECORD_SUBMIT)(ctx, base);
 }
 
 // The device's draw of a record (821024A8; r3 the packet, r4 the record), on the render thread: the
-// one place the engine's draws reach the device from. Hooked to clip the draws of the marked records.
+// one place the engine's draws reach the device from. Hooked to clip the draws of the marked records,
+// and to clear the screen beside a video to black first.
 PPC_FUNC(JADE_RECORD_DRAW)
 {
     const Marks* marks = MarksOf(ctx.r3.u32);
@@ -402,6 +490,8 @@ PPC_FUNC(JADE_RECORD_DRAW)
         {
             if (record < range.begin || record >= range.end)
                 continue;
+            if (range.blackOutside)
+                ClearOutside(ctx, base, range.clip);
             gpu::SetDrawClip(range.clip);
             ORIGINAL(JADE_RECORD_DRAW)(ctx, base);
             gpu::SetDrawClip({});
