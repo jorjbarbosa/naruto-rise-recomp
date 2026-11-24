@@ -3,12 +3,17 @@
 #include <ppc_context.h>
 
 #include <cstdint>
-#include <filesystem>
 #include <string>
 
-// Loads default.xex into guest memory, resolves the kernel data imports and fills the indirect call
-// table. Fills kernel::g_module.
-bool LoadExecutable(const std::filesystem::path& path);
+namespace vfs
+{
+    class Source;
+}
+
+// Loads default.xex of the game's files into guest memory, resolves the kernel data imports and fills
+// the indirect call table. Fills kernel::g_module. False when it cannot be read or is not the
+// recompiled executable (logged).
+bool LoadExecutable(const vfs::Source& game);
 
 // ---- Recompiled DLLs (XexLoadImage), thread-safe ----
 //

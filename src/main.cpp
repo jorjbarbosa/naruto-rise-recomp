@@ -1,6 +1,7 @@
 // roan-xenon: runs the recompiled default.xex of Naruto: Rise of a Ninja.
 //
-// usage: roan-xenon [game folder]   (default: <repository>/game)
+// usage: roan-xenon [game]   (default: <repository>/game)
+// game: the game folder, its default.xex, the Xbox 360 disc image or a ZArchive (vfs::Mount).
 // ROAN_TRACE=1 logs every traced kernel call.
 // ROAN_REPLAY=<recording> ROAN_REPLAY_OUT=<folder> draws a recorded frame instead (gpu/replay.h).
 
@@ -18,9 +19,11 @@
 #include "loader.h"
 #include "settings/settings.h"
 #include "ui/ui.h"
+#include "vfs/vfs.h"
 
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
 
 PPC_EXTERN_FUNC(_xstart);
 
@@ -75,12 +78,16 @@ int main(int argc, char** argv)
     g_trace = getenv("ROAN_TRACE") != nullptr;
 
     fs::path exeDir = host::ExecutableDirectory();
-    fs::path gameDir = argc > 1 ? fs::path(argv[1]) : exeDir / ".." / ".." / "game";
+    fs::path gamePath = argc > 1 ? fs::path(argv[1]) : exeDir / ".." / ".." / "game";
     std::error_code error;
-    gameDir = fs::weakly_canonical(gameDir, error);
-    if (!fs::exists(gameDir / "default.xex"))
+    if (fs::path canonical = fs::weakly_canonical(gamePath, error); !error)
+        gamePath = canonical;
+    // The game's files, for the whole run: guest threads read them until the process ends.
+    std::unique_ptr<vfs::Source> game = vfs::Mount(gamePath);
+    if (game == nullptr)
     {
-        Log("error: default.xex not found in %s (pass the game folder as the first argument)", gameDir.string().c_str());
+        Log("error: no game at %s (pass the game folder, its default.xex, the disc image or a ZArchive as the "
+            "first argument)", host::PathText(gamePath).c_str());
         return 1;
     }
 
@@ -109,10 +116,10 @@ int main(int argc, char** argv)
     }
 
     fs::path userDir = exeDir / "data" / "user";
-    kernel::SetPaths(gameDir.string(), userDir.string());
+    kernel::SetFileSystem(*game, userDir);
     // Before the executable, the window, the renderer and the guest read any setting.
     settings::Load(userDir / "settings.toml");
-    if (!LoadExecutable(gameDir / "default.xex"))
+    if (!LoadExecutable(*game))
         return 1;
     // XAudioInitialize reads the XMA context base early in the title's startup.
     apu::InitializeXma();
@@ -121,7 +128,7 @@ int main(int argc, char** argv)
         return 1;
     settings::SetDisplayRefreshSource(host::DisplayRefreshMillihertz);
     // Without it the game runs with no menus of the port's (logged), and its own Options.
-    if (ui::Initialize(host::MainWindow(), exeDir / "data" / "ui", gameDir))
+    if (ui::Initialize(host::MainWindow(), exeDir / "data" / "ui", *game))
         game::menu::Install();
 
     if (!host::StartDetachedThread(host::kRecompiledStackSize, GuestMain))

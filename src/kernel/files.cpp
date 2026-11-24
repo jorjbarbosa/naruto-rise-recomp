@@ -1,16 +1,17 @@
-// File system: guest paths are mapped to the game folder (read-only) or to a user data folder.
+// File system: guest paths are mapped to the game's files (read-only, vfs.h) or to a user data folder.
 
 #include "kernel/kernel.h"
 
 #include "ascii.h"
 #include "host/files.h"
 #include "host/timing.h"
+#include "vfs/folder.h"
+#include "vfs/vfs.h"
 
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <mutex>
-#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -19,7 +20,7 @@ using namespace kernel;
 
 namespace
 {
-    fs::path g_gameDir;
+    const vfs::Source* g_game = nullptr;
     fs::path g_userDir;
 
     std::mutex g_linkMutex;
@@ -38,72 +39,37 @@ namespace
         return text;
     }
 
+    // Where a guest path leads: a path of the game's source, read-only, or a host path of user data
+    // (a writable device or a mounted content folder).
+    struct Location
+    {
+        bool game = false;
+        std::string gamePath; // relative to the game's root, when game
+        fs::path hostPath;    // when not game
+    };
+
     struct FileObject : KernelObject
     {
         FileObject() : KernelObject(ObjectType::File) {}
 
         std::mutex mutex;
-        host::File host; // closed for a directory
-        fs::path path;
+        Location location;
+        std::unique_ptr<vfs::File> gameFile; // an open file of the game
+        host::File host;                     // an open file of user data
         std::string guestPath;
         bool directory = false;
         bool readOnly = true;
         uint64_t position = 0;
 
         // Directory enumeration.
-        std::vector<fs::directory_entry> entries;
+        std::vector<vfs::Entry> entries;
         size_t nextEntry = 0;
         bool enumerated = false;
     };
 
-    // Whether a host file name (in the system's own units, so no conversion can throw) is name with
-    // A-Z and a-z taken as the same; every other unit must be the same.
-    bool SameNameNoCase(const fs::path::string_type& host, const std::string& name)
-    {
-        if (host.size() != name.size())
-            return false;
-        for (size_t i = 0; i < name.size(); i++)
-        {
-            auto unit = static_cast<std::make_unsigned_t<fs::path::value_type>>(host[i]);
-            auto byte = static_cast<unsigned char>(name[i]);
-            if (unit != byte && (unit > 0x7F || ascii::ToLower(char(unit)) != ascii::ToLower(char(byte))))
-                return false;
-        }
-        return true;
-    }
-
-    // dir followed by the guest's relative path rest, whose separator is '\' on every host, each name
-    // matched to an existing entry by FindEntry. From the first name that matches nothing on, the
-    // names are kept as given: a file or folder to create, or one that does not exist.
-    fs::path AppendGuestPath(fs::path dir, const std::string& rest)
-    {
-        bool exists = true;
-        size_t begin = 0;
-        while (begin < rest.size())
-        {
-            size_t end = std::min(rest.find('\\', begin), rest.size());
-            if (end > begin)
-            {
-                std::string name = rest.substr(begin, end - begin);
-                if (exists)
-                {
-                    fs::path entry;
-                    exists = FindEntry(dir, name, entry);
-                    dir = std::move(entry);
-                }
-                else
-                {
-                    dir /= name;
-                }
-            }
-            begin = end + 1;
-        }
-        return dir;
-    }
-
     // Splits "game:\a\b", "\Device\Cdrom0\a\b" or "\??\game:\a\b" into device and relative path,
     // following the symbolic links the game created.
-    bool ResolvePath(std::string guestPath, fs::path& hostPath, bool& readOnly)
+    Location ResolvePath(std::string guestPath)
     {
         std::replace(guestPath.begin(), guestPath.end(), '/', '\\');
 
@@ -168,36 +134,60 @@ namespace
                 mounted = mount->second;
         }
 
+        Location location;
         if (!mounted.empty())
         {
-            hostPath = AppendGuestPath(mounted, rest);
-            readOnly = false;
+            location.hostPath = vfs::AppendPath(mounted, rest);
         }
         else if (device == "game" || device == "d" || device == "cdrom0" || device == "media")
         {
-            hostPath = AppendGuestPath(g_gameDir, rest);
-            readOnly = true;
+            location.game = true;
+            location.gamePath = rest;
         }
         else
         {
             std::replace(device.begin(), device.end(), '\\', '_');
-            hostPath = AppendGuestPath(g_userDir / device, rest);
-            readOnly = false;
+            location.hostPath = vfs::AppendPath(g_userDir / device, rest);
         }
-        return true;
+        return location;
     }
 
-    void StoreNetworkOpenInfo(uint32_t info, const fs::path& path)
+    // The entry a location leads to. False when there is none.
+    bool Stat(const Location& location, vfs::Entry& entry)
     {
-        std::error_code error;
-        bool directory = fs::is_directory(path, error);
-        uint64_t size = directory ? 0 : fs::file_size(path, error);
-        uint64_t time = host::FileTime(fs::last_write_time(path, error));
+        return location.game ? g_game->Find(location.gamePath, entry) : vfs::StatHostPath(location.hostPath, entry);
+    }
+
+    // Whether the folder that would hold the location exists, which tells a missing file from a
+    // missing path.
+    bool ParentExists(const Location& location)
+    {
+        vfs::Entry entry;
+        if (!location.game)
+            return vfs::StatHostPath(location.hostPath.parent_path(), entry) && entry.directory;
+        std::string_view path = location.gamePath;
+        while (!path.empty() && path.back() == '\\')
+            path.remove_suffix(1);
+        size_t cut = path.find_last_of('\\');
+        path = cut == std::string_view::npos ? std::string_view() : path.substr(0, cut);
+        return g_game->Find(path, entry) && entry.directory;
+    }
+
+    // Reads up to length bytes at offset of an open file (vfs::File::Read's contract). The caller holds
+    // the file's mutex.
+    uint32_t ReadAt(FileObject& file, uint64_t offset, void* data, uint32_t length, uint32_t& done)
+    {
+        return file.gameFile != nullptr ? file.gameFile->Read(offset, data, length, done)
+                                        : file.host.Read(offset, data, length, done);
+    }
+
+    void StoreNetworkOpenInfo(uint32_t info, const vfs::Entry& entry)
+    {
         for (int i = 0; i < 4; i++)
-            mem::Store64(info + i * 8, time);
-        mem::Store64(info + 32, (size + 4095) & ~4095ull);
-        mem::Store64(info + 40, size);
-        mem::Store32(info + 48, directory ? kFileAttributeDirectory : kFileAttributeNormal);
+            mem::Store64(info + i * 8, entry.time);
+        mem::Store64(info + 32, (entry.size + 4095) & ~4095ull);
+        mem::Store64(info + 40, entry.size);
+        mem::Store32(info + 48, entry.directory ? kFileAttributeDirectory : kFileAttributeNormal);
         mem::Store32(info + 52, 0);
     }
 
@@ -228,14 +218,13 @@ namespace
                 guestPath = rootFile->guestPath + "\\" + guestPath;
         }
 
-        fs::path hostPath;
-        bool readOnly = true;
-        ResolvePath(guestPath, hostPath, readOnly);
+        Location location = ResolvePath(guestPath);
+        bool readOnly = location.game;
 
         bool wantsWrite = (access & (0x40000000 | 0x2 | 0x4 | 0x10000)) != 0 || (disposition != 1 && disposition != 3);
-        std::error_code error;
-        bool exists = fs::exists(hostPath, error);
-        bool isDirectory = exists && fs::is_directory(hostPath, error);
+        vfs::Entry entry;
+        bool exists = Stat(location, entry);
+        bool isDirectory = exists && entry.directory;
 
         if (readOnly && wantsWrite && !(exists && (disposition == 1 || disposition == 3)))
         {
@@ -245,7 +234,6 @@ namespace
         }
 
         auto file = std::make_shared<FileObject>();
-        file->path = hostPath;
         file->guestPath = guestPath;
         uint32_t information = 1; // FILE_OPENED
 
@@ -259,10 +247,35 @@ namespace
                     StoreIoStatus(ioStatus, X_STATUS_OBJECT_PATH_NOT_FOUND, 0);
                     return X_STATUS_OBJECT_PATH_NOT_FOUND;
                 }
-                fs::create_directories(hostPath, error);
+                std::error_code error;
+                fs::create_directories(location.hostPath, error);
                 information = 2; // FILE_CREATED
             }
             file->directory = true;
+            readOnly = true; // a folder's handle has no data to write or resize
+        }
+        else if (location.game)
+        {
+            // Only existing files get here: anything else wanted to write.
+            if (exists)
+            {
+                file->gameFile = g_game->Open(location.gamePath);
+                // Found but not opened: the host is out of handles or memory, not the file missing.
+                if (file->gameFile == nullptr)
+                {
+                    Log("warning: \"%s\" cannot be opened", guestPath.c_str());
+                    StoreIoStatus(ioStatus, X_STATUS_UNSUCCESSFUL, 0);
+                    return X_STATUS_UNSUCCESSFUL;
+                }
+            }
+            else
+            {
+                uint32_t status = ParentExists(location) ? X_STATUS_OBJECT_NAME_NOT_FOUND
+                                                         : X_STATUS_OBJECT_PATH_NOT_FOUND;
+                Log("file: \"%s\" not found", guestPath.c_str());
+                StoreIoStatus(ioStatus, status, 0);
+                return status;
+            }
         }
         else
         {
@@ -277,11 +290,11 @@ namespace
             case 4: creation = host::Disposition::TruncateExisting; break;
             default: creation = host::Disposition::CreateAlways; break;
             }
-            bool write = !readOnly && wantsWrite;
-            if (write)
-                fs::create_directories(hostPath.parent_path(), error);
+            std::error_code error;
+            if (wantsWrite)
+                fs::create_directories(location.hostPath.parent_path(), error);
             host::OpenError openError;
-            file->host = host::File::Open(hostPath, write, creation, openError);
+            file->host = host::File::Open(location.hostPath, wantsWrite, creation, openError);
             if (!file->host.IsOpen())
             {
                 uint32_t status = openError == host::OpenError::PathNotFound ? X_STATUS_OBJECT_PATH_NOT_FOUND
@@ -291,12 +304,14 @@ namespace
                 StoreIoStatus(ioStatus, status, 0);
                 return status;
             }
-            file->readOnly = !write;
+            readOnly = !wantsWrite;
             if (!exists)
                 information = 2;
             else if (disposition == 4 || disposition == 5 || disposition == 0)
                 information = 3; // FILE_OVERWRITTEN
         }
+        file->readOnly = readOnly;
+        file->location = std::move(location);
 
         Log("file: opened \"%s\"", guestPath.c_str());
         mem::Store32(handlePtr, CreateHandle(file));
@@ -320,38 +335,19 @@ namespace
 
 namespace kernel
 {
-    void SetPaths(const std::string& gameDir, const std::string& userDir)
+    void SetFileSystem(const vfs::Source& game, const std::filesystem::path& userDir)
     {
-        g_gameDir = gameDir;
+        g_game = &game;
         g_userDir = userDir;
     }
 
-    std::filesystem::path HostPath(const std::string& guestPath)
+    bool ReadGuestFile(const std::string& guestPath, std::vector<uint8_t>& data)
     {
-        fs::path hostPath;
-        bool readOnly;
-        ResolvePath(guestPath, hostPath, readOnly);
-        return hostPath;
-    }
-
-    bool FindEntry(const std::filesystem::path& dir, const std::string& name, std::filesystem::path& entry)
-    {
-        std::error_code error;
-        entry = dir / name;
-        if (fs::exists(entry, error))
-            return true;
-        bool found = false;
-        fs::directory_iterator it(dir, error);
-        for (; !error && it != fs::directory_iterator(); it.increment(error))
-        {
-            const fs::path& candidate = it->path();
-            if (SameNameNoCase(candidate.filename().native(), name) && (!found || candidate < entry))
-            {
-                entry = candidate;
-                found = true;
-            }
-        }
-        return found;
+        Location location = ResolvePath(guestPath);
+        if (location.game)
+            return vfs::ReadWholeFile(*g_game, location.gamePath, data);
+        data = host::ReadWholeFile(location.hostPath);
+        return !data.empty();
     }
 
     const std::filesystem::path& UserDir()
@@ -409,6 +405,13 @@ namespace
             ctx.r3.u64 = X_STATUS_INVALID_HANDLE;
             return;
         }
+        if (write && file->readOnly)
+        {
+            LOG_ONCE("warning: write to \"%s\", opened read-only, refused", file->guestPath.c_str());
+            StoreIoStatus(ctx.r7.u32, X_STATUS_ACCESS_DENIED, 0);
+            ctx.r3.u64 = X_STATUS_ACCESS_DENIED;
+            return;
+        }
         uint32_t ioStatus = ctx.r7.u32;
         uint32_t buffer = ctx.r8.u32;
         uint32_t length = ctx.r9.u32;
@@ -422,12 +425,16 @@ namespace
         uint32_t done = 0;
         mem::Commit(buffer, length);
         uint32_t hostError = write ? file->host.Write(offset, mem::Ptr(buffer), length, done)
-                                   : file->host.Read(offset, mem::Ptr(buffer), length, done);
+                                   : ReadAt(*file, offset, mem::Ptr(buffer), length, done);
         if (hostError != 0)
             Log("warning: %s of \"%s\" failed (%u)", write ? "write" : "read", file->guestPath.c_str(), hostError);
         file->position = offset + done;
 
-        uint32_t status = (!write && done == 0 && length != 0) ? X_STATUS_END_OF_FILE : X_STATUS_SUCCESS;
+        // A failed transfer is an I/O error even when part of it was done: a short count alone would
+        // read as the end of the file.
+        uint32_t status = hostError != 0                            ? X_STATUS_UNEXPECTED_IO_ERROR
+                          : (!write && done == 0 && length != 0) ? X_STATUS_END_OF_FILE
+                                                                 : X_STATUS_SUCCESS;
         TRACE("file: %s \"%s\" offset %llX length %X -> %X (status %08X, event %08X)", write ? "write" : "read",
             file->guestPath.c_str(), (unsigned long long)offset, length, done, status, ctx.r4.u32);
         StoreIoStatus(ioStatus, status, done);
@@ -462,20 +469,25 @@ GUEST_FUNC(NtReadFileScatter)
     std::lock_guard lock(file->mutex);
     uint64_t offset = ctx.r10.u32 != 0 ? mem::Load64(ctx.r10.u32) : file->position;
     uint32_t total = 0;
+    uint32_t hostError = 0;
     for (uint32_t i = 0; total < length; i++)
     {
         uint32_t page = mem::Load32(segments + i * 4);
         uint32_t chunk = std::min<uint32_t>(4096, length - total);
         uint32_t done = 0;
         mem::Commit(page, chunk);
-        file->host.Read(offset + total, mem::Ptr(page), chunk, done);
+        hostError = ReadAt(*file, offset + total, mem::Ptr(page), chunk, done);
         total += done;
-        if (done < chunk)
+        if (hostError != 0 || done < chunk)
             break;
     }
     file->position = offset + total;
 
-    uint32_t status = (total == 0 && length != 0) ? X_STATUS_END_OF_FILE : X_STATUS_SUCCESS;
+    if (hostError != 0)
+        Log("warning: read of \"%s\" failed (%u)", file->guestPath.c_str(), hostError);
+    uint32_t status = hostError != 0                     ? X_STATUS_UNEXPECTED_IO_ERROR
+                      : (total == 0 && length != 0) ? X_STATUS_END_OF_FILE
+                                                    : X_STATUS_SUCCESS;
     StoreIoStatus(ctx.r7.u32, status, total);
     if (ctx.r4.u32 != 0)
     {
@@ -497,21 +509,19 @@ GUEST_FUNC(NtQueryInformationFile)
     }
     uint32_t info = ctx.r5.u32;
     uint32_t infoClass = ctx.r7.u32;
-    std::error_code error;
-    uint64_t size = file->directory ? 0 : fs::file_size(file->path, error);
+    vfs::Entry entry;
+    Stat(file->location, entry);
+    uint64_t size = file->directory ? 0 : entry.size;
     uint32_t written = 0;
 
     switch (infoClass)
     {
     case 4: // FileBasicInformation
-    {
-        uint64_t time = host::FileTime(fs::last_write_time(file->path, error));
         for (int i = 0; i < 4; i++)
-            mem::Store64(info + i * 8, time);
+            mem::Store64(info + i * 8, entry.time);
         mem::Store32(info + 32, file->directory ? kFileAttributeDirectory : kFileAttributeNormal);
         written = 40;
         break;
-    }
     case 5: // FileStandardInformation
         mem::Store64(info + 0, (size + 4095) & ~4095ull);
         mem::Store64(info + 8, size);
@@ -533,7 +543,7 @@ GUEST_FUNC(NtQueryInformationFile)
         written = 4;
         break;
     case 34: // FileNetworkOpenInformation
-        StoreNetworkOpenInfo(info, file->path);
+        StoreNetworkOpenInfo(info, entry);
         written = 56;
         break;
     default:
@@ -576,17 +586,14 @@ GUEST_FUNC(NtSetInformationFile)
 GUEST_FUNC(NtQueryFullAttributesFile)
 {
     std::string guestPath = LoadAnsiString(mem::Load32(ctx.r3.u32 + 4));
-    fs::path hostPath;
-    bool readOnly;
-    ResolvePath(guestPath, hostPath, readOnly);
-    std::error_code error;
-    if (!fs::exists(hostPath, error))
+    vfs::Entry entry;
+    if (!Stat(ResolvePath(guestPath), entry))
     {
         TRACE("file: attributes of \"%s\": not found", guestPath.c_str());
         ctx.r3.u64 = X_STATUS_OBJECT_NAME_NOT_FOUND;
         return;
     }
-    StoreNetworkOpenInfo(ctx.r4.u32, hostPath);
+    StoreNetworkOpenInfo(ctx.r4.u32, entry);
     ctx.r3.u64 = X_STATUS_SUCCESS;
 }
 
@@ -650,12 +657,16 @@ GUEST_FUNC(NtQueryDirectoryFile)
     std::lock_guard lock(file->mutex);
     if (!file->enumerated || restart)
     {
+        std::vector<vfs::Entry> entries;
+        if (file->location.game)
+            g_game->List(file->location.gamePath, entries);
+        else
+            vfs::ListHostFolder(file->location.hostPath, entries);
         file->entries.clear();
-        std::error_code error;
-        for (auto& entry : fs::directory_iterator(file->path, error))
+        for (auto& entry : entries)
         {
-            if (WildcardMatch(pattern.c_str(), entry.path().filename().string().c_str()))
-                file->entries.push_back(entry);
+            if (WildcardMatch(pattern.c_str(), entry.name.c_str()))
+                file->entries.push_back(std::move(entry));
         }
         file->nextEntry = 0;
         file->enumerated = true;
@@ -669,9 +680,8 @@ GUEST_FUNC(NtQueryDirectoryFile)
         return;
     }
 
-    const auto& entry = file->entries[file->nextEntry];
-    std::string name = entry.path().filename().string();
-    uint32_t needed = 64 + uint32_t(name.size());
+    const vfs::Entry& entry = file->entries[file->nextEntry];
+    uint32_t needed = 64 + uint32_t(entry.name.size());
     if (length < needed)
     {
         ctx.r3.u64 = X_STATUS_BUFFER_TOO_SMALL;
@@ -679,19 +689,15 @@ GUEST_FUNC(NtQueryDirectoryFile)
     }
     file->nextEntry++;
 
-    std::error_code error;
-    bool directory = entry.is_directory(error);
-    uint64_t size = directory ? 0 : entry.file_size(error);
-    uint64_t time = host::FileTime(entry.last_write_time(error));
     mem::Store32(info + 0, 0);
     mem::Store32(info + 4, uint32_t(file->nextEntry));
     for (int i = 0; i < 4; i++)
-        mem::Store64(info + 8 + i * 8, time);
-    mem::Store64(info + 40, size);
-    mem::Store64(info + 48, (size + 4095) & ~4095ull);
-    mem::Store32(info + 56, directory ? kFileAttributeDirectory : kFileAttributeNormal);
-    mem::Store32(info + 60, uint32_t(name.size()));
-    memcpy(mem::Ptr(info + 64), name.data(), name.size());
+        mem::Store64(info + 8 + i * 8, entry.time);
+    mem::Store64(info + 40, entry.size);
+    mem::Store64(info + 48, (entry.size + 4095) & ~4095ull);
+    mem::Store32(info + 56, entry.directory ? kFileAttributeDirectory : kFileAttributeNormal);
+    mem::Store32(info + 60, uint32_t(entry.name.size()));
+    memcpy(mem::Ptr(info + 64), entry.name.data(), entry.name.size());
 
     StoreIoStatus(ioStatus, X_STATUS_SUCCESS, needed);
     ctx.r3.u64 = X_STATUS_SUCCESS;

@@ -15,9 +15,15 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 // Defines the host implementation of a guest import. Overrides the weak stub from stubs.cpp.
 #define GUEST_FUNC(name) PPC_FUNC(__imp__##name)
+
+namespace vfs
+{
+    class Source;
+}
 
 namespace kernel
 {
@@ -49,6 +55,7 @@ namespace kernel
     constexpr uint32_t X_STATUS_INVALID_INFO_CLASS = 0xC0000003;
     constexpr uint32_t X_STATUS_INVALID_IMAGE_FORMAT = 0xC000007B;
     constexpr uint32_t X_STATUS_NOT_SUPPORTED = 0xC00000BB;
+    constexpr uint32_t X_STATUS_UNEXPECTED_IO_ERROR = 0xC00000E9;
     constexpr uint32_t X_STATUS_DLL_NOT_FOUND = 0xC0000135;
     constexpr uint32_t X_STATUS_DLL_INIT_FAILED = 0xC0000142;
     constexpr uint32_t X_STATUS_DRIVER_ORDINAL_NOT_FOUND = 0xC0000262;
@@ -214,19 +221,13 @@ namespace kernel
     // Starts the timer that keeps KeTimeStampBundle current.
     void StartKernelClock();
 
-    // Game folder on the host and the folder for data the game writes.
-    void SetPaths(const std::string& gameDir, const std::string& userDir);
+    // The game's files, behind "game:", "d:", "cdrom0" and "media" (game must outlive every guest
+    // thread), and the host folder for data the game writes. Before any guest code runs.
+    void SetFileSystem(const vfs::Source& game, const std::filesystem::path& userDir);
 
-    // Host path of a guest path ("D:\AI2C.DLL", "game:\...", symbolic links the game created). Each
-    // name is matched to an existing entry by FindEntry.
-    std::filesystem::path HostPath(const std::string& guestPath);
-
-    // Sets entry to the entry of the host folder dir called name, matched as the guest's file systems
-    // match names, regardless of ASCII case: the game asks for "naruto.BF" where the disc holds
-    // "naruto.bf". The exact name when it exists (all a case-insensitive host file system needs), else
-    // the folder's name that equals it but for case, the lowest when there are several so that the
-    // choice never changes. False, with entry dir / name, when there is none. Any thread.
-    bool FindEntry(const std::filesystem::path& dir, const std::string& name, std::filesystem::path& entry);
+    // The whole file at a guest path ("D:\AI2C.DLL", "game:\...", symbolic links the game created)
+    // into data. False when it is missing or cannot be read. Any thread.
+    bool ReadGuestFile(const std::string& guestPath, std::vector<uint8_t>& data);
 
     // The folder for data the game writes (profile, saves, other writable devices).
     const std::filesystem::path& UserDir();

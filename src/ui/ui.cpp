@@ -537,11 +537,11 @@ namespace ui
         }
     }
 
-    bool Initialize(SDL_Window* window, const std::filesystem::path& uiDir, const std::filesystem::path& gameDir)
+    bool Initialize(SDL_Window* window, const std::filesystem::path& uiDir, const vfs::Source& game)
     {
         auto state = std::make_unique<State>();
         state->window = window;
-        state->archive.Open(gameDir / "Naruto_clip.SRA"); // without it the documents have no game images
+        state->archive.Open(game, "Naruto_clip.SRA"); // without it the documents have no game images
         state->system = std::make_unique<SystemInterface>();
         state->files = std::make_unique<FileInterface>(uiDir);
         state->render = std::make_unique<RenderInterface>(state->archive);

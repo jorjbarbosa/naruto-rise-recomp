@@ -4,6 +4,7 @@
 #include "kernel/xam.h"
 
 #include "host/paths.h"
+#include "vfs/folder.h"
 
 #include <array>
 #include <cstdio>
@@ -89,7 +90,7 @@ namespace
         return name;
     }
 
-    // A package named by an XCONTENT_DATA. Its folder is matched by FindEntry, as the console matches
+    // A package named by an XCONTENT_DATA. Its folder is matched by vfs::FindEntry, as the console matches
     // content names (the game opens "autosave.ninjasave" that it created as "Autosave.ninjasave"),
     // and the header and thumbnail files are named after the folder found.
     struct Package
@@ -102,7 +103,7 @@ namespace
         // Reads the folder of the type, so call it under g_contentMutex, with the checks that use dir.
         void Find()
         {
-            FindEntry(TypeDir(type), fileName, dir);
+            vfs::FindEntry(TypeDir(type), fileName, dir);
         }
 
         fs::path Header() const { return Beside(".header"); }

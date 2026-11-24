@@ -27,6 +27,11 @@
 union SDL_Event;
 struct SDL_Window;
 
+namespace vfs
+{
+    class Source;
+}
+
 namespace ui
 {
     // How the menu was reached.
@@ -47,9 +52,9 @@ namespace ui
         void (*menuKey)() = nullptr;
     };
 
-    // The library, the fonts of uiDir/fonts and the images of gameDir/Naruto_clip.SRA. False when the
-    // UI cannot run (logged); the game runs without it.
-    bool Initialize(SDL_Window* window, const std::filesystem::path& uiDir, const std::filesystem::path& gameDir);
+    // The library, the fonts of uiDir/fonts and the images of Naruto_clip.SRA of the game's files
+    // (game must outlive the UI). False when the UI cannot run (logged); the game runs without it.
+    bool Initialize(SDL_Window* window, const std::filesystem::path& uiDir, const vfs::Source& game);
     // Whether Initialize succeeded. Any thread.
     bool IsAvailable();
     void SetHandlers(const Handlers& handlers);

@@ -2,11 +2,11 @@
 
 #include "ui/game_archive.h"
 
-#include "host/paths.h"
 #include "log.h"
 
 #include <zlib.h>
 
+#include <algorithm>
 #include <cstring>
 
 namespace ui
@@ -25,26 +25,26 @@ namespace ui
         }
     }
 
-    bool GameArchive::Open(const std::filesystem::path& path)
+    bool GameArchive::Open(const vfs::Source& game, const std::string& path)
     {
-        file_.open(path, std::ios::binary);
-        if (!file_)
+        vfs::Entry entry;
+        if (game.Find(path, entry) && !entry.directory)
+            file_ = game.Open(path);
+        if (file_ == nullptr)
         {
-            Log("ui: no %s, the menus have no game images", host::PathText(path).c_str());
+            Log("ui: no %s, the menus have no game images", path.c_str());
             return false;
         }
         auto fail = [&](const char* why) {
-            Log("ui: error: %s: %s", host::PathText(path).c_str(), why);
-            file_.close();
+            Log("ui: error: %s: %s", path.c_str(), why);
+            file_.reset();
             entries_.clear();
             return false;
         };
 
-        file_.seekg(0, std::ios::end);
-        uint64_t fileSize = uint64_t(file_.tellg());
+        uint64_t fileSize = entry.size;
         uint8_t header[kHeaderSize];
-        file_.seekg(0);
-        if (!file_.read(reinterpret_cast<char*>(header), kHeaderSize) || std::memcmp(header, "FRSA", 4) != 0)
+        if (!ReadAt(0, header, kHeaderSize) || std::memcmp(header, "FRSA", 4) != 0)
             return fail("not an SRA archive");
         uint32_t tableA = Read32(header + 8), countA = Read32(header + 12);
         uint32_t tableB = Read32(header + 16), countB = Read32(header + 20);
@@ -53,8 +53,7 @@ namespace ui
 
         // Both tables, to the end of the file.
         std::vector<uint8_t> tables(size_t(fileSize - tableA));
-        file_.seekg(tableA);
-        if (!file_.read(reinterpret_cast<char*>(tables.data()), std::streamsize(tables.size())))
+        if (!ReadAt(tableA, tables.data(), tables.size()))
             return fail("cannot read the tables");
 
         std::unordered_map<uint32_t, Entry> byKey;
@@ -86,20 +85,18 @@ namespace ui
         }
         if (at != tables.size())
             return fail("bytes after table B");
-        Log("ui: %s: %zu named entries", host::PathText(path.filename()).c_str(), entries_.size());
+        Log("ui: %s: %zu named entries", path.c_str(), entries_.size());
         return true;
     }
 
     bool GameArchive::Read(const std::string& name, std::vector<uint8_t>& out)
     {
         auto it = entries_.find(name);
-        if (!file_.is_open() || it == entries_.end())
+        if (file_ == nullptr || it == entries_.end())
             return false;
         const Entry& entry = it->second;
         std::vector<uint8_t> stored(entry.storedSize);
-        file_.clear();
-        file_.seekg(entry.offset);
-        if (!file_.read(reinterpret_cast<char*>(stored.data()), std::streamsize(stored.size())))
+        if (!ReadAt(entry.offset, stored.data(), stored.size()))
         {
             Log("ui: error: cannot read %s from the archive", name.c_str());
             return false;
@@ -116,6 +113,22 @@ namespace ui
         {
             Log("ui: error: %s does not inflate to its %u bytes", name.c_str(), entry.size);
             return false;
+        }
+        return true;
+    }
+
+    bool GameArchive::ReadAt(uint64_t offset, void* data, size_t size)
+    {
+        auto* bytes = static_cast<uint8_t*>(data);
+        while (size > 0)
+        {
+            uint32_t length = uint32_t(std::min<size_t>(size, UINT32_MAX));
+            uint32_t done = 0;
+            if (file_->Read(offset, bytes, length, done) != 0 || done != length)
+                return false;
+            offset += done;
+            bytes += done;
+            size -= done;
         }
         return true;
     }

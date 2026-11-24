@@ -6,9 +6,10 @@
 // jadere/sra.py): a 24-byte header, table A of blobs (type, key, offset, stored size, size), table B
 // naming them. Main thread only.
 
+#include "vfs/vfs.h"
+
 #include <cstdint>
-#include <filesystem>
-#include <fstream>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -22,9 +23,10 @@ namespace ui
         static constexpr uint32_t kMovie = 1; // CLIP
         static constexpr uint32_t kImage = 2; // DDS
 
-        // Reads the tables. False when the file is missing or not an FRSA archive (logged).
-        bool Open(const std::filesystem::path& path);
-        bool IsOpen() const { return file_.is_open(); }
+        // Reads the tables of the file at path of the game's files, which must outlive this archive.
+        // False when the file is missing or not an FRSA archive (logged).
+        bool Open(const vfs::Source& game, const std::string& path);
+        bool IsOpen() const { return file_ != nullptr; }
 
         // The entry's data, inflated. False when there is no such entry or it cannot be read (logged).
         bool Read(const std::string& name, std::vector<uint8_t>& out);
@@ -40,7 +42,10 @@ namespace ui
             uint32_t size = 0; // 0: stored as is
         };
 
-        std::ifstream file_;
+        // Reads exactly size bytes at offset. False on an error or a short read.
+        bool ReadAt(uint64_t offset, void* data, size_t size);
+
+        std::unique_ptr<vfs::File> file_;
         std::unordered_map<std::string, Entry> entries_;
     };
 }

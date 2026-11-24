@@ -5,8 +5,8 @@
 #include "ascii.h"
 #include "kernel/kernel.h"
 #include "ppc/ppc_module.h"
+#include "vfs/vfs.h"
 
-#include <file.h>
 #include <image.h>
 #include <xex.h>
 
@@ -99,28 +99,27 @@ namespace
         return functions;
     }
 
-    // The image of a recompiled module, checked against the code built for it. Returns
-    // X_STATUS_SUCCESS, X_STATUS_NO_SUCH_FILE when the file cannot be read, or
-    // X_STATUS_INVALID_IMAGE_FORMAT.
-    uint32_t ParseModuleImage(const std::filesystem::path& path, const PPCModuleInfo& module,
-        std::vector<uint8_t>& file, Image& image)
+    // The image of a recompiled module from its file (named name in the log; read is false when it
+    // could not be read), checked against the code built for it. Returns X_STATUS_SUCCESS,
+    // X_STATUS_NO_SUCH_FILE when the file could not be read, or X_STATUS_INVALID_IMAGE_FORMAT.
+    uint32_t ParseModuleImage(const char* name, bool read, const std::vector<uint8_t>& file,
+        const PPCModuleInfo& module, Image& image)
     {
-        file = LoadFile(path);
-        if (file.empty())
+        if (!read || file.empty())
         {
-            Log("error: cannot read %s", path.string().c_str());
+            Log("error: cannot read %s", name);
             return kernel::X_STATUS_NO_SUCH_FILE;
         }
         image = Image::ParseImage(file.data(), file.size());
         if (image.data == nullptr)
         {
-            Log("error: %s is not a supported XEX", path.string().c_str());
+            Log("error: %s is not a supported XEX", name);
             return kernel::X_STATUS_INVALID_IMAGE_FORMAT;
         }
         if (image.base != module.imageBase || image.size != module.imageSize)
         {
-            Log("error: %s does not match the recompiled code (base %08zX, size %08X)", path.string().c_str(),
-                image.base, image.size);
+            Log("error: %s does not match the recompiled code (base %08zX, size %08X)", name, image.base,
+                image.size);
             return kernel::X_STATUS_INVALID_IMAGE_FORMAT;
         }
         return kernel::X_STATUS_SUCCESS;
@@ -187,11 +186,12 @@ namespace
     }
 }
 
-bool LoadExecutable(const std::filesystem::path& path)
+bool LoadExecutable(const vfs::Source& game)
 {
     std::vector<uint8_t> file;
+    bool read = vfs::ReadWholeFile(game, "default.xex", file);
     Image image;
-    if (ParseModuleImage(path, g_ppcModule_default, file, image) != kernel::X_STATUS_SUCCESS)
+    if (ParseModuleImage("default.xex", read, file, g_ppcModule_default, image) != kernel::X_STATUS_SUCCESS)
         return false;
 
     memcpy(mem::Ptr(uint32_t(image.base)), image.data.get(), image.size);
@@ -208,8 +208,8 @@ bool LoadExecutable(const std::filesystem::path& path)
     ResolveVariableImports(file);
     size_t functions = SetIndirectCallTable(g_ppcModule_default, true);
 
-    Log("loaded %s: image %08X-%08X, entry %08X, %zu functions, stack %u KB", path.filename().string().c_str(),
-        module.imageBase, module.imageBase + module.imageSize, module.entryPoint, functions, module.stackSize / 1024);
+    Log("loaded default.xex: image %08X-%08X, entry %08X, %zu functions, stack %u KB", module.imageBase,
+        module.imageBase + module.imageSize, module.entryPoint, functions, module.stackSize / 1024);
     return true;
 }
 
@@ -234,8 +234,9 @@ uint32_t LoadGuestModule(const std::string& guestPath, PPCContext& ctx, uint8_t*
 
     // Loaded (again): a fresh image, so its data starts as the file has it.
     std::vector<uint8_t> file;
+    bool read = kernel::ReadGuestFile(guestPath, file);
     Image image;
-    status = ParseModuleImage(kernel::HostPath(guestPath), *module->info, file, image);
+    status = ParseModuleImage(guestPath.c_str(), read, file, *module->info, image);
     if (status != kernel::X_STATUS_SUCCESS)
         return 0;
     memcpy(mem::Ptr(uint32_t(image.base)), image.data.get(), image.size);
