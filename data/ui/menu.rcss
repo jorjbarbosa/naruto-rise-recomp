@@ -1,7 +1,9 @@
 /* The port menu's look (V2 of the sketch: the game's own Options), shared by menu.rml, quit.rml and
    rebind.rml. Game images are "game:<movie key>_I<id>" from Naruto_clip.SRA: 9e002bac is
    Menu_Option, 9e002963 is GenericWindow. body[entry] is the way the menu was reached and
-   body[input] the device last used (ui/ui.h). The rows are built by src/ui/pages.cpp. */
+   body[input] the device last used (ui/ui.h). The rows are built by src/ui/pages.cpp. The text
+   colours, sizes and outlines are measured on the game's Options screen; the font effects' dp
+   lengths follow the dp ratio (src/ui/font_effects.h). */
 
 body {
     width: 100%;
@@ -85,8 +87,9 @@ body.menu[entry=key] {
 #title {
     position: absolute;
     left: 64dp;
-    top: 30dp;
-    font-size: 40dp;
+    top: 33dp;
+    font-size: 32dp;
+    color: #005aa4;
     animation: 0.1167s 0.3s cubic-out 1 band-in;
 }
 @keyframes band-in { from { transform: translateX(-460dp); opacity: 0; } to { transform: translateX(0dp); opacity: 1; } }
@@ -114,8 +117,8 @@ body.menu[entry=key] {
 .tab:hover { color: #6fb6ff; }
 .tab.selected {
     font-size: 38dp;
-    color: #ffc21a;
-    font-effect: outline(3dp #b3260a);
+    color: #fadc32;
+    font-effect: outline(3dp #a30000);
 }
 .tab-step { display: inline-block; cursor: pointer; vertical-align: middle; }
 .icon { display: inline-block; vertical-align: middle; }
@@ -169,7 +172,7 @@ scrollbarvertical sliderbar { background-color: #1e8bff; border-radius: 5dp; min
     animation: 1.0833s linear-in-out infinite alternate pulse;
 }
 @keyframes pulse { from { transform: scale(0.8); } to { transform: scale(1.1); } }
-.row.current { color: #ffc21a; font-effect: outline(3dp #b3260a); }
+.row.current { color: #fadc32; font-effect: outline(3dp #a30000); }
 .row.current .cloud { visibility: visible; }
 .row.locked, .row.locked.current { color: #9a9080; font-effect: outline(2dp #5a5040); }
 
@@ -197,19 +200,23 @@ scrollbarvertical sliderbar { background-color: #1e8bff; border-radius: 5dp; min
 .value .arrow.left { decorator: image(game:9e002bac_IF6 flip-horizontal); }
 .row.current .value .arrow { visibility: visible; }
 .row.locked .value .arrow { visibility: hidden; }
+/* As the game's YES and NO: the word in white with a hard shadow, starting in the circle and running
+   out of it to the right; only the circle's colour shows the value. */
 .value .pick {
     display: inline-block;
+    box-sizing: border-box;
     width: 44dp;
     height: 44dp;
     line-height: 44dp;
+    padding-left: 6dp;
     margin-right: 46dp;
-    text-align: center;
-    font-size: 22dp;
+    font-size: 30dp;
     border-radius: 22dp;
     background-color: #8c8c8c;
     color: #ffffff;
+    font-effect: shadow(2dp 2dp #000000);
 }
-.value .pick.on { background-color: #e36a00; color: #ffe94a; }
+.value .pick.on { background-color: #e36a00; }
 .row.locked .value .pick.on { background-color: #9a7a50; }
 .value .bar {
     display: inline-block;
@@ -238,8 +245,8 @@ scrollbarvertical sliderbar { background-color: #1e8bff; border-radius: 5dp; min
 #description h2 {
     display: block;
     font-size: 32dp;
-    color: #ffc21a;
-    font-effect: outline(3dp #b3260a);
+    color: #fadc32;
+    font-effect: outline(3dp #a30000);
     margin-bottom: 16dp;
 }
 #description p {
@@ -259,8 +266,8 @@ scrollbarvertical sliderbar { background-color: #1e8bff; border-radius: 5dp; min
     top: 630dp;
     height: 44dp;
     line-height: 44dp;
-    font-size: 28dp;
-    font-effect: outline(2dp #3a2010);
+    font-size: 24dp;
+    font-effect: shadow(2dp 2dp #000000);
     cursor: pointer;
     animation: 0.0833s 0.38s cubic-out 1 rise;
 }
@@ -273,7 +280,7 @@ scrollbarvertical sliderbar { background-color: #1e8bff; border-radius: 5dp; min
 }
 .prompt .b { decorator: image(game:9e002bac_I131); }
 .prompt .x { decorator: image(game:9e002963_I5); }
-.prompt:hover { color: #ffc21a; }
+.prompt:hover { color: #fadc32; }
 #prompt-back { left: 56dp; }
 #prompt-back .button { margin-right: 6dp; }
 #prompt-reset { right: 64dp; }
@@ -329,8 +336,9 @@ scrollbarvertical sliderbar { background-color: #1e8bff; border-radius: 5dp; min
     text-align: center;
     color: #1a1208;
 }
-#scroll h1 { left: 240dp; top: 142dp; width: 801dp; font-size: 42dp; }
-#scroll p { left: 220dp; top: 190dp; width: 840dp; font-size: 28dp; line-height: 34dp; }
+/* Sized to the game's: the title about 26 dp high in capitals, the text on one line where it fits. */
+#scroll h1 { left: 240dp; top: 146dp; width: 801dp; font-size: 32dp; }
+#scroll p { left: 220dp; top: 190dp; width: 840dp; font-size: 22dp; line-height: 28dp; }
 
 .answer {
     position: absolute;
