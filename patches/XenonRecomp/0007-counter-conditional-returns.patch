@@ -1,0 +1,17 @@
+diff --git a/XenonAnalyse/function.cpp b/XenonAnalyse/function.cpp
+index 4d1ebbe..4f6191a 100644
+--- a/XenonAnalyse/function.cpp
++++ b/XenonAnalyse/function.cpp
+@@ -187,8 +187,10 @@ Function Function::Analyze(const void* code, size_t size, size_t base, const Fun
+                 }
+                 else if (op == PPC_OP_CTR)
+                 {
+-                    // 5th bit of BO tells cpu to ignore the counter, which is a blr/bctr otherwise it's conditional
+-                    const bool conditional = !(PPC_BO(instruction) & 0x10);
++                    // The branch always goes only when BO ignores both the condition (0x10) and the counter
++                    // (0x04); bdzlr/bdnzlr ignore the condition but return only when CTR reaches (or leaves) 0,
++                    // so the code after them still belongs to the function.
++                    const bool conditional = (PPC_BO(instruction) & 0x14) != 0x14;
+                     if (conditional)
+                     {
+                         // right block's just going to return

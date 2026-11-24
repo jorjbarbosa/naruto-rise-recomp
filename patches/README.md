@@ -151,6 +151,30 @@ its size in `r12` and now probes nothing (guest stacks are committed on touch); 
 a read on a path its own conditions exclude; and `0x8839913C`, reached only from a duplicate of
 `0x88399020` that starts 8 bytes early, on the exception data, and is never called.
 
+### 0007: returns that depend on the counter
+
+`Function::Analyze` took a `bclr` as unconditional when its BO field ignores the condition (bit `0x10`),
+without looking at the counter bit (`0x04`). So `bdzlr` and `bdnzlr` (decrement CTR, return when it reaches
+or leaves 0) ended the function, and the code after them became functions of their own that nothing calls:
+the generated code fell off the end of the function and returned where the guest goes on. A branch to the
+link or count register is now unconditional only when BO ignores both the condition and the counter.
+
+- **What it broke.** The CRT `memset` (`0x822C54E0` in `default.xex`, its copy in `AI2C.dll`) ends with
+  `stb; bdzlr; stb; bdzlr; stb; blr` for the last one to three bytes: it was split at `0x822C5570` and
+  `0x822C5578`, so every `memset` whose size is not a multiple of 4 left the last one or two bytes as they
+  were. The visible case was the Bink decoder, which fills its bundles' runs with `memset`: in the Cr plane
+  a run of colors or motion offsets kept values the Y plane had left in the shared buffers, which drew the
+  green blocks of `Ubisoft.BIK` and wrong blocks in the other movies.
+- **How it was found.** The game's decoded planes (dumped after `0x826C8A50`) were compared with ffmpeg's
+  decode of the same file: identical up to one 8x8 Cr block, a motion copy with the wrong vertical offset;
+  a hook on `memset` that checked the bytes after each call showed the missed tail.
+- **Reach.** Those two functions were the only ones cut this way in either module (no other function ended
+  on a counter-conditional return). `tools/dev/local_registers.py` reports the same three functions as
+  after 0006.
+
+After the patch, the two movies before the title (`Ubisoft.BIK`, `LOGO_CORPO_EMEA.BIK`) decode identical to
+ffmpeg in every frame the game shows.
+
 ### Not covered by the patches
 
 These are configuration items, in `config/<module>.toml` and `config/<module>_switch_tables.toml`:
